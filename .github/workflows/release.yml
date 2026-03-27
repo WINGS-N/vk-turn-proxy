@@ -43,6 +43,10 @@ jobs:
             goarch: arm64
             cgo: 1
             api: 21
+          - goos: android
+            goarch: arm
+            cgo: 1
+            api: 21
           - goos: freebsd
             goarch: amd64
             cgo: 0
@@ -87,6 +91,8 @@ jobs:
 
             if [ "$GOARCH" = "arm64" ]; then
               export CC="$TOOLCHAIN_BIN/aarch64-linux-android${ANDROID_API}-clang"
+            elif [ "$GOARCH" = "arm" ]; then
+              export CC="$TOOLCHAIN_BIN/armv7a-linux-androideabi${ANDROID_API}-clang"
             else
               echo "Unsupported ANDROID GOARCH=$GOARCH"
               exit 1
