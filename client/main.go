@@ -10,10 +10,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/bschaatsbergen/dnsdialer"
 	"github.com/cbeuw/connutil"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 	"github.com/pion/logging"
@@ -33,19 +31,11 @@ import (
 
 type getCredsFunc func(string) (string, string, string, error)
 
-func getVkCreds(link string, dialer *dnsdialer.Dialer) (string, string, string, error) {
+func getVkCreds(link string, resolver *protectedResolver) (string, string, string, error) {
 
 	doRequest := func(data string, url string) (resp map[string]interface{}, err error) {
 
-		client := &http.Client{
-			Timeout: 20 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 100,
-				IdleConnTimeout:     90 * time.Second,
-				DialContext:         dialer.DialContext,
-			},
-		}
+		client := resolver.newHTTPClient(20 * time.Second)
 		defer client.CloseIdleConnections()
 		req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(data)))
 		if err != nil {
@@ -133,7 +123,7 @@ func getVkCreds(link string, dialer *dnsdialer.Dialer) (string, string, string, 
 	return user, pass, address, nil
 }
 
-func getYandexCreds(link string) (string, string, string, error) {
+func getYandexCreds(link string, resolver *protectedResolver) (string, string, string, error) {
 	const debug = false
 	const telemostConfHost = "cloud-api.yandex.ru"
 	telemostConfPath := fmt.Sprintf("%s%s%s", "/telemost_front/v2/telemost/conferences/https%3A%2F%2Ftelemost.yandex.ru%2Fj%2F", link, "/connection?next_gen_media_platform_allowed=false")
@@ -251,14 +241,7 @@ func getYandexCreds(link string) (string, string, string, error) {
 	}
 
 	endpoint := "https://" + telemostConfHost + telemostConfPath
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 100,
-			IdleConnTimeout:     90 * time.Second,
-		},
-	}
+	client := resolver.newHTTPClient(20 * time.Second)
 	defer client.CloseIdleConnections()
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
@@ -301,7 +284,7 @@ func getYandexCreds(link string) (string, string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	dialer := websocket.Dialer{}
+	dialer := resolver.newWebsocketDialer(15 * time.Second)
 	conn, _, err := dialer.DialContext(ctx, data.Wss, h)
 	if err != nil {
 		return "", "", "", fmt.Errorf("ws dial: %w", err)
@@ -580,6 +563,7 @@ type turnParams struct {
 	link     string
 	udp      bool
 	getCreds getCredsFunc
+	resolver *protectedResolver
 }
 
 func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UDPAddr, conn2 net.PacketConn, c chan<- error) {
@@ -603,23 +587,28 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	}
 	var turnServerAddr string
 	turnServerAddr = net.JoinHostPort(urlhost, urlport)
-	turnServerUdpAddr, err1 := net.ResolveUDPAddr("udp", turnServerAddr)
+	turnServerUdpAddr, err1 := turnParams.resolver.ResolveUDPAddr(ctx, turnServerAddr)
 	if err1 != nil {
 		err = fmt.Errorf("failed to resolve TURN server address: %s", err1)
 		return
 	}
 	turnServerAddr = turnServerUdpAddr.String()
-	fmt.Println(turnServerUdpAddr.IP)
 	// Dial TURN Server
 	var cfg *turn.ClientConfig
 	var turnConn net.PacketConn
-	var d net.Dialer
+	d := turnParams.resolver.dialer()
 	ctx1, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if turnParams.udp {
-		conn, err2 := net.DialUDP("udp", nil, turnServerUdpAddr) // nolint: noctx
+		rawConn, err2 := d.DialContext(ctx1, "udp", turnServerAddr)
 		if err2 != nil {
 			err = fmt.Errorf("failed to connect to TURN server: %s", err2)
+			return
+		}
+		conn, ok := rawConn.(*net.UDPConn)
+		if !ok {
+			_ = rawConn.Close()
+			err = fmt.Errorf("failed to cast protected UDP connection")
 			return
 		}
 		defer func() {
@@ -830,11 +819,26 @@ func main() { //nolint:cyclop
 	n := flag.Int("n", 0, "connections to TURN (default 16 for VK, 1 for Yandex)")
 	udp := flag.Bool("udp", false, "connect to TURN with UDP")
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
+	protectSock := flag.String("protect-sock", "", "unix socket used for VpnService.protect fd bridge")
 	flag.Parse()
 	if *peerAddr == "" {
 		log.Panicf("Need peer address!")
 	}
-	peer, err := net.ResolveUDPAddr("udp", *peerAddr)
+	peerResolver := (*protectedResolver)(nil)
+	protect, err := newProtectBridge(*protectSock)
+	if err != nil {
+		log.Panicf("Failed to connect protect bridge: %s", err)
+	}
+	if protect != nil {
+		defer func() {
+			if closeErr := protect.Close(); closeErr != nil {
+				log.Printf("Failed to close protect bridge: %s", closeErr)
+			}
+		}()
+	}
+	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
+
+	peer, err := peerResolver.ResolveUDPAddr(ctx, *peerAddr)
 	if err != nil {
 		panic(err)
 	}
@@ -848,14 +852,8 @@ func main() { //nolint:cyclop
 		parts := strings.Split(*vklink, "join/")
 		link = parts[len(parts)-1]
 
-		dialer := dnsdialer.New(
-			dnsdialer.WithResolvers("77.88.8.8:53", "77.88.8.1:53", "8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53"),
-			dnsdialer.WithStrategy(dnsdialer.Fallback{}),
-			dnsdialer.WithCache(100, 10*time.Hour, 10*time.Hour),
-		)
-
 		getCreds = func(s string) (string, string, string, error) {
-			return getVkCreds(s, dialer)
+			return getVkCreds(s, peerResolver)
 		}
 		if *n <= 0 {
 			*n = 16
@@ -863,7 +861,9 @@ func main() { //nolint:cyclop
 	} else {
 		parts := strings.Split(*yalink, "j/")
 		link = parts[len(parts)-1]
-		getCreds = getYandexCreds
+		getCreds = func(s string) (string, string, string, error) {
+			return getYandexCreds(s, peerResolver)
+		}
 		if *n <= 0 {
 			*n = 1
 		}
@@ -871,12 +871,14 @@ func main() { //nolint:cyclop
 	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
 		link = link[:idx]
 	}
+	link = normalizeJoinLink(link)
 	params := &turnParams{
 		*host,
 		*port,
 		link,
 		*udp,
 		getCreds,
+		peerResolver,
 	}
 
 	listenConnChan := make(chan net.PacketConn)
