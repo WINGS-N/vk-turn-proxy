@@ -460,51 +460,110 @@ func exchangeServerHello(dtlsConn net.Conn, hello []byte) (*sessionproto.ServerH
 	return sessionproto.ParseServerHelloMessage(buf[:n])
 }
 
-func probeMuxSupport(ctx context.Context, peer *net.UDPAddr) bool {
-	conn1, conn2 := connutil.AsyncPacketPipe()
-	defer func() {
-		if closeErr := conn2.Close(); closeErr != nil {
-			log.Printf("Failed to close mux probe connection: %s", closeErr)
-		}
-	}()
-
-	dtlsConn, err := dtlsFunc(ctx, conn1, peer)
-	if err != nil {
-		log.Printf("MUX probe failed during DTLS handshake: %s", err)
-		return false
-	}
-	defer func() {
-		if closeErr := dtlsConn.Close(); closeErr != nil {
-			log.Printf("Failed to close mux probe DTLS connection: %s", closeErr)
-		}
-	}()
-
+func probeMuxSupportOnConn(dtlsConn net.Conn, attempts int) bool {
 	hello, err := sessionproto.BuildProbeHello()
 	if err != nil {
-		log.Printf("Failed to build mux probe hello: %s", err)
+		log.Printf("Failed to build mainline probe hello: %s", err)
 		return false
 	}
-	serverHello, err := exchangeServerHello(dtlsConn, hello)
+
+	for attempt := 1; attempt <= attempts; attempt++ {
+		serverHello, err := exchangeServerHello(dtlsConn, hello)
+		if err != nil {
+			log.Printf("Mainline upgrade probe attempt %d/%d failed: %s", attempt, attempts, err)
+			continue
+		}
+		if serverHello.GetVersion() != sessionproto.ProtocolVersion {
+			log.Printf("Mainline upgrade probe attempt %d/%d returned unsupported version: %d", attempt, attempts, serverHello.GetVersion())
+			continue
+		}
+		if serverHello.GetMuxSupported() {
+			return true
+		}
+		if serverHello.GetError() != "" {
+			log.Printf("Mainline upgrade probe rejected: %s", serverHello.GetError())
+		}
+		return false
+	}
+
+	return false
+}
+
+func bootstrapSessionMode(requested sessionproto.Mode) sessionproto.Mode {
+	if requested == sessionproto.ModeAuto {
+		log.Printf("Session mode: auto -> mainline bootstrap")
+		return sessionproto.ModeMainline
+	}
+	return requested
+}
+
+func resolveSessionID(sessionMode sessionproto.Mode, sessionIDFlag string) []byte {
+	if sessionMode != sessionproto.ModeMux {
+		return nil
+	}
+	if sessionIDFlag != "" {
+		sessionID, err := sessionproto.ParseSessionIDHex(sessionIDFlag)
+		if err != nil {
+			log.Panicf("Invalid session ID: %v", err)
+		}
+		return sessionID
+	}
+
+	sessionID, err := uuid.New().MarshalBinary()
 	if err != nil {
-		log.Printf("MUX probe failed: %s", err)
-		return false
+		log.Panicf("Failed to generate session ID: %v", err)
 	}
-	return serverHello.GetVersion() == sessionproto.ProtocolVersion && serverHello.GetMuxSupported()
+	return sessionID
 }
 
-func resolveSessionMode(ctx context.Context, requested sessionproto.Mode, peer *net.UDPAddr) sessionproto.Mode {
-	if requested != sessionproto.ModeAuto {
-		return requested
+func startDtlsTurnWorkers(
+	ctx context.Context,
+	peer *net.UDPAddr,
+	listenConnChan <-chan net.PacketConn,
+	params *turnParams,
+	t <-chan time.Time,
+	n int,
+	sessionMode sessionproto.Mode,
+	sessionID []byte,
+	firstReady chan<- struct{},
+	firstProbeResult chan<- bool,
+) *sync.WaitGroup {
+	wg := &sync.WaitGroup{}
+	connchan := make(chan net.PacketConn)
+
+	wg.Go(func() {
+		oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, firstReady, firstProbeResult, sessionMode, sessionID, 0)
+	})
+	wg.Go(func() {
+		oneTurnConnectionLoop(ctx, params, peer, connchan, t)
+	})
+
+	for i := 0; i < n-1; i++ {
+		connchan := make(chan net.PacketConn)
+		streamID := byte(i + 1)
+		wg.Go(func() {
+			oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, nil, nil, sessionMode, sessionID, streamID)
+		})
+		wg.Go(func() {
+			oneTurnConnectionLoop(ctx, params, peer, connchan, t)
+		})
 	}
-	if probeMuxSupport(ctx, peer) {
-		log.Printf("Session mode: auto -> mux")
-		return sessionproto.ModeMux
-	}
-	log.Printf("Session mode: auto -> legacy")
-	return sessionproto.ModeLegacy
+
+	return wg
 }
 
-func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.PacketConn, connchan chan<- net.PacketConn, okchan chan<- struct{}, c chan<- error, sessionMode sessionproto.Mode, sessionID []byte, streamID byte) {
+func oneDtlsConnection(
+	ctx context.Context,
+	peer *net.UDPAddr,
+	listenConn net.PacketConn,
+	connchan chan<- net.PacketConn,
+	okchan chan<- struct{},
+	probeResult chan<- bool,
+	c chan<- error,
+	sessionMode sessionproto.Mode,
+	sessionID []byte,
+	streamID byte,
+) {
 	var err error = nil
 	defer func() { c <- err }()
 	dtlsctx, dtlscancel := context.WithCancel(ctx)
@@ -553,6 +612,12 @@ func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.Pa
 		}
 		log.Printf("Established DTLS connection and completed mux negotiation for stream %d!\n", streamID)
 	} else {
+		if probeResult != nil {
+			select {
+			case probeResult <- probeMuxSupportOnConn(dtlsConn, 3):
+			default:
+			}
+		}
 		log.Printf("Established DTLS connection!\n")
 	}
 	go func() {
@@ -853,14 +918,24 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	}
 }
 
-func oneDtlsConnectionLoop(ctx context.Context, peer *net.UDPAddr, listenConnChan <-chan net.PacketConn, connchan chan<- net.PacketConn, okchan chan<- struct{}, sessionMode sessionproto.Mode, sessionID []byte, streamID byte) {
+func oneDtlsConnectionLoop(
+	ctx context.Context,
+	peer *net.UDPAddr,
+	listenConnChan <-chan net.PacketConn,
+	connchan chan<- net.PacketConn,
+	okchan chan<- struct{},
+	probeResult chan<- bool,
+	sessionMode sessionproto.Mode,
+	sessionID []byte,
+	streamID byte,
+) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case listenConn := <-listenConnChan:
 			c := make(chan error)
-			go oneDtlsConnection(ctx, peer, listenConn, connchan, okchan, c, sessionMode, sessionID, streamID)
+			go oneDtlsConnection(ctx, peer, listenConn, connchan, okchan, probeResult, c, sessionMode, sessionID, streamID)
 			if err := <-c; err != nil {
 				log.Printf("%s", err)
 			}
@@ -913,7 +988,7 @@ func main() { //nolint:cyclop
 	udp := flag.Bool("udp", false, "connect to TURN with UDP")
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
 	protectSock := flag.String("protect-sock", "", "unix socket used for VpnService.protect fd bridge")
-	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: legacy|mux|auto")
+	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: mainline|mux|auto")
 	sessionIDFlag := flag.String("session-id", "", "override session ID (hex, 32 chars) for mux mode")
 	flag.Parse()
 	if *peerAddr == "" {
@@ -979,26 +1054,14 @@ func main() { //nolint:cyclop
 		getCreds,
 		peerResolver,
 	}
-	effectiveSessionMode := sessionproto.ModeLegacy
+	effectiveSessionMode := sessionproto.ModeMainline
 	if !*direct {
-		effectiveSessionMode = resolveSessionMode(ctx, requestedSessionMode, peer)
-	}
-	var sessionID []byte
-	if effectiveSessionMode == sessionproto.ModeMux {
-		if *sessionIDFlag != "" {
-			sessionID, err = sessionproto.ParseSessionIDHex(*sessionIDFlag)
-			if err != nil {
-				log.Panicf("Invalid session ID: %v", err)
-			}
-		} else {
-			sessionID, err = uuid.New().MarshalBinary()
-			if err != nil {
-				log.Panicf("Failed to generate session ID: %v", err)
-			}
-		}
-		log.Printf("Session mode: %s, session ID: %s", effectiveSessionMode, hex.EncodeToString(sessionID))
-	} else {
+		effectiveSessionMode = bootstrapSessionMode(requestedSessionMode)
 		log.Printf("Session mode: %s", effectiveSessionMode)
+	}
+	sessionID := resolveSessionID(effectiveSessionMode, *sessionIDFlag)
+	if len(sessionID) > 0 {
+		log.Printf("Session mode: %s, session ID: %s", effectiveSessionMode, hex.EncodeToString(sessionID))
 	}
 
 	listenConnChan := make(chan net.PacketConn)
@@ -1030,31 +1093,60 @@ func main() { //nolint:cyclop
 			})
 		}
 	} else {
+		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
+		defer runtimeCancel()
+
 		okchan := make(chan struct{})
-		connchan := make(chan net.PacketConn)
-
-		wg1.Go(func() {
-			oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, okchan, effectiveSessionMode, sessionID, 0)
-		})
-
-		wg1.Go(func() {
-			oneTurnConnectionLoop(ctx, params, peer, connchan, t)
-		})
-
+		probeResult := make(chan bool, 1)
+		runtimeWG := startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, 1, effectiveSessionMode, sessionID, okchan, probeResult)
 		select {
 		case <-okchan:
 		case <-ctx.Done():
 		}
-		for i := 0; i < *n-1; i++ {
-			connchan := make(chan net.PacketConn)
-			streamID := byte(i + 1)
-			wg1.Go(func() {
-				oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, nil, effectiveSessionMode, sessionID, streamID)
-			})
-			wg1.Go(func() {
-				oneTurnConnectionLoop(ctx, params, peer, connchan, t)
-			})
+
+		if requestedSessionMode == sessionproto.ModeAuto && ctx.Err() == nil {
+			muxSupported := false
+			select {
+			case muxSupported = <-probeResult:
+			default:
+			}
+			if muxSupported {
+				log.Printf("Session mode: auto -> mux")
+				runtimeCancel()
+				runtimeWG.Wait()
+
+				effectiveSessionMode = sessionproto.ModeMux
+				sessionID = resolveSessionID(effectiveSessionMode, *sessionIDFlag)
+				log.Printf("Session mode: %s, session ID: %s", effectiveSessionMode, hex.EncodeToString(sessionID))
+
+				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
+				okchan = make(chan struct{})
+				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, effectiveSessionMode, sessionID, okchan, nil)
+				select {
+				case <-okchan:
+				case <-ctx.Done():
+				}
+			} else {
+				log.Printf("Session mode: auto -> staying on mainline")
+				runtimeCancel()
+				runtimeWG.Wait()
+
+				effectiveSessionMode = sessionproto.ModeMainline
+				sessionID = nil
+				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
+				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, effectiveSessionMode, sessionID, nil, nil)
+			}
+		} else if ctx.Err() == nil && *n > 1 {
+			runtimeCancel()
+			runtimeWG.Wait()
+
+			runtimeCtx, runtimeCancel = context.WithCancel(ctx)
+			runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, effectiveSessionMode, sessionID, nil, nil)
 		}
+
+		wg1.Go(func() {
+			runtimeWG.Wait()
+		})
 	}
 
 	wg1.Wait()
