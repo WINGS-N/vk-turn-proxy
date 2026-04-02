@@ -2,15 +2,21 @@ name: Release
 
 on:
   push:
-    # Trigger on tag pushes. Adjust pattern as needed (e.g. 'v*.*.*')
     tags:
-      - '**'
+      - "v*"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     name: Build binaries
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+        (github.event.head_commit == null || !contains(github.event.head_commit.message, '[SKIP CI]')))
     strategy:
       matrix:
         include:
@@ -20,43 +26,6 @@ jobs:
           - goos: linux
             goarch: arm64
             cgo: 0
-          - goos: linux
-            goarch: 386
-            cgo: 0
-          - goos: linux
-            goarch: arm
-            goarm: '7'
-            cgo: 0
-          - goos: linux
-            goarch: mipsle
-            gomips: softfloat
-            cgo: 0
-          - goos: linux
-            goarch: mips
-            gomips: softfloat
-            cgo: 0
-          - goos: linux
-            goarch: mips64le
-            gomips: softfloat
-            cgo: 0
-          - goos: linux
-            goarch: riscv64
-            cgo: 0            
-          - goos: darwin
-            goarch: amd64
-            cgo: 0
-          - goos: darwin
-            goarch: arm64
-            cgo: 0
-          - goos: windows
-            goarch: amd64
-            cgo: 0
-          - goos: windows
-            goarch: arm64
-            cgo: 0
-          - goos: windows
-            goarch: 386
-            cgo: 0
           - goos: android
             goarch: arm64
             cgo: 1
@@ -65,9 +34,6 @@ jobs:
             goarch: arm
             cgo: 1
             api: 21
-          - goos: freebsd
-            goarch: amd64
-            cgo: 0
 
     steps:
       - name: Check out code
@@ -149,8 +115,10 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+        (github.event.head_commit == null || !contains(github.event.head_commit.message, '[SKIP CI]')))
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v7
@@ -160,10 +128,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          # upload every file in dist/ including nested files
           files: |
             dist/**
-          # make the release name/tag the pushed tag
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           overwrite_files: true

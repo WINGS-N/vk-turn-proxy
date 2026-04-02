@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package sessionproto;
+
+option go_package = "github.com/cacggghp/vk-turn-proxy/sessionproto;sessionproto";
+
+enum ClientHelloType {
+  CLIENT_HELLO_TYPE_UNSPECIFIED = 0;
+  CLIENT_HELLO_TYPE_PROBE = 1;
+  CLIENT_HELLO_TYPE_SESSION = 2;
+}
+
+message ClientHello {
+  uint32 version = 1;
+  ClientHelloType type = 2;
+  bytes session_id = 3;
+  uint32 stream_id = 4;
+}
+
+message ServerHello {
+  uint32 version = 1;
+  bool mux_supported = 2;
+  string error = 3;
+}

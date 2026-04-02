@@ -2,14 +2,29 @@ name: CI
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
   pull_request:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   check:
     name: Lint, fmt-check, and tests
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+        !contains(github.event.head_commit.message, '[SKIP CI]')) ||
+      (github.event_name == 'pull_request' &&
+        !contains(github.event.pull_request.title, '[SKIP CI]') &&
+        !contains(github.event.pull_request.body || '', '[SKIP CI]'))
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -56,13 +71,20 @@ jobs:
   build:
     name: Build binaries
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+        !contains(github.event.head_commit.message, '[SKIP CI]')) ||
+      (github.event_name == 'pull_request' &&
+        !contains(github.event.pull_request.title, '[SKIP CI]') &&
+        !contains(github.event.pull_request.body || '', '[SKIP CI]'))
     strategy:
       matrix:
         include:
           - goos: linux
             goarch: amd64
             cgo: 0
-          - goos: darwin
+          - goos: linux
             goarch: arm64
             cgo: 0
           - goos: android
@@ -73,7 +95,6 @@ jobs:
             goarch: arm
             cgo: 1
             api: 21
-          # you can add more (android/arm, windows, etc.) later
 
     steps:
       - name: Check out code
