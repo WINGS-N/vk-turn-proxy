@@ -11,9 +11,9 @@ import (
 type Mode string
 
 const (
-	ModeLegacy Mode = "legacy"
-	ModeMux    Mode = "mux"
-	ModeAuto   Mode = "auto"
+	ModeMainline Mode = "mainline"
+	ModeMux      Mode = "mux"
+	ModeAuto     Mode = "auto"
 
 	ProtocolVersion = 1
 	SessionIDLen    = 16
@@ -23,8 +23,8 @@ func ParseMode(raw string) (Mode, error) {
 	switch Mode(strings.TrimSpace(strings.ToLower(raw))) {
 	case "", ModeAuto:
 		return ModeAuto, nil
-	case ModeLegacy:
-		return ModeLegacy, nil
+	case ModeMainline, "legacy":
+		return ModeMainline, nil
 	case ModeMux:
 		return ModeMux, nil
 	default:

@@ -367,20 +367,32 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 		return err
 	}
 
+	for hello != nil && hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE {
+		muxSupported := mode != sessionproto.ModeMainline
+		errorText := ""
+		if !muxSupported {
+			errorText = "server session mode is mainline"
+		}
+		if err := writeServerHello(conn, muxSupported, errorText); err != nil {
+			return err
+		}
+		hello, firstPacket, err = readInitialHelloOrLegacy(conn, mode)
+		if err != nil {
+			return err
+		}
+	}
+
 	if hello != nil {
 		switch hello.GetType() {
-		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE:
-			muxSupported := mode != sessionproto.ModeLegacy
-			errorText := ""
-			if !muxSupported {
-				errorText = "server session mode is legacy"
-			}
-			return writeServerHello(conn, muxSupported, errorText)
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_SESSION:
-			if mode == sessionproto.ModeLegacy {
-				return writeServerHello(conn, false, "server session mode is legacy")
+			if mode == sessionproto.ModeMainline {
+				return writeServerHello(conn, false, "server session mode is mainline")
 			}
 			return runMuxStream(ctx, conn, manager, connectAddr, hello)
+		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE:
+			if mode == sessionproto.ModeMux {
+				return fmt.Errorf("expected mux session hello after probe")
+			}
 		default:
 			if mode == sessionproto.ModeMux {
 				return fmt.Errorf("unsupported client hello type: %s", hello.GetType())
@@ -397,7 +409,7 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 func main() {
 	listen := flag.String("listen", "0.0.0.0:56000", "listen on ip:port")
 	connect := flag.String("connect", "", "connect to ip:port")
-	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: legacy|mux|auto")
+	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: mainline|mux|auto")
 	flag.Parse()
 
 	mode, err := sessionproto.ParseMode(*sessionModeFlag)
