@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	"github.com/cbeuw/connutil"
 	"github.com/google/uuid"
 	"github.com/pion/dtls/v3"
@@ -433,7 +435,76 @@ func dtlsFunc(ctx context.Context, conn net.PacketConn, peer *net.UDPAddr) (net.
 	return dtlsConn, nil
 }
 
-func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.PacketConn, connchan chan<- net.PacketConn, okchan chan<- struct{}, c chan<- error) {
+func exchangeServerHello(dtlsConn net.Conn, hello []byte) (*sessionproto.ServerHello, error) {
+	if err := dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, err
+	}
+	if _, err := dtlsConn.Write(hello); err != nil {
+		return nil, err
+	}
+	if err := dtlsConn.SetWriteDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, 512)
+	if err := dtlsConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return nil, err
+	}
+	n, err := dtlsConn.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	if err := dtlsConn.SetReadDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+	return sessionproto.ParseServerHelloMessage(buf[:n])
+}
+
+func probeMuxSupport(ctx context.Context, peer *net.UDPAddr) bool {
+	conn1, conn2 := connutil.AsyncPacketPipe()
+	defer func() {
+		if closeErr := conn2.Close(); closeErr != nil {
+			log.Printf("Failed to close mux probe connection: %s", closeErr)
+		}
+	}()
+
+	dtlsConn, err := dtlsFunc(ctx, conn1, peer)
+	if err != nil {
+		log.Printf("MUX probe failed during DTLS handshake: %s", err)
+		return false
+	}
+	defer func() {
+		if closeErr := dtlsConn.Close(); closeErr != nil {
+			log.Printf("Failed to close mux probe DTLS connection: %s", closeErr)
+		}
+	}()
+
+	hello, err := sessionproto.BuildProbeHello()
+	if err != nil {
+		log.Printf("Failed to build mux probe hello: %s", err)
+		return false
+	}
+	serverHello, err := exchangeServerHello(dtlsConn, hello)
+	if err != nil {
+		log.Printf("MUX probe failed: %s", err)
+		return false
+	}
+	return serverHello.GetVersion() == sessionproto.ProtocolVersion && serverHello.GetMuxSupported()
+}
+
+func resolveSessionMode(ctx context.Context, requested sessionproto.Mode, peer *net.UDPAddr) sessionproto.Mode {
+	if requested != sessionproto.ModeAuto {
+		return requested
+	}
+	if probeMuxSupport(ctx, peer) {
+		log.Printf("Session mode: auto -> mux")
+		return sessionproto.ModeMux
+	}
+	log.Printf("Session mode: auto -> legacy")
+	return sessionproto.ModeLegacy
+}
+
+func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.PacketConn, connchan chan<- net.PacketConn, okchan chan<- struct{}, c chan<- error, sessionMode sessionproto.Mode, sessionID []byte, streamID byte) {
 	var err error = nil
 	defer func() { c <- err }()
 	dtlsctx, dtlscancel := context.WithCancel(ctx)
@@ -461,7 +532,29 @@ func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.Pa
 		}
 		log.Printf("Closed DTLS connection\n")
 	}()
-	log.Printf("Established DTLS connection!\n")
+	if sessionMode == sessionproto.ModeMux {
+		hello, err1 := sessionproto.BuildSessionHello(sessionID, streamID)
+		if err1 != nil {
+			err = fmt.Errorf("failed to build session hello: %s", err1)
+			return
+		}
+		serverHello, err1 := exchangeServerHello(dtlsConn, hello)
+		if err1 != nil {
+			err = fmt.Errorf("failed to complete mux negotiation: %s", err1)
+			return
+		}
+		if !serverHello.GetMuxSupported() {
+			if serverHello.GetError() != "" {
+				err = fmt.Errorf("server rejected mux negotiation: %s", serverHello.GetError())
+			} else {
+				err = fmt.Errorf("server rejected mux negotiation")
+			}
+			return
+		}
+		log.Printf("Established DTLS connection and completed mux negotiation for stream %d!\n", streamID)
+	} else {
+		log.Printf("Established DTLS connection!\n")
+	}
 	go func() {
 		for {
 			select {
@@ -760,14 +853,14 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	}
 }
 
-func oneDtlsConnectionLoop(ctx context.Context, peer *net.UDPAddr, listenConnChan <-chan net.PacketConn, connchan chan<- net.PacketConn, okchan chan<- struct{}) {
+func oneDtlsConnectionLoop(ctx context.Context, peer *net.UDPAddr, listenConnChan <-chan net.PacketConn, connchan chan<- net.PacketConn, okchan chan<- struct{}, sessionMode sessionproto.Mode, sessionID []byte, streamID byte) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case listenConn := <-listenConnChan:
 			c := make(chan error)
-			go oneDtlsConnection(ctx, peer, listenConn, connchan, okchan, c)
+			go oneDtlsConnection(ctx, peer, listenConn, connchan, okchan, c, sessionMode, sessionID, streamID)
 			if err := <-c; err != nil {
 				log.Printf("%s", err)
 			}
@@ -820,6 +913,8 @@ func main() { //nolint:cyclop
 	udp := flag.Bool("udp", false, "connect to TURN with UDP")
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
 	protectSock := flag.String("protect-sock", "", "unix socket used for VpnService.protect fd bridge")
+	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: legacy|mux|auto")
+	sessionIDFlag := flag.String("session-id", "", "override session ID (hex, 32 chars) for mux mode")
 	flag.Parse()
 	if *peerAddr == "" {
 		log.Panicf("Need peer address!")
@@ -844,6 +939,10 @@ func main() { //nolint:cyclop
 	}
 	if (*vklink == "") == (*yalink == "") {
 		log.Panicf("Need either vk-link or yandex-link!")
+	}
+	requestedSessionMode, err := sessionproto.ParseMode(*sessionModeFlag)
+	if err != nil {
+		log.Panicf("Invalid session mode: %v", err)
 	}
 
 	var link string
@@ -880,6 +979,27 @@ func main() { //nolint:cyclop
 		getCreds,
 		peerResolver,
 	}
+	effectiveSessionMode := sessionproto.ModeLegacy
+	if !*direct {
+		effectiveSessionMode = resolveSessionMode(ctx, requestedSessionMode, peer)
+	}
+	var sessionID []byte
+	if effectiveSessionMode == sessionproto.ModeMux {
+		if *sessionIDFlag != "" {
+			sessionID, err = sessionproto.ParseSessionIDHex(*sessionIDFlag)
+			if err != nil {
+				log.Panicf("Invalid session ID: %v", err)
+			}
+		} else {
+			sessionID, err = uuid.New().MarshalBinary()
+			if err != nil {
+				log.Panicf("Failed to generate session ID: %v", err)
+			}
+		}
+		log.Printf("Session mode: %s, session ID: %s", effectiveSessionMode, hex.EncodeToString(sessionID))
+	} else {
+		log.Printf("Session mode: %s", effectiveSessionMode)
+	}
 
 	listenConnChan := make(chan net.PacketConn)
 	listenConn, err := net.ListenPacket("udp", *listen) // nolint: noctx
@@ -914,7 +1034,7 @@ func main() { //nolint:cyclop
 		connchan := make(chan net.PacketConn)
 
 		wg1.Go(func() {
-			oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, okchan)
+			oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, okchan, effectiveSessionMode, sessionID, 0)
 		})
 
 		wg1.Go(func() {
@@ -927,8 +1047,9 @@ func main() { //nolint:cyclop
 		}
 		for i := 0; i < *n-1; i++ {
 			connchan := make(chan net.PacketConn)
+			streamID := byte(i + 1)
 			wg1.Go(func() {
-				oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, nil)
+				oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, nil, effectiveSessionMode, sessionID, streamID)
 			})
 			wg1.Go(func() {
 				oneTurnConnectionLoop(ctx, params, peer, connchan, t)
