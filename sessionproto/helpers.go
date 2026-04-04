@@ -4,8 +4,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-
-	"google.golang.org/protobuf/proto"
 )
 
 type Mode string
@@ -15,8 +13,7 @@ const (
 	ModeMux      Mode = "mux"
 	ModeAuto     Mode = "auto"
 
-	ProtocolVersion = 1
-	SessionIDLen    = 16
+	SessionIDLen = 16
 )
 
 func ParseMode(raw string) (Mode, error) {
@@ -43,28 +40,9 @@ func ParseSessionIDHex(raw string) ([]byte, error) {
 	return decoded, nil
 }
 
-func BuildProbeHello() ([]byte, error) {
-	return proto.Marshal(&ClientHello{
-		Version: ProtocolVersion,
-		Type:    ClientHelloType_CLIENT_HELLO_TYPE_PROBE,
-	})
-}
-
-func BuildSessionHello(sessionID []byte, streamID byte) ([]byte, error) {
-	if len(sessionID) != SessionIDLen {
-		return nil, fmt.Errorf("session ID must be %d bytes", SessionIDLen)
-	}
-	return proto.Marshal(&ClientHello{
-		Version:   ProtocolVersion,
-		Type:      ClientHelloType_CLIENT_HELLO_TYPE_SESSION,
-		SessionId: append([]byte(nil), sessionID...),
-		StreamId:  uint32(streamID),
-	})
-}
-
 func ParseClientHelloMessage(payload []byte) (*ClientHello, error) {
 	var hello ClientHello
-	if err := proto.Unmarshal(payload, &hello); err != nil {
+	if err := unmarshalProto(payload, &hello); err != nil {
 		return nil, err
 	}
 	if hello.GetVersion() == 0 || hello.GetType() == ClientHelloType_CLIENT_HELLO_TYPE_UNSPECIFIED {
@@ -73,43 +51,9 @@ func ParseClientHelloMessage(payload []byte) (*ClientHello, error) {
 	return &hello, nil
 }
 
-func ValidateClientHello(hello *ClientHello) error {
-	if hello == nil {
-		return fmt.Errorf("client hello is nil")
-	}
-	if hello.GetVersion() != ProtocolVersion {
-		return fmt.Errorf("unsupported protocol version: %d", hello.GetVersion())
-	}
-	switch hello.GetType() {
-	case ClientHelloType_CLIENT_HELLO_TYPE_PROBE:
-		if len(hello.GetSessionId()) != 0 || hello.GetStreamId() != 0 {
-			return fmt.Errorf("probe hello must not contain session data")
-		}
-		return nil
-	case ClientHelloType_CLIENT_HELLO_TYPE_SESSION:
-		if len(hello.GetSessionId()) != SessionIDLen {
-			return fmt.Errorf("session ID must be %d bytes", SessionIDLen)
-		}
-		if hello.GetStreamId() > 255 {
-			return fmt.Errorf("stream ID out of range: %d", hello.GetStreamId())
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported client hello type: %s", hello.GetType())
-	}
-}
-
-func BuildServerHello(muxSupported bool, errorText string) ([]byte, error) {
-	return proto.Marshal(&ServerHello{
-		Version:      ProtocolVersion,
-		MuxSupported: muxSupported,
-		Error:        errorText,
-	})
-}
-
 func ParseServerHelloMessage(payload []byte) (*ServerHello, error) {
 	var hello ServerHello
-	if err := proto.Unmarshal(payload, &hello); err != nil {
+	if err := unmarshalProto(payload, &hello); err != nil {
 		return nil, err
 	}
 	if hello.GetVersion() == 0 {

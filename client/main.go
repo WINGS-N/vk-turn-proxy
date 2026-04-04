@@ -20,8 +20,10 @@ import (
 	"github.com/pion/turn/v5"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -33,10 +35,14 @@ import (
 
 type getCredsFunc func(string) (string, string, string, error)
 
-func getVkCreds(link string, resolver *protectedResolver) (string, string, string, error) {
+func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, string, error) {
+	profile := getRandomProfile()
+	name := generateName()
+	escapedName := neturl.QueryEscape(name)
+
+	log.Printf("Connecting identity - Name: %s | User-Agent: %s", name, profile.UserAgent)
 
 	doRequest := func(data string, url string) (resp map[string]interface{}, err error) {
-
 		client := resolver.newHTTPClient(20 * time.Second)
 		defer client.CloseIdleConnections()
 		req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(data)))
@@ -44,7 +50,7 @@ func getVkCreds(link string, resolver *protectedResolver) (string, string, strin
 			return nil, err
 		}
 
-		req.Header.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0")
+		req.Header.Add("User-Agent", profile.UserAgent)
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 		httpResp, err := client.Do(req)
@@ -85,17 +91,136 @@ func getVkCreds(link string, resolver *protectedResolver) (string, string, strin
 		return "", "", "", fmt.Errorf("request error:%s", err)
 	}
 
-	token1 := resp["data"].(map[string]interface{})["access_token"].(string)
-
-	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=123&access_token=%s", link, token1)
-	url = "https://api.vk.ru/method/calls.getAnonymousToken?v=5.274&client_id=6287487"
-
-	resp, err = doRequest(data, url)
-	if err != nil {
-		return "", "", "", fmt.Errorf("request error:%s", err)
+	dataMap, ok := resp["data"].(map[string]interface{})
+	if !ok {
+		return "", "", "", fmt.Errorf("unexpected anon token response: %v", resp)
+	}
+	token1, ok := dataMap["access_token"].(string)
+	if !ok {
+		return "", "", "", fmt.Errorf("missing access_token in response: %v", resp)
 	}
 
-	token2 := resp["response"].(map[string]interface{})["token"].(string)
+	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s", link, escapedName, token1)
+	url = "https://api.vk.ru/method/calls.getAnonymousToken?v=5.274&client_id=6287487"
+
+	var token2 string
+	const maxCaptchaAttempts = 3
+	usedAutoCaptcha := false
+	for attempt := 0; attempt <= maxCaptchaAttempts; attempt++ {
+		resp, err = doRequest(data, url)
+		if err != nil {
+			return "", "", "", fmt.Errorf("request error:%s", err)
+		}
+
+		if errObj, hasErr := resp["error"].(map[string]interface{}); hasErr {
+			errCode, _ := errObj["error_code"].(float64)
+			if errCode == 14 {
+				if attempt == maxCaptchaAttempts {
+					return "", "", "", fmt.Errorf("captcha failed after %d attempts", maxCaptchaAttempts)
+				}
+
+				captchaErr := parseVkCaptchaError(errObj)
+				captchaImg, _ := errObj["captcha_img"].(string)
+				log.Printf(
+					"Captcha required (attempt %d/%d), sid=%s, smart=%t, interactive=%t",
+					attempt+1,
+					maxCaptchaAttempts,
+					captchaErr.CaptchaSid,
+					captchaErr.SessionToken != "",
+					allowInteractiveFallback,
+				)
+
+				if captchaErr.SessionToken != "" {
+					successToken, solveErr := solveVkCaptcha(
+						context.Background(),
+						captchaErr,
+						resolver,
+						profile.UserAgent,
+					)
+					if solveErr == nil {
+						usedAutoCaptcha = true
+						log.Printf("VK smart captcha produced success token, retrying auth")
+					} else if allowInteractiveFallback {
+						log.Printf("Auto captcha solve did not complete, opening browser fallback: %s", solveErr)
+						successToken, solveErr = solveCaptchaViaProxy(captchaErr.RedirectURI, resolver)
+					} else {
+						log.Printf("Auto captcha solve needs user confirmation, deferring to app notification")
+						successToken, solveErr = solveCaptchaViaProxyDeferred(captchaErr.RedirectURI, resolver)
+					}
+					if solveErr != nil {
+						return "", "", "", fmt.Errorf("smart captcha solve error: %s", solveErr)
+					}
+					captchaAttempt := captchaErr.CaptchaAttempt
+					if captchaAttempt == "" || captchaAttempt == "0" {
+						captchaAttempt = "1"
+					}
+					data = fmt.Sprintf(
+						"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_key=&captcha_sid=%s&is_sound_captcha=0&success_token=%s&captcha_ts=%s&captcha_attempt=%s",
+						link,
+						escapedName,
+						token1,
+						captchaErr.CaptchaSid,
+						neturl.QueryEscape(successToken),
+						captchaErr.CaptchaTs,
+						captchaAttempt,
+					)
+				} else {
+					if !allowInteractiveFallback {
+						if usedAutoCaptcha {
+							log.Printf("VK returned image captcha after smart captcha retry, deferring to app notification")
+						} else {
+							log.Printf("Image captcha required, deferring to app notification")
+						}
+						captchaKey, solveErr := solveCaptchaViaHTTPDeferred(captchaImg, resolver)
+						if solveErr != nil {
+							return "", "", "", fmt.Errorf("captcha solve error: %s", solveErr)
+						}
+						data = fmt.Sprintf(
+							"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_sid=%s&captcha_key=%s",
+							link,
+							escapedName,
+							token1,
+							captchaErr.CaptchaSid,
+							captchaKey,
+						)
+						continue
+					}
+					if usedAutoCaptcha {
+						log.Printf("VK returned image captcha after smart captcha retry, opening browser fallback")
+					} else {
+						log.Printf("Opening browser captcha fallback for image captcha")
+					}
+					captchaKey, solveErr := solveCaptchaViaHTTP(captchaImg, resolver)
+					if solveErr != nil {
+						return "", "", "", fmt.Errorf("captcha solve error: %s", solveErr)
+					}
+					data = fmt.Sprintf(
+						"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_sid=%s&captcha_key=%s",
+						link,
+						escapedName,
+						token1,
+						captchaErr.CaptchaSid,
+						captchaKey,
+					)
+				}
+				continue
+			}
+			return "", "", "", fmt.Errorf("VK API error: %v", errObj)
+		}
+
+		responseMap, ok := resp["response"].(map[string]interface{})
+		if !ok {
+			return "", "", "", fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
+		}
+		token2, ok = responseMap["token"].(string)
+		if !ok {
+			return "", "", "", fmt.Errorf("missing token in response: %v", resp)
+		}
+		if usedAutoCaptcha {
+			log.Printf("VK smart captcha accepted by auth endpoint")
+		}
+		break
+	}
 
 	data = fmt.Sprintf("%s%s%s", "session_data=%7B%22version%22%3A2%2C%22device_id%22%3A%22", uuid.New(), "%22%2C%22client_version%22%3A1.1%2C%22client_type%22%3A%22SDK_JS%22%7D&method=auth.anonymLogin&format=JSON&application_key=CGMMEJLGDIHBABABA")
 	url = "https://calls.okcdn.ru/fb.do"
@@ -129,7 +254,9 @@ func getYandexCreds(link string, resolver *protectedResolver) (string, string, s
 	const debug = false
 	const telemostConfHost = "cloud-api.yandex.ru"
 	telemostConfPath := fmt.Sprintf("%s%s%s", "/telemost_front/v2/telemost/conferences/https%3A%2F%2Ftelemost.yandex.ru%2Fj%2F", link, "/connection?next_gen_media_platform_allowed=false")
-	const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"
+	profile := getRandomProfile()
+	userAgent := profile.UserAgent
+	name := generateName()
 
 	type ConferenceResponse struct {
 		URI                 string `json:"uri"`
@@ -301,14 +428,14 @@ func getYandexCreds(link string, resolver *protectedResolver) (string, string, s
 		UID: uuid.New().String(),
 		Hello: HelloPayload{
 			ParticipantMeta: PartMeta{
-				Name:        "Гость",
+				Name:        name,
 				Role:        "SPEAKER",
 				Description: "",
 				SendAudio:   false,
 				SendVideo:   false,
 			},
 			ParticipantAttributes: PartAttrs{
-				Name:        "Гость",
+				Name:        name,
 				Role:        "SPEAKER",
 				Description: "",
 			},
@@ -435,85 +562,17 @@ func dtlsFunc(ctx context.Context, conn net.PacketConn, peer *net.UDPAddr) (net.
 	return dtlsConn, nil
 }
 
-func exchangeServerHello(dtlsConn net.Conn, hello []byte) (*sessionproto.ServerHello, error) {
-	if err := dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return nil, err
-	}
-	if _, err := dtlsConn.Write(hello); err != nil {
-		return nil, err
-	}
-	if err := dtlsConn.SetWriteDeadline(time.Time{}); err != nil {
-		return nil, err
-	}
+const workerReconnectBackoff = 1500 * time.Millisecond
 
-	buf := make([]byte, 512)
-	if err := dtlsConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		return nil, err
-	}
-	n, err := dtlsConn.Read(buf)
-	if err != nil {
-		return nil, err
-	}
-	if err := dtlsConn.SetReadDeadline(time.Time{}); err != nil {
-		return nil, err
-	}
-	return sessionproto.ParseServerHelloMessage(buf[:n])
-}
-
-func probeMuxSupportOnConn(dtlsConn net.Conn, attempts int) bool {
-	hello, err := sessionproto.BuildProbeHello()
-	if err != nil {
-		log.Printf("Failed to build mainline probe hello: %s", err)
+func waitReconnectBackoff(ctx context.Context) bool {
+	timer := time.NewTimer(workerReconnectBackoff)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
 		return false
+	case <-timer.C:
+		return true
 	}
-
-	for attempt := 1; attempt <= attempts; attempt++ {
-		serverHello, err := exchangeServerHello(dtlsConn, hello)
-		if err != nil {
-			log.Printf("Mainline upgrade probe attempt %d/%d failed: %s", attempt, attempts, err)
-			continue
-		}
-		if serverHello.GetVersion() != sessionproto.ProtocolVersion {
-			log.Printf("Mainline upgrade probe attempt %d/%d returned unsupported version: %d", attempt, attempts, serverHello.GetVersion())
-			continue
-		}
-		if serverHello.GetMuxSupported() {
-			return true
-		}
-		if serverHello.GetError() != "" {
-			log.Printf("Mainline upgrade probe rejected: %s", serverHello.GetError())
-		}
-		return false
-	}
-
-	return false
-}
-
-func bootstrapSessionMode(requested sessionproto.Mode) sessionproto.Mode {
-	if requested == sessionproto.ModeAuto {
-		log.Printf("Session mode: auto -> mainline bootstrap")
-		return sessionproto.ModeMainline
-	}
-	return requested
-}
-
-func resolveSessionID(sessionMode sessionproto.Mode, sessionIDFlag string) []byte {
-	if sessionMode != sessionproto.ModeMux {
-		return nil
-	}
-	if sessionIDFlag != "" {
-		sessionID, err := sessionproto.ParseSessionIDHex(sessionIDFlag)
-		if err != nil {
-			log.Panicf("Invalid session ID: %v", err)
-		}
-		return sessionID
-	}
-
-	sessionID, err := uuid.New().MarshalBinary()
-	if err != nil {
-		log.Panicf("Failed to generate session ID: %v", err)
-	}
-	return sessionID
 }
 
 func startDtlsTurnWorkers(
@@ -525,14 +584,15 @@ func startDtlsTurnWorkers(
 	n int,
 	sessionMode sessionproto.Mode,
 	sessionID []byte,
+	protocolVersion uint32,
 	firstReady chan<- struct{},
-	firstProbeResult chan<- bool,
+	firstProbeResult chan<- uint32,
 ) *sync.WaitGroup {
 	wg := &sync.WaitGroup{}
 	connchan := make(chan net.PacketConn)
 
 	wg.Go(func() {
-		oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, firstReady, firstProbeResult, sessionMode, sessionID, 0)
+		oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, firstReady, firstProbeResult, sessionMode, sessionID, protocolVersion, 0)
 	})
 	wg.Go(func() {
 		oneTurnConnectionLoop(ctx, params, peer, connchan, t)
@@ -542,7 +602,7 @@ func startDtlsTurnWorkers(
 		connchan := make(chan net.PacketConn)
 		streamID := byte(i + 1)
 		wg.Go(func() {
-			oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, nil, nil, sessionMode, sessionID, streamID)
+			oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, nil, nil, sessionMode, sessionID, protocolVersion, streamID)
 		})
 		wg.Go(func() {
 			oneTurnConnectionLoop(ctx, params, peer, connchan, t)
@@ -558,18 +618,24 @@ func oneDtlsConnection(
 	listenConn net.PacketConn,
 	connchan chan<- net.PacketConn,
 	okchan chan<- struct{},
-	probeResult chan<- bool,
+	probeResult chan<- uint32,
 	c chan<- error,
 	sessionMode sessionproto.Mode,
 	sessionID []byte,
+	protocolVersion uint32,
 	streamID byte,
 ) {
+	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error = nil
 	defer func() { c <- err }()
 	dtlsctx, dtlscancel := context.WithCancel(ctx)
 	defer dtlscancel()
 	var conn1, conn2 net.PacketConn
 	conn1, conn2 = connutil.AsyncPacketPipe()
+	defer func() {
+		_ = conn2.Close()
+		_ = conn1.Close()
+	}()
 	go func() {
 		for {
 			select {
@@ -591,8 +657,10 @@ func oneDtlsConnection(
 		}
 		log.Printf("Closed DTLS connection\n")
 	}()
+	dtlsWriteMu := &sync.Mutex{}
+	controlResponses := make(chan []byte, 4)
 	if sessionMode == sessionproto.ModeMux {
-		hello, err1 := sessionproto.BuildSessionHello(sessionID, streamID)
+		hello, err1 := buildSessionHelloForVersion(protocolVersion, sessionID, streamID)
 		if err1 != nil {
 			err = fmt.Errorf("failed to build session hello: %s", err1)
 			return
@@ -612,23 +680,16 @@ func oneDtlsConnection(
 		}
 		log.Printf("Established DTLS connection and completed mux negotiation for stream %d!\n", streamID)
 	} else {
-		if probeResult != nil {
-			select {
-			case probeResult <- probeMuxSupportOnConn(dtlsConn, 3):
-			default:
-			}
-		}
 		log.Printf("Established DTLS connection!\n")
 	}
-	go func() {
-		for {
+	if okchan != nil {
+		go func() {
 			select {
 			case <-dtlsctx.Done():
-				return
 			case okchan <- struct{}{}:
 			}
-		}
-	}()
+		}()
+	}
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
@@ -660,7 +721,9 @@ func oneDtlsConnection(
 
 			addr.Store(addr1) // store peer
 
+			dtlsWriteMu.Lock()
 			_, err1 = dtlsConn.Write(buf[:n])
+			dtlsWriteMu.Unlock()
 			if err1 != nil {
 				log.Printf("Failed: %s", err1)
 				return
@@ -684,10 +747,17 @@ func oneDtlsConnection(
 				log.Printf("Failed: %s", err1)
 				return
 			}
+			if payload, ok := sessionproto.ParseControlProbeResponse(buf[:n]); ok {
+				select {
+				case controlResponses <- append([]byte(nil), payload...):
+				default:
+					log.Printf("Dropped stale control response")
+				}
+				continue
+			}
 			addr1, ok := addr.Load().(net.Addr)
 			if !ok {
-				log.Printf("Failed: no listener ip")
-				return
+				continue
 			}
 
 			_, err1 = listenConn.WriteTo(buf[:n], addr1)
@@ -697,6 +767,15 @@ func oneDtlsConnection(
 			}
 		}
 	}()
+	if sessionMode != sessionproto.ModeMux && probeResult != nil {
+		go func() {
+			version := probeHighestMuxVersionOnActiveMainline(dtlsConn, dtlsWriteMu, controlResponses)
+			select {
+			case probeResult <- version:
+			default:
+			}
+		}()
+	}
 
 	wg.Wait()
 	if err := listenConn.SetDeadline(time.Time{}); err != nil {
@@ -725,8 +804,12 @@ type turnParams struct {
 }
 
 func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UDPAddr, conn2 net.PacketConn, c chan<- error) {
+	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error = nil
 	defer func() { c <- err }()
+	defer func() {
+		_ = conn2.Close()
+	}()
 	user, pass, url, err1 := turnParams.getCreds(turnParams.link)
 	if err1 != nil {
 		err = fmt.Errorf("failed to get TURN credentials: %s", err1)
@@ -897,8 +980,7 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 			}
 			addr1, ok := addr.Load().(net.Addr)
 			if !ok {
-				log.Printf("Failed: no listener ip")
-				return
+				continue
 			}
 
 			_, err1 = conn2.WriteTo(buf[:n], addr1)
@@ -924,9 +1006,10 @@ func oneDtlsConnectionLoop(
 	listenConnChan <-chan net.PacketConn,
 	connchan chan<- net.PacketConn,
 	okchan chan<- struct{},
-	probeResult chan<- bool,
+	probeResult chan<- uint32,
 	sessionMode sessionproto.Mode,
 	sessionID []byte,
+	protocolVersion uint32,
 	streamID byte,
 ) {
 	for {
@@ -935,9 +1018,14 @@ func oneDtlsConnectionLoop(
 			return
 		case listenConn := <-listenConnChan:
 			c := make(chan error)
-			go oneDtlsConnection(ctx, peer, listenConn, connchan, okchan, probeResult, c, sessionMode, sessionID, streamID)
+			go oneDtlsConnection(ctx, peer, listenConn, connchan, okchan, probeResult, c, sessionMode, sessionID, protocolVersion, streamID)
 			if err := <-c; err != nil {
-				log.Printf("%s", err)
+				log.Printf("%s; reconnecting in %s", err, workerReconnectBackoff)
+			} else {
+				log.Printf("DTLS worker stopped; reconnecting in %s", workerReconnectBackoff)
+			}
+			if !waitReconnectBackoff(ctx) {
+				return
 			}
 		}
 	}
@@ -954,7 +1042,12 @@ func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *ne
 				c := make(chan error)
 				go oneTurnConnection(ctx, turnParams, peer, conn2, c)
 				if err := <-c; err != nil {
-					log.Printf("%s", err)
+					log.Printf("%s; reconnecting in %s", err, workerReconnectBackoff)
+				} else {
+					log.Printf("TURN worker stopped; reconnecting in %s", workerReconnectBackoff)
+				}
+				if !waitReconnectBackoff(ctx) {
+					return
 				}
 			default:
 			}
@@ -984,7 +1077,7 @@ func main() { //nolint:cyclop
 	vklink := flag.String("vk-link", "", "VK calls invite link \"https://vk.com/call/join/...\"")
 	yalink := flag.String("yandex-link", "", "Yandex telemost invite link \"https://telemost.yandex.ru/j/...\"")
 	peerAddr := flag.String("peer", "", "peer server address (host:port)")
-	n := flag.Int("n", 0, "connections to TURN (default 16 for VK, 1 for Yandex)")
+	n := flag.Int("n", 0, "connections to TURN (default 10 for VK, 1 for Yandex)")
 	udp := flag.Bool("udp", false, "connect to TURN with UDP")
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
 	protectSock := flag.String("protect-sock", "", "unix socket used for VpnService.protect fd bridge")
@@ -1026,43 +1119,35 @@ func main() { //nolint:cyclop
 		parts := strings.Split(*vklink, "join/")
 		link = parts[len(parts)-1]
 
-		getCreds = func(s string) (string, string, string, error) {
-			return getVkCreds(s, peerResolver)
-		}
 		if *n <= 0 {
-			*n = 16
+			*n = 10
 		}
+		getCreds = poolCreds(func(s string, allowInteractiveFallback bool) (string, string, string, error) {
+			return getVkCredsWithFallback(s, peerResolver, allowInteractiveFallback)
+		}, *n)
 	} else {
 		parts := strings.Split(*yalink, "j/")
 		link = parts[len(parts)-1]
-		getCreds = func(s string) (string, string, string, error) {
-			return getYandexCreds(s, peerResolver)
-		}
 		if *n <= 0 {
 			*n = 1
 		}
+		getCreds = poolCreds(func(s string, _ bool) (string, string, string, error) {
+			return getYandexCreds(s, peerResolver)
+		}, *n)
 	}
 	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
 		link = link[:idx]
 	}
 	link = normalizeJoinLink(link)
 	params := &turnParams{
-		*host,
-		*port,
-		link,
-		*udp,
-		getCreds,
-		peerResolver,
+		host:     *host,
+		port:     *port,
+		link:     link,
+		udp:      *udp,
+		getCreds: getCreds,
+		resolver: peerResolver,
 	}
-	effectiveSessionMode := sessionproto.ModeMainline
-	if !*direct {
-		effectiveSessionMode = bootstrapSessionMode(requestedSessionMode)
-		log.Printf("Session mode: %s", effectiveSessionMode)
-	}
-	sessionID := resolveSessionID(effectiveSessionMode, *sessionIDFlag)
-	if len(sessionID) > 0 {
-		log.Printf("Session mode: %s, session ID: %s", effectiveSessionMode, hex.EncodeToString(sessionID))
-	}
+	sessionID := []byte(nil)
 
 	listenConnChan := make(chan net.PacketConn)
 	listenConn, err := net.ListenPacket("udp", *listen) // nolint: noctx
@@ -1094,54 +1179,82 @@ func main() { //nolint:cyclop
 		}
 	} else {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
-		defer runtimeCancel()
+		defer func() {
+			runtimeCancel()
+		}()
+		runtimeWG := (*sync.WaitGroup)(nil)
 
-		okchan := make(chan struct{})
-		probeResult := make(chan bool, 1)
-		runtimeWG := startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, 1, effectiveSessionMode, sessionID, okchan, probeResult)
-		select {
-		case <-okchan:
-		case <-ctx.Done():
-		}
+		switch requestedSessionMode {
+		case sessionproto.ModeMainline:
+			runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMainline, nil, muxProtocolNone, nil, nil)
+		case sessionproto.ModeMux:
+			upgraded := false
+			for _, candidateVersion := range []uint32{muxProtocolV2, muxProtocolV1} {
+				sessionID = resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
+				log.Printf("Session mode: mux v%d, session ID: %s", candidateVersion, hex.EncodeToString(sessionID))
 
-		if requestedSessionMode == sessionproto.ModeAuto && ctx.Err() == nil {
-			muxSupported := false
-			select {
-			case muxSupported = <-probeResult:
-			default:
+				okchan := make(chan struct{})
+				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMux, sessionID, candidateVersion, okchan, nil)
+				if waitForReady(ctx, okchan, muxReadyTimeout) {
+					upgraded = true
+					break
+				}
+
+				log.Printf("Session mode: mux v%d failed, retrying fallback", candidateVersion)
+				runtimeCancel()
+				runtimeWG.Wait()
+				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
 			}
-			if muxSupported {
-				log.Printf("Session mode: auto -> mux")
+
+			if !upgraded {
+				log.Printf("Session mode: mux fallback -> mainline")
+				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMainline, nil, muxProtocolNone, nil, nil)
+			}
+		case sessionproto.ModeAuto:
+			okchan := make(chan struct{})
+			probeResult := make(chan uint32, 1)
+			runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, 1, sessionproto.ModeMainline, nil, muxProtocolNone, okchan, probeResult)
+			if !waitForReady(ctx, okchan, mainlineBootstrapTimeout) {
+				runtimeCancel()
+				runtimeWG.Wait()
+				log.Fatalf("failed to bootstrap mainline session")
+			}
+
+			supportedVersion := waitForProbeVersion(ctx, probeResult, muxProbeTimeout)
+			candidateVersions := make([]uint32, 0, 2)
+			switch supportedVersion {
+			case muxProtocolV2:
+				candidateVersions = append(candidateVersions, muxProtocolV2, muxProtocolV1)
+			case muxProtocolV1:
+				candidateVersions = append(candidateVersions, muxProtocolV1)
+			}
+
+			upgraded := false
+			for _, candidateVersion := range candidateVersions {
 				runtimeCancel()
 				runtimeWG.Wait()
 
-				effectiveSessionMode = sessionproto.ModeMux
-				sessionID = resolveSessionID(effectiveSessionMode, *sessionIDFlag)
-				log.Printf("Session mode: %s, session ID: %s", effectiveSessionMode, hex.EncodeToString(sessionID))
+				sessionID = resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
+				log.Printf("Session mode: mainline -> mux v%d, session ID: %s", candidateVersion, hex.EncodeToString(sessionID))
 
 				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
 				okchan = make(chan struct{})
-				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, effectiveSessionMode, sessionID, okchan, nil)
-				select {
-				case <-okchan:
-				case <-ctx.Done():
+				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMux, sessionID, candidateVersion, okchan, nil)
+				if waitForReady(ctx, okchan, muxReadyTimeout) {
+					upgraded = true
+					break
 				}
-			} else {
-				log.Printf("Session mode: auto -> staying on mainline")
+				log.Printf("Session mode: mux v%d failed, falling back", candidateVersion)
+			}
+
+			if !upgraded {
+				log.Printf("Session mode: staying on mainline")
 				runtimeCancel()
 				runtimeWG.Wait()
 
-				effectiveSessionMode = sessionproto.ModeMainline
-				sessionID = nil
 				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, effectiveSessionMode, sessionID, nil, nil)
+				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMainline, nil, muxProtocolNone, nil, nil)
 			}
-		} else if ctx.Err() == nil && *n > 1 {
-			runtimeCancel()
-			runtimeWG.Wait()
-
-			runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-			runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, effectiveSessionMode, sessionID, nil, nil)
 		}
 
 		wg1.Go(func() {
