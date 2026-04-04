@@ -1,0 +1,38 @@
+{{define "captcha_form"}}
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{.PageTitle}}</title>
+  {{template "shared_style" .}}
+</head>
+<body>
+  <div class="captcha-shell">
+    <div class="captcha-card">
+      <div class="captcha-eyebrow">VK TURN</div>
+      <h1>{{.Headline}}</h1>
+      <p>{{.Summary}}</p>
+      <img class="captcha-image" src="{{.ImageURL}}" alt="captcha">
+      <form onsubmit="return submitCaptchaKey();">
+        <input id="captcha-key" class="captcha-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Код с картинки">
+        <button class="captcha-primary" type="submit">Подтвердить</button>
+      </form>
+      <button class="captcha-secondary" type="button" onclick="cancelCaptcha()">Отмена</button>
+    </div>
+  </div>
+  <script>
+    function submitCaptchaKey() {
+      const value = document.getElementById('captcha-key').value || '';
+      fetch('{{.SolvePath}}?key=' + encodeURIComponent(value), { method: 'POST' })
+        .then(function() { window.location = '{{.CompletePath}}?status=success'; });
+      return false;
+    }
+    function cancelCaptcha() {
+      fetch('{{.CancelPath}}', { method: 'POST' })
+        .finally(function() { window.location = '{{.CompletePath}}?status=cancelled'; });
+    }
+  </script>
+</body>
+</html>
+{{end}}
