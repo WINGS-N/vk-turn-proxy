@@ -74,49 +74,15 @@ func solveCaptchaViaHTTP(captchaImg string, resolver *protectedResolver) (string
 		nil,
 		func(baseURL string) string {
 			imageURL := localProxyURL(baseURL, captchaImg)
-			return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>VK captcha</title>
-  %s
-</head>
-<body>
-  <div class="captcha-shell">
-    <div class="captcha-card">
-      <div class="captcha-eyebrow">VK TURN</div>
-      <h1>Выполните Captcha действие</h1>
-      <p>Прокси запросило подтверждение от VK</p>
-      <img class="captcha-image" src="%s" alt="captcha">
-      <form onsubmit="return submitCaptchaKey();">
-        <input id="captcha-key" class="captcha-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Код с картинки">
-        <button class="captcha-primary" type="submit">Подтвердить</button>
-      </form>
-      <button class="captcha-secondary" type="button" onclick="cancelCaptcha()">Отмена</button>
-    </div>
-  </div>
-  <script>
-    function submitCaptchaKey() {
-      const value = document.getElementById('captcha-key').value || '';
-      fetch('%s?key=' + encodeURIComponent(value), { method: 'POST' })
-        .then(function() { window.location = '%s?status=success'; });
-      return false;
-    }
-    function cancelCaptcha() {
-      fetch('%s', { method: 'POST' })
-        .finally(function() { window.location = '%s?status=cancelled'; });
-    }
-  </script>
-</body>
-</html>`,
-				captchaSharedStyle(),
-				imageURL,
-				captchaSolvePath,
-				captchaCompletePath,
-				captchaCancelPath,
-				captchaCompletePath,
-			)
+			return renderCaptchaTemplate("captcha_form", captchaFormPageData{
+				PageTitle:    "VK captcha",
+				Headline:     "Выполните Captcha действие",
+				Summary:      "VK запросил подтверждение",
+				ImageURL:     imageURL,
+				SolvePath:    captchaSolvePath,
+				CompletePath: captchaCompletePath,
+				CancelPath:   captchaCancelPath,
+			})
 		},
 		captchaBrowserMode{
 			eventPrefix:        "CAPTCHA_REQUIRED: ",
@@ -132,49 +98,15 @@ func solveCaptchaViaHTTPDeferred(captchaImg string, resolver *protectedResolver)
 		nil,
 		func(baseURL string) string {
 			imageURL := localProxyURL(baseURL, captchaImg)
-			return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>VK captcha</title>
-  %s
-</head>
-<body>
-  <div class="captcha-shell">
-    <div class="captcha-card">
-      <div class="captcha-eyebrow">VK TURN</div>
-      <h1>Выполните Captcha действие</h1>
-      <p>Прокси запросило подтверждение от VK для фонового обновления соединений</p>
-      <img class="captcha-image" src="%s" alt="captcha">
-      <form onsubmit="return submitCaptchaKey();">
-        <input id="captcha-key" class="captcha-input" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Код с картинки">
-        <button class="captcha-primary" type="submit">Подтвердить</button>
-      </form>
-      <button class="captcha-secondary" type="button" onclick="cancelCaptcha()">Отмена</button>
-    </div>
-  </div>
-  <script>
-    function submitCaptchaKey() {
-      const value = document.getElementById('captcha-key').value || '';
-      fetch('%s?key=' + encodeURIComponent(value), { method: 'POST' })
-        .then(function() { window.location = '%s?status=success'; });
-      return false;
-    }
-    function cancelCaptcha() {
-      fetch('%s', { method: 'POST' })
-        .finally(function() { window.location = '%s?status=cancelled'; });
-    }
-  </script>
-</body>
-</html>`,
-				captchaSharedStyle(),
-				imageURL,
-				captchaSolvePath,
-				captchaCompletePath,
-				captchaCancelPath,
-				captchaCompletePath,
-			)
+			return renderCaptchaTemplate("captcha_form", captchaFormPageData{
+				PageTitle:    "VK captcha",
+				Headline:     "Выполните Captcha действие",
+				Summary:      "VK запросил подтверждение для фонового обновления соединений",
+				ImageURL:     imageURL,
+				SolvePath:    captchaSolvePath,
+				CompletePath: captchaCompletePath,
+				CancelPath:   captchaCancelPath,
+			})
 		},
 		captchaBrowserMode{
 			eventPrefix:     "CAPTCHA_PENDING: ",
@@ -300,7 +232,7 @@ func runCaptchaBrowserServer(
 			return
 		}
 		log.Printf("captcha generic proxy target=%s", targetParsed.String())
-		newCaptchaGenericReverseProxy(resolver, targetParsed).ServeHTTP(w, r)
+		newCaptchaGenericReverseProxy(resolver, baseURL, targetParsed).ServeHTTP(w, r)
 	})
 
 	if targetURL != nil {
@@ -374,6 +306,7 @@ func runCaptchaBrowserServer(
 
 func newCaptchaGenericReverseProxy(
 	resolver *protectedResolver,
+	baseURL string,
 	targetURL *neturl.URL,
 ) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
@@ -389,12 +322,20 @@ func newCaptchaGenericReverseProxy(
 		ModifyResponse: func(res *http.Response) error {
 			if res.StatusCode >= http.StatusBadRequest {
 				log.Printf("captcha generic upstream returned %d for %s", res.StatusCode, targetURL.String())
+				if shouldServeCaptchaErrorPage(res.Request) {
+					return replaceCaptchaErrorResponse(
+						res,
+						baseURL,
+						targetURL,
+						classifyCaptchaHTTPFailure(targetURL, res.StatusCode),
+					)
+				}
 			}
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("captcha generic proxy error: %s", err)
-			http.Error(w, "proxy error", http.StatusBadGateway)
+			writeCaptchaProxyError(w, r, baseURL, targetURL, err, http.StatusBadGateway)
 		},
 	}
 }
@@ -419,6 +360,14 @@ func newCaptchaReverseProxy(
 		ModifyResponse: func(res *http.Response) error {
 			if res.StatusCode >= http.StatusBadRequest {
 				log.Printf("captcha upstream returned %d for %s", res.StatusCode, targetURL.String())
+				if shouldServeCaptchaErrorPage(res.Request) {
+					return replaceCaptchaErrorResponse(
+						res,
+						baseURL,
+						targetURL,
+						classifyCaptchaHTTPFailure(targetURL, res.StatusCode),
+					)
+				}
 			}
 			rewriteCaptchaRedirectLocation(res, baseURL, targetURL)
 			if !injectHTML {
@@ -428,9 +377,192 @@ func newCaptchaReverseProxy(
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("captcha reverse proxy error: %s", err)
-			http.Error(w, "proxy error", http.StatusBadGateway)
+			writeCaptchaProxyError(w, r, baseURL, targetURL, err, http.StatusBadGateway)
 		},
 	}
+}
+
+type captchaFailureInfo struct {
+	Title   string
+	Summary string
+	Detail  string
+}
+
+func writeCaptchaProxyError(
+	w http.ResponseWriter,
+	r *http.Request,
+	baseURL string,
+	targetURL *neturl.URL,
+	err error,
+	statusCode int,
+) {
+	failure := classifyCaptchaProxyError(targetURL, err)
+	if shouldServeCaptchaErrorPage(r) {
+		writeCaptchaErrorPage(w, statusCode, captchaErrorHTML(baseURL, targetURL, failure))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(statusCode)
+	_, _ = io.WriteString(w, failure.Title+": "+failure.Detail)
+}
+
+func replaceCaptchaErrorResponse(
+	res *http.Response,
+	baseURL string,
+	targetURL *neturl.URL,
+	failure captchaFailureInfo,
+) error {
+	body := captchaErrorHTML(baseURL, targetURL, failure)
+	res.Header.Set("Content-Type", "text/html; charset=utf-8")
+	res.Header.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	res.Header.Set("Pragma", "no-cache")
+	res.Header.Del("Content-Encoding")
+	res.Header.Del("Content-Security-Policy")
+	res.Header.Del("Content-Security-Policy-Report-Only")
+	res.Header.Del("X-Frame-Options")
+	res.Body = io.NopCloser(strings.NewReader(body))
+	res.ContentLength = int64(len(body))
+	res.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	return nil
+}
+
+func shouldServeCaptchaErrorPage(r *http.Request) bool {
+	if r == nil {
+		return true
+	}
+	accept := strings.ToLower(strings.TrimSpace(r.Header.Get("Accept")))
+	if strings.Contains(accept, "text/html") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest"))) {
+	case "", "document", "iframe":
+		return true
+	default:
+		return false
+	}
+}
+
+func writeCaptchaErrorPage(w http.ResponseWriter, statusCode int, body string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.WriteHeader(statusCode)
+	_, _ = io.WriteString(w, body)
+}
+
+func classifyCaptchaProxyError(targetURL *neturl.URL, err error) captchaFailureInfo {
+	detail := strings.TrimSpace(errorString(err))
+	lower := strings.ToLower(detail)
+
+	var netErr net.Error
+	if (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, context.DeadlineExceeded) {
+		return captchaFailureInfo{
+			Title:   "Истекло время ожидания",
+			Summary: "Прокси не дождалось ответа от страницы проверки",
+			Detail:  firstNonEmptyString(detail, "Превышено время ожидания при обращении к странице проверки"),
+		}
+	}
+	if strings.Contains(lower, "no such host") || strings.Contains(lower, "dns lookup failed") || strings.Contains(lower, "no addresses resolved") {
+		return captchaFailureInfo{
+			Title:   "Не удалось резолвнуть адрес",
+			Summary: "Прокси не смогло определить IP адрес сервера проверки",
+			Detail:  firstNonEmptyString(detail, "DNS запрос к серверу проверки не удался"),
+		}
+	}
+	if strings.Contains(lower, "connection refused") {
+		return captchaFailureInfo{
+			Title:   "В соединении отказано",
+			Summary: "Удалённый сервер проверки отклонил подключение",
+			Detail:  firstNonEmptyString(detail, "Удалённый сервер отказал в соединении"),
+		}
+	}
+	if strings.Contains(lower, "connection reset") || strings.Contains(lower, "broken pipe") || strings.Contains(lower, "eof") {
+		return captchaFailureInfo{
+			Title:   "Соединение оборвалось",
+			Summary: "Связь со страницей проверки оборвалась до завершения загрузки",
+			Detail:  firstNonEmptyString(detail, "Соединение со страницей проверки разорвалось"),
+		}
+	}
+	if strings.Contains(lower, "tls") || strings.Contains(lower, "x509") || strings.Contains(lower, "certificate") {
+		return captchaFailureInfo{
+			Title:   "Ошибка TLS",
+			Summary: "Не удалось безопасно установить HTTPS соединение со страницей проверки",
+			Detail:  firstNonEmptyString(detail, "TLS подключение к странице проверки завершилось ошибкой"),
+		}
+	}
+	if strings.Contains(lower, "network is unreachable") || strings.Contains(lower, "no route to host") {
+		return captchaFailureInfo{
+			Title:   "Нет маршрута до сервера",
+			Summary: "Прокси не смогло дотянуться до сервера проверки напрямую",
+			Detail:  firstNonEmptyString(detail, "Прямой путь до сервера проверки сейчас недоступен"),
+		}
+	}
+	return captchaFailureInfo{
+		Title:   "Не удалось загрузить страницу проверки",
+		Summary: "Прокси не смогло получить содержимое страницы проверки",
+		Detail:  firstNonEmptyString(detail, "Произошла неизвестная ошибка при загрузке страницы проверки"),
+	}
+}
+
+func classifyCaptchaHTTPFailure(targetURL *neturl.URL, statusCode int) captchaFailureInfo {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return captchaFailureInfo{
+			Title:   "Сервер отклонил запрос",
+			Summary: "Страница проверки вернула отказ в доступе",
+			Detail:  fmt.Sprintf("Удалённый сервер проверки ответил HTTP %d", statusCode),
+		}
+	case http.StatusNotFound, http.StatusGone:
+		return captchaFailureInfo{
+			Title:   "Страница проверки недоступна",
+			Summary: "Удалённый ресурс проверки не найден",
+			Detail:  fmt.Sprintf("Удалённый сервер проверки ответил HTTP %d", statusCode),
+		}
+	default:
+		if statusCode >= 500 {
+			return captchaFailureInfo{
+				Title:   "Сервер проверки недоступен",
+				Summary: "Удалённый сервер временно не смог обработать запрос",
+				Detail:  fmt.Sprintf("Удалённый сервер проверки ответил HTTP %d", statusCode),
+			}
+		}
+		return captchaFailureInfo{
+			Title:   "Страница проверки ответила ошибкой",
+			Summary: "Удалённая страница проверки вернула неожиданный статус",
+			Detail:  fmt.Sprintf("Удалённый сервер проверки ответил HTTP %d", statusCode),
+		}
+	}
+}
+
+func captchaErrorHTML(baseURL string, targetURL *neturl.URL, failure captchaFailureInfo) string {
+	targetHost := "unknown"
+	if targetURL != nil && targetURL.Host != "" {
+		targetHost = targetURL.Host
+	}
+	return renderCaptchaTemplate("captcha_error", captchaErrorPageData{
+		PageTitle:  failure.Title,
+		Title:      failure.Title,
+		Summary:    failure.Summary,
+		TargetHost: targetHost,
+		Detail:     failure.Detail,
+		CancelPath: captchaCancelPath,
+	})
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func injectCaptchaHTMLResponse(res *http.Response, baseURL string) error {
@@ -531,189 +663,16 @@ func localProxyURL(baseURL string, target string) string {
 	return baseURL + captchaGenericPath + "?proxy_url=" + neturl.QueryEscape(target)
 }
 
-func captchaSharedStyle() string {
-	return `<style>
-html, body {
-  margin: 0;
-  min-height: 100%;
-  background: #f5f5f7;
-  color: #111111;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-.captcha-shell {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  box-sizing: border-box;
-}
-.captcha-card {
-  width: 100%;
-  max-width: 520px;
-  background: #ffffff;
-  border-radius: 28px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
-  padding: 28px;
-  box-sizing: border-box;
-}
-.captcha-eyebrow {
-  display: inline-block;
-  border-radius: 999px;
-  background: rgba(17, 17, 17, 0.08);
-  color: #555555;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 6px 10px;
-}
-.captcha-card h1 {
-  margin: 16px 0 8px;
-  font-size: 28px;
-  line-height: 1.2;
-}
-.captcha-card p {
-  margin: 0 0 20px;
-  color: #666666;
-  line-height: 1.5;
-}
-.captcha-image {
-  width: 100%;
-  border-radius: 20px;
-  background: #f0f0f2;
-  display: block;
-  margin-bottom: 18px;
-}
-.captcha-input,
-.captcha-primary,
-.captcha-secondary {
-  width: 100%;
-  box-sizing: border-box;
-  border-radius: 18px;
-  font-size: 16px;
-}
-.captcha-input {
-  border: 1px solid rgba(17, 17, 17, 0.12);
-  padding: 15px 16px;
-  margin-bottom: 14px;
-  background: #ffffff;
-}
-.captcha-primary,
-.captcha-secondary {
-  border: none;
-  padding: 15px 16px;
-  font-weight: 600;
-}
-.captcha-primary {
-  background: #0d6efd;
-  color: #ffffff;
-}
-.captcha-secondary {
-  background: rgba(17, 17, 17, 0.08);
-  color: #111111;
-  margin-top: 10px;
-}
-a, button {
-  -webkit-tap-highlight-color: transparent;
-}
-</style>`
-}
-
 func captchaInjectedEnhancements() string {
-	return captchaSharedStyle() + `<script>
-(function() {
-  function rewriteUrl(urlStr) {
-    if (!urlStr || typeof urlStr !== 'string') return urlStr;
-    if (urlStr.indexOf('http://') === 0 || urlStr.indexOf('https://') === 0) {
-      return '` + captchaGenericPath + `?proxy_url=' + encodeURIComponent(urlStr);
-    }
-    return urlStr;
-  }
-
-  var origOpen = XMLHttpRequest.prototype.open;
-  var origSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function() {
-    if (arguments[1] && typeof arguments[1] === 'string') {
-      this._origUrl = arguments[1];
-      arguments[1] = rewriteUrl(arguments[1]);
-    }
-    return origOpen.apply(this, arguments);
-  };
-  XMLHttpRequest.prototype.send = function() {
-    var xhr = this;
-    if (this._origUrl && this._origUrl.indexOf('captchaNotRobot.check') !== -1) {
-      xhr.addEventListener('load', function() {
-        try {
-          var data = JSON.parse(xhr.responseText);
-          if (data.response && data.response.success_token) {
-            fetch('` + captchaResultPath + `', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-              body: 'token=' + encodeURIComponent(data.response.success_token)
-            }).then(function() {
-              window.location = '` + captchaCompletePath + `?status=success';
-            });
-          }
-        } catch (e) {}
-      });
-    }
-    return origSend.apply(this, arguments);
-  };
-
-  var origFetch = window.fetch;
-  if (origFetch) {
-    window.fetch = function() {
-      var url = arguments[0];
-      var isObj = (typeof url === 'object' && url && url.url);
-      var urlStr = isObj ? url.url : url;
-      var origUrlStr = urlStr;
-      if (typeof urlStr === 'string') {
-        urlStr = rewriteUrl(urlStr);
-        arguments[0] = urlStr;
-      }
-      var promise = origFetch.apply(this, arguments);
-      if (typeof origUrlStr === 'string' && origUrlStr.indexOf('captchaNotRobot.check') !== -1) {
-        promise.then(function(response) {
-          return response.clone().json();
-        }).then(function(data) {
-          if (data.response && data.response.success_token) {
-            fetch('` + captchaResultPath + `', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-              body: 'token=' + encodeURIComponent(data.response.success_token)
-            }).then(function() {
-              window.location = '` + captchaCompletePath + `?status=success';
-            });
-          }
-        }).catch(function() {});
-      }
-      return promise;
-    };
-  }
-})();
-</script>`
+	return renderCaptchaTemplate("captcha_injected_snippet", captchaInjectedSnippetData{
+		GenericPath:  captchaGenericPath,
+		ResultPath:   captchaResultPath,
+		CompletePath: captchaCompletePath,
+	})
 }
 
 func captchaCompletionHTML() string {
-	return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Captcha complete</title>
-  ` + captchaSharedStyle() + `
-</head>
-<body>
-  <div class="captcha-shell">
-    <div class="captcha-card">
-      <div class="captcha-eyebrow">VK TURN</div>
-      <h1>Проверка завершена</h1>
-      <p>Окно можно закрыть</p>
-    </div>
-  </div>
-</body>
-</html>`
+	return renderCaptchaTemplate("captcha_complete", nil)
 }
 
 func openBrowser(url string) {

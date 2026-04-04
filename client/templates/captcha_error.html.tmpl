@@ -1,0 +1,179 @@
+{{define "captcha_error"}}
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{.PageTitle}}</title>
+  {{template "shared_style" .}}
+  <style>
+.captcha-card.captcha-error-card {
+  max-width: 560px;
+}
+.captcha-error-chip {
+  display: inline-block;
+  margin-top: 14px;
+  border-radius: 999px;
+  background: rgba(255, 145, 0, 0.14);
+  color: #9a5a00;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 7px 12px;
+}
+.captcha-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.captcha-actions button {
+  flex: 1 1 0;
+}
+.captcha-page-busy {
+  display: none;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(17, 17, 17, 0.05);
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.captcha-page-busy-label {
+  color: #111111;
+  font-size: 14px;
+  font-weight: 600;
+}
+.captcha-page-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.captcha-page-loader-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #0b57d0;
+  opacity: 0.3;
+  animation: captcha-dot-pulse 1.05s ease-in-out infinite;
+}
+.captcha-page-loader-dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.captcha-page-loader-dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+body.captcha-busy .captcha-page-busy {
+  display: flex;
+}
+body.captcha-busy .captcha-actions button {
+  opacity: 0.6;
+  pointer-events: none;
+}
+@keyframes captcha-dot-pulse {
+  0%, 80%, 100% {
+    opacity: 0.24;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.captcha-meta {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(17, 17, 17, 0.05);
+}
+.captcha-meta-row {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-top: 10px;
+}
+.captcha-meta-row:first-child {
+  margin-top: 0;
+}
+.captcha-meta-label {
+  color: #6a6a6f;
+  font-size: 13px;
+}
+.captcha-meta-value {
+  color: #111111;
+  font-size: 13px;
+  text-align: right;
+  word-break: break-word;
+}
+  </style>
+</head>
+<body>
+  <div class="captcha-shell">
+    <div class="captcha-card captcha-error-card">
+      <div class="captcha-eyebrow">VK TURN</div>
+      <div class="captcha-error-chip">captcha proxy error</div>
+      <h1>{{.Title}}</h1>
+      <p>{{.Summary}}</p>
+      <div class="captcha-actions">
+        <button id="captcha-retry-button" class="captcha-primary" type="button" onclick="retryCaptcha()">Повторить</button>
+        <button id="captcha-cancel-button" class="captcha-secondary" type="button" onclick="cancelCaptcha()">Отмена</button>
+      </div>
+      <div id="captcha-page-busy" class="captcha-page-busy" aria-live="polite">
+        <div class="captcha-page-loader" aria-hidden="true">
+          <div class="captcha-page-loader-dot"></div>
+          <div class="captcha-page-loader-dot"></div>
+          <div class="captcha-page-loader-dot"></div>
+        </div>
+        <div id="captcha-page-busy-label" class="captcha-page-busy-label">Повторяем...</div>
+      </div>
+      <div class="captcha-meta">
+        <div class="captcha-meta-row">
+          <div class="captcha-meta-label">Сервер</div>
+          <div class="captcha-meta-value">{{.TargetHost}}</div>
+        </div>
+        <div class="captcha-meta-row">
+          <div class="captcha-meta-label">Причина</div>
+          <div class="captcha-meta-value">{{.Detail}}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    function performRetryHaptic() {
+      try {
+        if (window.wingsvAndroid && typeof window.wingsvAndroid.performActionHaptic === 'function') {
+          window.wingsvAndroid.performActionHaptic();
+        }
+      } catch (_) {}
+      try {
+        if (navigator.vibrate) {
+          navigator.vibrate(12);
+        }
+      } catch (_) {}
+    }
+    function setBusyState(label) {
+      document.body.classList.add('captcha-busy');
+      var labelNode = document.getElementById('captcha-page-busy-label');
+      if (labelNode && label) {
+        labelNode.textContent = label;
+      }
+    }
+    function retryCaptcha() {
+      performRetryHaptic();
+      setBusyState('Повторяем...');
+      window.setTimeout(function() {
+        window.location.reload();
+      }, 90);
+    }
+    function cancelCaptcha() {
+      performRetryHaptic();
+      setBusyState('Отменяем проверку...');
+      window.setTimeout(function() {
+        window.location = '{{.CancelPath}}';
+      }, 90);
+    }
+  </script>
+</body>
+</html>
+{{end}}
