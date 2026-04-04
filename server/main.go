@@ -21,9 +21,13 @@ import (
 
 const initialNegotiationTimeout = 750 * time.Millisecond
 
+var serverUI *serverTUI
+
 type streamEntry struct {
-	id   byte
-	conn net.Conn
+	id       byte
+	key      string
+	clientIP string
+	conn     net.Conn
 }
 
 type UserSession struct {
@@ -64,6 +68,9 @@ func (s *SessionManager) GetOrCreate(ctx context.Context, id string, connectAddr
 		Cancel:      cancel,
 	}
 	s.Sessions[id] = session
+	if serverUI != nil {
+		serverUI.registerSession(id)
+	}
 	go session.backendReaderLoop()
 
 	return session, nil
@@ -99,7 +106,8 @@ func (s *UserSession) backendReaderLoop() {
 		}
 
 		lastUsed = (lastUsed + 1) % nConns
-		conn := s.Conns[lastUsed].conn
+		entry := s.Conns[lastUsed]
+		conn := entry.conn
 		s.Lock.RUnlock()
 
 		if err := conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
@@ -114,11 +122,15 @@ func (s *UserSession) backendReaderLoop() {
 			if closeErr := conn.Close(); closeErr != nil {
 				log.Printf("Session %s failed to close DTLS connection: %v", s.ID, closeErr)
 			}
+			continue
+		}
+		if serverUI != nil {
+			serverUI.addStreamTx(entry.key, entry.clientIP, n)
 		}
 	}
 }
 
-func (s *UserSession) AddConn(id byte, conn net.Conn) {
+func (s *UserSession) AddConn(id byte, key string, clientIP string, conn net.Conn) {
 	s.Lock.Lock()
 	defer s.Lock.Unlock()
 
@@ -128,11 +140,13 @@ func (s *UserSession) AddConn(id byte, conn net.Conn) {
 				log.Printf("Session %s failed to replace DTLS connection for stream %d: %v", s.ID, id, closeErr)
 			}
 			s.Conns[i].conn = conn
+			s.Conns[i].key = key
+			s.Conns[i].clientIP = clientIP
 			return
 		}
 	}
 
-	s.Conns = append(s.Conns, streamEntry{id: id, conn: conn})
+	s.Conns = append(s.Conns, streamEntry{id: id, key: key, clientIP: clientIP, conn: conn})
 }
 
 func (s *UserSession) RemoveConn(id byte, conn net.Conn) {
@@ -154,6 +168,9 @@ func (s *UserSession) Cleanup() {
 	s.Manager.Lock.Lock()
 	delete(s.Manager.Sessions, s.ID)
 	s.Manager.Lock.Unlock()
+	if serverUI != nil {
+		serverUI.unregisterSession(s.ID)
+	}
 
 	s.Lock.Lock()
 	for _, entry := range s.Conns {
@@ -161,20 +178,6 @@ func (s *UserSession) Cleanup() {
 	}
 	s.Conns = nil
 	s.Lock.Unlock()
-}
-
-func writeServerHello(conn net.Conn, muxSupported bool, errorText string) error {
-	payload, err := sessionproto.BuildServerHello(muxSupported, errorText)
-	if err != nil {
-		return err
-	}
-	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return err
-	}
-	if _, err := conn.Write(payload); err != nil {
-		return err
-	}
-	return conn.SetWriteDeadline(time.Time{})
 }
 
 func readInitialHelloOrLegacy(conn net.Conn, mode sessionproto.Mode) (*sessionproto.ClientHello, []byte, error) {
@@ -204,7 +207,7 @@ func readInitialHelloOrLegacy(conn net.Conn, mode sessionproto.Mode) (*sessionpr
 		}
 		return nil, payload, nil
 	}
-	if validateErr := sessionproto.ValidateClientHello(hello); validateErr != nil {
+	if validateErr := validateClientHelloForVersion(hello); validateErr != nil {
 		if mode == sessionproto.ModeMux {
 			return nil, nil, fmt.Errorf("invalid mux hello: %w", validateErr)
 		}
@@ -213,7 +216,14 @@ func readInitialHelloOrLegacy(conn net.Conn, mode sessionproto.Mode) (*sessionpr
 	return hello, nil, nil
 }
 
-func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, firstPacket []byte) error {
+func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, firstPacket []byte, mode sessionproto.Mode) error {
+	streamKey := ""
+	clientIP := clientIPFromAddr(conn.RemoteAddr())
+	if serverUI != nil {
+		streamKey = serverUI.nextStreamKey("mainline")
+		serverUI.registerStream(streamKey, "mainline", 0, conn.RemoteAddr().String(), clientIP, "", 0)
+		defer serverUI.unregisterStream(streamKey)
+	}
 	serverConn, err := net.Dial("udp", connectAddr)
 	if err != nil {
 		return err
@@ -225,11 +235,22 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 	}()
 
 	if len(firstPacket) > 0 {
-		if err := serverConn.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
-			return err
+		if handled, controlErr := handleMainlineControlPacket(conn, firstPacket, mode); handled {
+			if controlErr != nil {
+				return controlErr
+			}
+			firstPacket = nil
 		}
-		if _, err := serverConn.Write(firstPacket); err != nil {
-			return err
+		if len(firstPacket) > 0 {
+			if err := serverConn.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
+				return err
+			}
+			if _, err := serverConn.Write(firstPacket); err != nil {
+				return err
+			}
+			if serverUI != nil {
+				serverUI.addStreamRx(streamKey, clientIP, len(firstPacket))
+			}
 		}
 	}
 
@@ -266,6 +287,13 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 				log.Printf("Failed: %s", readErr)
 				return
 			}
+			if handled, controlErr := handleMainlineControlPacket(conn, buf[:n], mode); handled {
+				if controlErr != nil {
+					log.Printf("Failed: %s", controlErr)
+					return
+				}
+				continue
+			}
 
 			if err := serverConn.SetWriteDeadline(time.Now().Add(30 * time.Minute)); err != nil {
 				log.Printf("Failed: %s", err)
@@ -274,6 +302,9 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 			if _, writeErr := serverConn.Write(buf[:n]); writeErr != nil {
 				log.Printf("Failed: %s", writeErr)
 				return
+			}
+			if serverUI != nil {
+				serverUI.addStreamRx(streamKey, clientIP, n)
 			}
 		}
 	}()
@@ -306,6 +337,9 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 				log.Printf("Failed: %s", writeErr)
 				return
 			}
+			if serverUI != nil {
+				serverUI.addStreamTx(streamKey, clientIP, n)
+			}
 		}
 	}()
 
@@ -316,16 +350,36 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 func runMuxStream(ctx context.Context, conn net.Conn, manager *SessionManager, connectAddr string, hello *sessionproto.ClientHello) error {
 	sessionID := hex.EncodeToString(hello.GetSessionId())
 	streamID := byte(hello.GetStreamId())
+	clientIP := clientIPFromAddr(conn.RemoteAddr())
+	streamKey := ""
+	if serverUI != nil {
+		streamKey = serverUI.nextStreamKey("mux")
+		serverUI.registerStream(
+			streamKey,
+			fmt.Sprintf("mux/v%d", hello.GetVersion()),
+			hello.GetVersion(),
+			conn.RemoteAddr().String(),
+			clientIP,
+			sessionID,
+			streamID,
+		)
+		defer serverUI.unregisterStream(streamKey)
+	}
+	log.Printf(
+		"protobuf mux session hello from %s: %s",
+		conn.RemoteAddr(),
+		describeClientHello(hello),
+	)
 
 	session, err := manager.GetOrCreate(ctx, sessionID, connectAddr)
 	if err != nil {
 		return err
 	}
 
-	session.AddConn(streamID, conn)
+	session.AddConn(streamID, streamKey, clientIP, conn)
 	defer session.RemoveConn(streamID, conn)
 
-	if err := writeServerHello(conn, true, ""); err != nil {
+	if err := writeServerHelloForVersion(conn, hello.GetVersion(), true, ""); err != nil {
 		return err
 	}
 
@@ -347,6 +401,9 @@ func runMuxStream(ctx context.Context, conn net.Conn, manager *SessionManager, c
 		if _, err = session.BackendConn.Write(buf[:n]); err != nil {
 			return err
 		}
+		if serverUI != nil {
+			serverUI.addStreamRx(streamKey, clientIP, n)
+		}
 	}
 }
 
@@ -366,6 +423,13 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 	if err != nil {
 		return err
 	}
+	if hello != nil {
+		log.Printf("protobuf initial hello from %s: %s", conn.RemoteAddr(), describeClientHello(hello))
+	} else if len(firstPacket) > 0 {
+		log.Printf("mainline legacy payload from %s: %d bytes", conn.RemoteAddr(), len(firstPacket))
+	} else {
+		log.Printf("no initial protobuf hello from %s", conn.RemoteAddr())
+	}
 
 	for hello != nil && hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE {
 		muxSupported := mode != sessionproto.ModeMainline
@@ -373,12 +437,24 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 		if !muxSupported {
 			errorText = "server session mode is mainline"
 		}
-		if err := writeServerHello(conn, muxSupported, errorText); err != nil {
+		log.Printf(
+			"protobuf direct probe from %s: version=%d mux_supported=%t error=%q",
+			conn.RemoteAddr(),
+			hello.GetVersion(),
+			muxSupported,
+			errorText,
+		)
+		if err := writeServerHelloForVersion(conn, hello.GetVersion(), muxSupported, errorText); err != nil {
 			return err
 		}
 		hello, firstPacket, err = readInitialHelloOrLegacy(conn, mode)
 		if err != nil {
 			return err
+		}
+		if hello != nil {
+			log.Printf("protobuf follow-up hello from %s: %s", conn.RemoteAddr(), describeClientHello(hello))
+		} else if len(firstPacket) > 0 {
+			log.Printf("mainline payload after direct probe from %s: %d bytes", conn.RemoteAddr(), len(firstPacket))
 		}
 	}
 
@@ -386,36 +462,48 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 		switch hello.GetType() {
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_SESSION:
 			if mode == sessionproto.ModeMainline {
-				return writeServerHello(conn, false, "server session mode is mainline")
+				log.Printf(
+					"protobuf mux session rejected for %s: server session mode is mainline",
+					conn.RemoteAddr(),
+				)
+				return writeServerHelloForVersion(conn, hello.GetVersion(), false, "server session mode is mainline")
 			}
 			return runMuxStream(ctx, conn, manager, connectAddr, hello)
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE:
 			if mode == sessionproto.ModeMux {
+				log.Printf("protobuf probe without session hello from %s in mux mode", conn.RemoteAddr())
 				return fmt.Errorf("expected mux session hello after probe")
 			}
 		default:
 			if mode == sessionproto.ModeMux {
+				log.Printf("protobuf unsupported hello type from %s: %s", conn.RemoteAddr(), hello.GetType())
 				return fmt.Errorf("unsupported client hello type: %s", hello.GetType())
 			}
 		}
 	}
 
 	if mode == sessionproto.ModeMux {
+		log.Printf("protobuf mux hello missing from %s", conn.RemoteAddr())
 		return fmt.Errorf("expected mux hello")
 	}
-	return runLegacyStream(ctx, conn, connectAddr, firstPacket)
+	log.Printf("switching %s to mainline data path", conn.RemoteAddr())
+	return runLegacyStream(ctx, conn, connectAddr, firstPacket, mode)
 }
 
 func main() {
 	listen := flag.String("listen", "0.0.0.0:56000", "listen on ip:port")
 	connect := flag.String("connect", "", "connect to ip:port")
 	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: mainline|mux|auto")
+	tuiModeFlag := flag.String("tui", "auto", "server TUI mode: auto|on|off")
 	flag.Parse()
 
 	mode, err := sessionproto.ParseMode(*sessionModeFlag)
 	if err != nil {
 		log.Panicf("invalid session mode: %v", err)
 	}
+	serverUI = newServerTUI(*listen, *connect, string(mode), *tuiModeFlag)
+	defer serverUI.Close()
+	log.SetOutput(serverUI.logWriter())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

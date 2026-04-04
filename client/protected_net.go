@@ -118,13 +118,8 @@ func (r *protectedResolver) ResolveUDPAddr(ctx context.Context, hostPort string)
 
 func (r *protectedResolver) newHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 100,
-			IdleConnTimeout:     90 * time.Second,
-			DialContext:         r.DialContext,
-		},
+		Timeout:   timeout,
+		Transport: r.newHTTPTransport(),
 	}
 }
 
@@ -133,6 +128,26 @@ func (r *protectedResolver) newWebsocketDialer(timeout time.Duration) *websocket
 		HandshakeTimeout: timeout,
 		NetDialContext:   r.DialContext,
 		Proxy:            http.ProxyFromEnvironment,
+	}
+}
+
+func (r *protectedResolver) newHTTPTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext:         r.DialContext,
+		Proxy:               nil,
+	}
+}
+
+func (r *protectedResolver) newProtectedSystemHTTPTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext:         r.dialer().DialContext,
+		Proxy:               nil,
 	}
 }
 
