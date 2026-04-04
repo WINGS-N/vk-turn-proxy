@@ -86,6 +86,7 @@ Additional flags:
 - `-turn <ip>`: override TURN server address.
 - `-port <port>`: override TURN server port.
 - `-no-dtls`: without DTLS obfuscation (may result in a ban).
+- `-v1`: use v1 protocol (no session_id and stream_id sent). For legacy servers.
 
 #### Linux
 
