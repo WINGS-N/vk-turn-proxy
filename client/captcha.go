@@ -38,6 +38,7 @@ var errCaptchaDeferredAlreadyPending = errors.New("deferred captcha already pend
 
 type captchaBrowserMode struct {
 	eventPrefix        string
+	source             string
 	autoOpenBrowser    bool
 	markCaptchaPending bool
 	waitTimeout        time.Duration
@@ -86,6 +87,7 @@ func solveCaptchaViaHTTP(captchaImg string, resolver *protectedResolver) (string
 		},
 		captchaBrowserMode{
 			eventPrefix:        "CAPTCHA_REQUIRED: ",
+			source:             "primary",
 			autoOpenBrowser:    true,
 			markCaptchaPending: true,
 		},
@@ -110,6 +112,7 @@ func solveCaptchaViaHTTPDeferred(captchaImg string, resolver *protectedResolver)
 		},
 		captchaBrowserMode{
 			eventPrefix:     "CAPTCHA_PENDING: ",
+			source:          "pool",
 			autoOpenBrowser: false,
 			waitTimeout:     deferredCaptchaWaitTimeout,
 		},
@@ -127,6 +130,7 @@ func solveCaptchaViaProxy(redirectURI string, resolver *protectedResolver) (stri
 		nil,
 		captchaBrowserMode{
 			eventPrefix:        "CAPTCHA_REQUIRED: ",
+			source:             "primary",
 			autoOpenBrowser:    true,
 			markCaptchaPending: true,
 		},
@@ -144,6 +148,7 @@ func solveCaptchaViaProxyDeferred(redirectURI string, resolver *protectedResolve
 		nil,
 		captchaBrowserMode{
 			eventPrefix:     "CAPTCHA_PENDING: ",
+			source:          "pool",
 			autoOpenBrowser: false,
 			waitTimeout:     deferredCaptchaWaitTimeout,
 		},
@@ -268,7 +273,11 @@ func runCaptchaBrowserServer(
 	if eventPrefix == "" {
 		eventPrefix = "CAPTCHA_REQUIRED: "
 	}
-	fmt.Println(eventPrefix + captchaURL)
+	source := strings.TrimSpace(mode.source)
+	if source == "" {
+		source = "primary"
+	}
+	fmt.Println(eventPrefix + "source=" + source + " url=" + captchaURL)
 	if mode.autoOpenBrowser {
 		openBrowser(captchaURL)
 	}
