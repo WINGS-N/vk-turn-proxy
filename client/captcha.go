@@ -319,7 +319,7 @@ func newCaptchaGenericReverseProxy(
 	targetURL *neturl.URL,
 ) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
-		Transport: resolver.newProtectedSystemHTTPTransport(),
+		Transport: resolver.newHTTPTransport(),
 		Director: func(req *http.Request) {
 			req.URL.Scheme = targetURL.Scheme
 			req.URL.Host = targetURL.Host
@@ -356,7 +356,7 @@ func newCaptchaReverseProxy(
 	injectHTML bool,
 ) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
-		Transport: resolver.newProtectedSystemHTTPTransport(),
+		Transport: resolver.newHTTPTransport(),
 		Director: func(req *http.Request) {
 			req.URL.Scheme = targetURL.Scheme
 			req.URL.Host = targetURL.Host
