@@ -682,6 +682,7 @@ func oneDtlsConnection(
 	} else {
 		log.Printf("Established DTLS connection!\n")
 	}
+	fmt.Println("PROXY_STATUS: dtls_ready")
 	if okchan != nil {
 		go func() {
 			select {
@@ -922,6 +923,7 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	// The relayConn's local address is actually the transport
 	// address assigned on the TURN server.
 	log.Printf("relayed-address=%s", relayConn.LocalAddr().String())
+	fmt.Println("PROXY_STATUS: turn_ready")
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
