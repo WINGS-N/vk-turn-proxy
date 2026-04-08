@@ -61,13 +61,13 @@ func parseVkCaptchaError(errData map[string]interface{}) *vkCaptchaError {
 	}
 }
 
-func solveVkCaptcha(ctx context.Context, captchaErr *vkCaptchaError, resolver *protectedResolver, userAgent string) (string, error) {
+func solveVkCaptcha(ctx context.Context, captchaErr *vkCaptchaError, resolver *protectedResolver, profile Profile) (string, error) {
 	if captchaErr == nil || captchaErr.SessionToken == "" {
 		return "", fmt.Errorf("no session_token in redirect_uri")
 	}
 	log.Printf("Solving VK Smart Captcha automatically...")
 
-	powInput, difficulty, err := fetchPowInput(ctx, captchaErr.RedirectURI, resolver, userAgent)
+	powInput, difficulty, err := fetchPowInput(ctx, captchaErr.RedirectURI, resolver, profile)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch PoW input: %w", err)
 	}
@@ -77,7 +77,7 @@ func solveVkCaptcha(ctx context.Context, captchaErr *vkCaptchaError, resolver *p
 		return "", fmt.Errorf("failed to solve PoW")
 	}
 
-	successToken, err := callCaptchaNotRobot(ctx, captchaErr.SessionToken, hash, resolver, userAgent)
+	successToken, err := callCaptchaNotRobot(ctx, captchaErr.SessionToken, hash, resolver, profile)
 	if err != nil {
 		return "", fmt.Errorf("captchaNotRobot API failed: %w", err)
 	}
@@ -86,12 +86,12 @@ func solveVkCaptcha(ctx context.Context, captchaErr *vkCaptchaError, resolver *p
 	return successToken, nil
 }
 
-func fetchPowInput(ctx context.Context, redirectURI string, resolver *protectedResolver, userAgent string) (string, int, error) {
+func fetchPowInput(ctx context.Context, redirectURI string, resolver *protectedResolver, profile Profile) (string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", redirectURI, nil)
 	if err != nil {
 		return "", 0, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	applyBrowserProfile(req, profile)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
 	client := resolver.newHTTPClient(20 * time.Second)
@@ -146,7 +146,7 @@ func callCaptchaNotRobot(
 	sessionToken string,
 	hash string,
 	resolver *protectedResolver,
-	userAgent string,
+	profile Profile,
 ) (string, error) {
 	vkReq := func(method string, postData string) (map[string]interface{}, error) {
 		reqURL := "https://api.vk.ru/method/" + method + "?v=5.131"
@@ -154,7 +154,7 @@ func callCaptchaNotRobot(
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("User-Agent", userAgent)
+		applyBrowserProfile(req, profile)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Origin", "https://vk.ru")
 		req.Header.Set("Referer", "https://vk.ru/")

@@ -35,6 +35,8 @@ import (
 
 type getCredsFunc func(string) (string, string, string, error)
 
+var manualCaptcha bool
+
 func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, string, error) {
 	profile := getRandomProfile()
 	name := generateName()
@@ -50,7 +52,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 			return nil, err
 		}
 
-		req.Header.Add("User-Agent", profile.UserAgent)
+		applyBrowserProfile(req, profile)
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 		httpResp, err := client.Do(req)
@@ -130,12 +132,12 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 					allowInteractiveFallback,
 				)
 
-				if captchaErr.SessionToken != "" {
+				if captchaErr.SessionToken != "" && !manualCaptcha {
 					successToken, solveErr := solveVkCaptcha(
 						context.Background(),
 						captchaErr,
 						resolver,
-						profile.UserAgent,
+						profile,
 					)
 					if solveErr == nil {
 						usedAutoCaptcha = true
@@ -263,7 +265,6 @@ func getYandexCreds(link string, resolver *protectedResolver) (string, string, s
 	const telemostConfHost = "cloud-api.yandex.ru"
 	telemostConfPath := fmt.Sprintf("%s%s%s", "/telemost_front/v2/telemost/conferences/https%3A%2F%2Ftelemost.yandex.ru%2Fj%2F", link, "/connection?next_gen_media_platform_allowed=false")
 	profile := getRandomProfile()
-	userAgent := profile.UserAgent
 	name := generateName()
 
 	type ConferenceResponse struct {
@@ -384,7 +385,7 @@ func getYandexCreds(link string, resolver *protectedResolver) (string, string, s
 	if err != nil {
 		return "", "", "", err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	applyBrowserProfile(req, profile)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Referer", "https://telemost.yandex.ru/")
 	req.Header.Set("Origin", "https://telemost.yandex.ru")
@@ -416,7 +417,7 @@ func getYandexCreds(link string, resolver *protectedResolver) (string, string, s
 	}
 	h := http.Header{}
 	h.Set("Origin", "https://telemost.yandex.ru")
-	h.Set("User-Agent", userAgent)
+	applyBrowserProfile(&http.Request{Header: h}, profile)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -458,7 +459,7 @@ func getYandexCreds(link string, resolver *protectedResolver) (string, string, s
 			SdkInfo: SdkInfo{
 				Implementation: "browser",
 				Version:        "5.15.0",
-				UserAgent:      userAgent,
+				UserAgent:      profile.UserAgent,
 				HwConcurrency:  4,
 			},
 			SdkInitializationID:    uuid.New().String(),
@@ -1090,6 +1091,7 @@ func main() { //nolint:cyclop
 	n := flag.Int("n", 0, "connections to TURN (default 10 for VK, 1 for Yandex)")
 	udp := flag.Bool("udp", false, "connect to TURN with UDP")
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
+	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip automatic captcha solving and use manual captcha flow immediately")
 	protectSock := flag.String("protect-sock", "", "unix socket used for VpnService.protect fd bridge")
 	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: mainline|mux|auto")
 	sessionIDFlag := flag.String("session-id", "", "override session ID (hex, 32 chars) for mux mode")
@@ -1110,6 +1112,7 @@ func main() { //nolint:cyclop
 		}()
 	}
 	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
+	manualCaptcha = *manualCaptchaFlag
 
 	peer, err := peerResolver.ResolveUDPAddr(ctx, *peerAddr)
 	if err != nil {
