@@ -10,6 +10,8 @@ var controlPacketMagic = []byte{0x57, 0x56, 0x4d, 0x58, 0x01}
 const (
 	controlPacketKindProbeRequest  byte = 1
 	controlPacketKindProbeResponse byte = 2
+	controlPacketKindHeartbeatReq  byte = 3
+	controlPacketKindHeartbeatResp byte = 4
 )
 
 func BuildControlProbeRequest(payload []byte) []byte {
@@ -26,6 +28,22 @@ func ParseControlProbeRequest(payload []byte) ([]byte, bool) {
 
 func ParseControlProbeResponse(payload []byte) ([]byte, bool) {
 	return parseControlPacket(payload, controlPacketKindProbeResponse)
+}
+
+func BuildControlHeartbeatRequest(payload []byte) []byte {
+	return buildControlPacket(controlPacketKindHeartbeatReq, payload)
+}
+
+func BuildControlHeartbeatResponse(payload []byte) []byte {
+	return buildControlPacket(controlPacketKindHeartbeatResp, payload)
+}
+
+func ParseControlHeartbeatRequest(payload []byte) ([]byte, bool) {
+	return parseControlPacket(payload, controlPacketKindHeartbeatReq)
+}
+
+func ParseControlHeartbeatResponse(payload []byte) ([]byte, bool) {
+	return parseControlPacket(payload, controlPacketKindHeartbeatResp)
 }
 
 func buildControlPacket(kind byte, payload []byte) []byte {

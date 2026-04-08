@@ -17,3 +17,7 @@ func MarshalClientHello(hello *ClientHello) ([]byte, error) {
 func MarshalServerHello(hello *ServerHello) ([]byte, error) {
 	return marshalProto(hello)
 }
+
+func MarshalHeartbeat(heartbeat *Heartbeat) ([]byte, error) {
+	return marshalProto(heartbeat)
+}

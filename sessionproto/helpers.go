@@ -61,3 +61,14 @@ func ParseServerHelloMessage(payload []byte) (*ServerHello, error) {
 	}
 	return &hello, nil
 }
+
+func ParseHeartbeatMessage(payload []byte) (*Heartbeat, error) {
+	var heartbeat Heartbeat
+	if err := unmarshalProto(payload, &heartbeat); err != nil {
+		return nil, err
+	}
+	if heartbeat.GetVersion() == 0 {
+		return nil, fmt.Errorf("missing heartbeat version")
+	}
+	return &heartbeat, nil
+}

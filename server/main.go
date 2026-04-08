@@ -161,6 +161,12 @@ func (s *UserSession) RemoveConn(id byte, conn net.Conn) {
 	}
 }
 
+func (s *UserSession) ActiveConnCount() uint32 {
+	s.Lock.RLock()
+	defer s.Lock.RUnlock()
+	return uint32(len(s.Conns))
+}
+
 func (s *UserSession) Cleanup() {
 	s.Cancel()
 	_ = s.BackendConn.Close()
@@ -294,6 +300,13 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 				}
 				continue
 			}
+			if handled, controlErr := handleControlHeartbeatPacket(conn, buf[:n], streamKey, 1); handled {
+				if controlErr != nil {
+					log.Printf("Failed: %s", controlErr)
+					return
+				}
+				continue
+			}
 
 			if err := serverConn.SetWriteDeadline(time.Now().Add(30 * time.Minute)); err != nil {
 				log.Printf("Failed: %s", err)
@@ -379,7 +392,7 @@ func runMuxStream(ctx context.Context, conn net.Conn, manager *SessionManager, c
 	session.AddConn(streamID, streamKey, clientIP, conn)
 	defer session.RemoveConn(streamID, conn)
 
-	if err := writeServerHelloForVersion(conn, hello.GetVersion(), true, ""); err != nil {
+	if err := writeServerHelloForVersion(conn, hello.GetVersion(), true, "", true); err != nil {
 		return err
 	}
 
@@ -393,6 +406,12 @@ func runMuxStream(ctx context.Context, conn net.Conn, manager *SessionManager, c
 		n, err := conn.Read(buf)
 		if err != nil {
 			return err
+		}
+		if handled, controlErr := handleControlHeartbeatPacket(conn, buf[:n], streamKey, session.ActiveConnCount()); handled {
+			if controlErr != nil {
+				return controlErr
+			}
+			continue
 		}
 
 		if err := session.BackendConn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -444,7 +463,7 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 			muxSupported,
 			errorText,
 		)
-		if err := writeServerHelloForVersion(conn, hello.GetVersion(), muxSupported, errorText); err != nil {
+		if err := writeServerHelloForVersion(conn, hello.GetVersion(), muxSupported, errorText, true); err != nil {
 			return err
 		}
 		hello, firstPacket, err = readInitialHelloOrLegacy(conn, mode)
@@ -466,7 +485,7 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 					"protobuf mux session rejected for %s: server session mode is mainline",
 					conn.RemoteAddr(),
 				)
-				return writeServerHelloForVersion(conn, hello.GetVersion(), false, "server session mode is mainline")
+				return writeServerHelloForVersion(conn, hello.GetVersion(), false, "server session mode is mainline", true)
 			}
 			return runMuxStream(ctx, conn, manager, connectAddr, hello)
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE:

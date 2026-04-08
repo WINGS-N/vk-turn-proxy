@@ -21,4 +21,13 @@ message ServerHello {
   uint32 version = 1;
   bool mux_supported = 2;
   string error = 3;
+  bool control_heartbeat_supported = 4;
+}
+
+message Heartbeat {
+  uint32 version = 1;
+  int64 wall_clock_ms = 2;
+  uint32 active_streams = 3;
+  bool online = 4;
+  string wireguard_public_key_fingerprint = 5;
 }
