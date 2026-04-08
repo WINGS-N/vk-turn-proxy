@@ -422,6 +422,120 @@ curl -L -o client https://github.com/cacggghp/vk-turn-proxy/releases/latest/down
 
 </details>
 
+## VLESS-режим
+
+Если WireGuard блокируется DPI, можно использовать VLESS через флаг `-vless`. В этом режиме вместо UDP-пакетов пробрасываются TCP-соединения через TURN-туннель с помощью KCP и smux.
+
+### Настройка
+1. На VPS установить Xray с VLESS inbound
+2. Запустить `server` с флагом `-vless`
+3. На клиенте запустить `client` с флагом `-vless`
+4. Настроить Xray/v2rayN клиент с VLESS outbound на `127.0.0.1:9000`
+
+### Сервер (VPS)
+```
+./server -listen 0.0.0.0:56000 -connect 127.0.0.1:443 -vless
+```
+
+#### Docker
+```
+docker run -p 56000:56000/udp -e CONNECT_ADDR=127.0.0.1:443 -e VLESS_MODE=true vk-turn-proxy
+```
+
+### Клиент
+```
+./client -peer <ip сервера>:56000 -vk-link <VK ссылка> -listen 127.0.0.1:9000 -vless
+```
+
+<details>
+
+<summary>
+Xray клиент (config.json)
+</summary>
+
+```json
+{
+    "inbounds": [
+        {
+            "protocol": "socks",
+            "listen": "127.0.0.1",
+            "port": 1080,
+            "settings": {
+                "udp": true
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http", "tls"]
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "127.0.0.1",
+                        "port": 9000,
+                        "users": [
+                            {
+                                "id": "<UUID>",
+                                "encryption": "none"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "none"
+            }
+        }
+    ]
+}
+```
+
+</details>
+
+<details>
+
+<summary>
+Xray сервер (config.json)
+</summary>
+
+```json
+{
+    "inbounds": [
+        {
+            "protocol": "vless",
+            "listen": "127.0.0.1",
+            "port": 443,
+            "settings": {
+                "clients": [
+                    {
+                        "id": "<тот же UUID>",
+                        "level": 0
+                    }
+                ],
+                "decryption": "none"
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "freedom",
+            "settings": {
+                "domainStrategy": "UseIPv4"
+            }
+        }
+    ]
+}
+```
+
+</details>
+
+
 ## Direct mode
 
 С флагом `-no-dtls` можно отправлять пакеты без обфускации DTLS и подключаться к обычным серверам Wireguard. Может привести к бану от вк/яндекса.
+

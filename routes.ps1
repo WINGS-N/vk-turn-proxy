@@ -1,4 +1,4 @@
-# Получаем default gateway (IPv4)
+﻿# Получаем default gateway (IPv4)
 $gateway = Get-NetRoute `
     -DestinationPrefix "0.0.0.0/0" `
     | Sort-Object RouteMetric `

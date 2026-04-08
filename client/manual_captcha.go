@@ -541,8 +541,8 @@ func solveCaptchaViaProxy(redirectURI string, dialer *dnsdialer.Dialer) (string,
 	})
 
 	mux.HandleFunc("/generic_proxy", func(w http.ResponseWriter, r *http.Request) {
-		targetAuthUrl := r.URL.Query().Get("proxy_url")
-		targetParsed, err := neturl.Parse(targetAuthUrl)
+		targetAuthURL := r.URL.Query().Get("proxy_url")
+		targetParsed, err := neturl.Parse(targetAuthURL)
 		if err != nil || targetParsed.Host == "" {
 			http.Error(w, "Bad URL", http.StatusBadRequest)
 			return
