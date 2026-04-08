@@ -37,6 +37,15 @@ type getCredsFunc func(string) (string, string, string, error)
 
 var manualCaptcha bool
 
+func vkDelayRandom(minMs, maxMs int) {
+	if maxMs <= minMs {
+		time.Sleep(time.Duration(minMs) * time.Millisecond)
+		return
+	}
+	ms := minMs + rand.Intn(maxMs-minMs+1)
+	time.Sleep(time.Duration(ms) * time.Millisecond)
+}
+
 func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, string, error) {
 	profile := getRandomProfile()
 	name := generateName()
@@ -54,6 +63,13 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 		applyBrowserProfile(req, profile)
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("Origin", "https://vk.ru")
+		req.Header.Set("Referer", "https://vk.ru/")
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Sec-Fetch-Dest", "empty")
+		req.Header.Set("Priority", "u=1, i")
 
 		httpResp, err := client.Do(req)
 		if err != nil {
@@ -102,8 +118,13 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 		return "", "", "", fmt.Errorf("missing access_token in response: %v", resp)
 	}
 
+	vkDelayRandom(100, 150)
+	previewData := fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&fields=photo_200&access_token=%s", link, token1)
+	_, _ = doRequest(previewData, "https://api.vk.ru/method/calls.getCallPreview?v=5.275&client_id=6287487")
+	vkDelayRandom(200, 400)
+
 	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s", link, escapedName, token1)
-	url = "https://api.vk.ru/method/calls.getAnonymousToken?v=5.274&client_id=6287487"
+	url = "https://api.vk.ru/method/calls.getAnonymousToken?v=5.275&client_id=6287487"
 
 	var token2 string
 	const maxCaptchaAttempts = 3
@@ -232,6 +253,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 		break
 	}
 
+	vkDelayRandom(100, 150)
 	data = fmt.Sprintf("%s%s%s", "session_data=%7B%22version%22%3A2%2C%22device_id%22%3A%22", uuid.New(), "%22%2C%22client_version%22%3A1.1%2C%22client_type%22%3A%22SDK_JS%22%7D&method=auth.anonymLogin&format=JSON&application_key=CGMMEJLGDIHBABABA")
 	url = "https://calls.okcdn.ru/fb.do"
 
@@ -242,7 +264,8 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	token3 := resp["session_key"].(string)
 
-	data = fmt.Sprintf("joinLink=%s&isVideo=false&protocolVersion=5&anonymToken=%s&method=vchat.joinConversationByLink&format=JSON&application_key=CGMMEJLGDIHBABABA&session_key=%s", link, token2, token3)
+	vkDelayRandom(100, 150)
+	data = fmt.Sprintf("joinLink=%s&isVideo=false&protocolVersion=5&capabilities=2F7F&anonymToken=%s&method=vchat.joinConversationByLink&format=JSON&application_key=CGMMEJLGDIHBABABA&session_key=%s", link, token2, token3)
 	url = "https://calls.okcdn.ru/fb.do"
 
 	resp, err = doRequest(data, url)

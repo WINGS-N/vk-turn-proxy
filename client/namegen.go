@@ -3,40 +3,185 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 )
 
-// firstNames contains Russian first names. Add or remove names as needed.
-var firstNames = []string{
-	"Александр", "Дмитрий", "Максим", "Сергей", "Андрей", "Алексей", "Артём", "Илья",
-	"Кирилл", "Михаил", "Никита", "Матвей", "Роман", "Егор", "Арсений", "Иван",
-	"Денис", "Даниил", "Тимофей", "Владислав", "Игорь", "Павел", "Руслан", "Марк",
-	"Анна", "Мария", "Елена", "Дарья", "Анастасия", "Екатерина", "Виктория", "Ольга",
-	"Наталья", "Юлия", "Татьяна", "Светлана", "Ирина", "Ксения", "Алина", "Елизавета",
+var maleFirstNames = []string{
+	"Александр",
+	"Алексей",
+	"Андрей",
+	"Антон",
+	"Арсений",
+	"Артур",
+	"Артём",
+	"Богдан",
+	"Валерий",
+	"Василий",
+	"Виктор",
+	"Владислав",
+	"Глеб",
+	"Григорий",
+	"Даниил",
+	"Денис",
+	"Дмитрий",
+	"Евгений",
+	"Егор",
+	"Иван",
+	"Игорь",
+	"Илья",
+	"Кирилл",
+	"Леонид",
+	"Максим",
+	"Марк",
+	"Матвей",
+	"Михаил",
+	"Никита",
+	"Николай",
+	"Олег",
+	"Павел",
+	"Пётр",
+	"Роман",
+	"Руслан",
+	"Сергей",
+	"Станислав",
+	"Тимофей",
+	"Фёдор",
 }
 
-// lastNames contains Russian last names. Add or remove names as needed.
+var femaleFirstNames = []string{
+	"Алина",
+	"Алёна",
+	"Анастасия",
+	"Ангелина",
+	"Анна",
+	"Вера",
+	"Вероника",
+	"Виктория",
+	"Дарья",
+	"Ева",
+	"Екатерина",
+	"Елена",
+	"Елизавета",
+	"Ирина",
+	"Кира",
+	"Кристина",
+	"Ксения",
+	"Любовь",
+	"Маргарита",
+	"Марина",
+	"Мария",
+	"Милана",
+	"Надежда",
+	"Наталья",
+	"Ольга",
+	"Полина",
+	"Светлана",
+	"София",
+	"Татьяна",
+	"Юлия",
+	"Яна",
+}
+
 var lastNames = []string{
-	"Иванов", "Смирнов", "Кузнецов", "Попов", "Васильев", "Петров", "Соколов", "Михайлов",
-	"Новиков", "Федоров", "Морозов", "Волков", "Алексеев", "Лебедев", "Семенов", "Егоров",
-	"Павлов", "Козлов", "Степанов", "Николаев", "Орлов", "Андреев", "Макаров", "Никитин",
-	"Захаров", "Зайцев", "Соловьев", "Борисов", "Яковлев", "Григорьев", "Романов", "Воробьев",
+	"Алексеев",
+	"Андреев",
+	"Антонов",
+	"Баранов",
+	"Белов",
+	"Белый",
+	"Бельский",
+	"Беляев",
+	"Борисов",
+	"Васильев",
+	"Великий",
+	"Волков",
+	"Воробьёв",
+	"Григорьев",
+	"Давыдов",
+	"Егоров",
+	"Жуков",
+	"Зайцев",
+	"Захаров",
+	"Иванов",
+	"Калинин",
+	"Ковалёв",
+	"Козлов",
+	"Комаров",
+	"Крамской",
+	"Кузнецов",
+	"Кузьмин",
+	"Лебедев",
+	"Макаров",
+	"Медведев",
+	"Михайлов",
+	"Морозов",
+	"Никитин",
+	"Николаев",
+	"Новиков",
+	"Орлов",
+	"Островский",
+	"Павлов",
+	"Петров",
+	"Покровский",
+	"Попов",
+	"Раевский",
+	"Романов",
+	"Семёнов",
+	"Сергеев",
+	"Смирнов",
+	"Соколов",
+	"Соловьёв",
+	"Степанов",
+	"Тарасов",
+	"Титов",
+	"Толстой",
+	"Трубецкой",
+	"Филиппов",
+	"Фролов",
+	"Фёдоров",
+	"Чайковский",
+	"Черный",
+	"Яковлев",
 }
 
-// generateName generates a random Russian name.
-// 30% chance to generate only first name, 70% chance first + last name.
-// For female names (ending in 'а' or 'я'), adds 'а' to the last name.
+// convertToFemaleSurname handles Russian suffix rules
+func convertToFemaleSurname(surname string) string {
+	// Handle adjective-style surnames:
+	if strings.HasSuffix(surname, "ий") || strings.HasSuffix(surname, "ый") || strings.HasSuffix(surname, "ой") {
+		return surname[:len(surname)-4] + "ая"
+	}
+
+	// Handle standard possessive surnames:
+	if strings.HasSuffix(surname, "ов") || strings.HasSuffix(surname, "ев") ||
+		strings.HasSuffix(surname, "ин") || strings.HasSuffix(surname, "ын") ||
+		strings.HasSuffix(surname, "ёв") {
+		return surname + "а"
+	}
+
+	// Foreign or unchangeable
+	return surname
+}
+
 func generateName() string {
+	// Decide gender first
+	isFemale := rand.Intn(2) == 0
+
+	var fn string
+	if isFemale {
+		fn = femaleFirstNames[rand.Intn(len(femaleFirstNames))]
+	} else {
+		fn = maleFirstNames[rand.Intn(len(maleFirstNames))]
+	}
+
+	// 70% chance to have a last name
 	if rand.Float32() < 0.3 {
-		return firstNames[rand.Intn(len(firstNames))]
+		return fn
 	}
 
-	fn := firstNames[rand.Intn(len(firstNames))]
 	ln := lastNames[rand.Intn(len(lastNames))]
-
-	// add 'a' to the last name for females
-	lastChar := fn[len(fn)-2:] // 2 bytes for cyrillic
-	if lastChar == "а" || lastChar == "я" {
-		return fmt.Sprintf("%s %sа", fn, ln)
+	if isFemale {
+		ln = convertToFemaleSurname(ln)
 	}
+
 	return fmt.Sprintf("%s %s", fn, ln)
 }
