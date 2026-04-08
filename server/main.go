@@ -20,6 +20,8 @@ import (
 	"github.com/xtaci/smux"
 )
 
+const idleTimeout = 2 * time.Minute
+
 func main() {
 	listen := flag.String("listen", "0.0.0.0:56000", "listen on ip:port")
 	connect := flag.String("connect", "", "connect to ip:port")
@@ -118,6 +120,7 @@ func main() {
 			} else {
 				handleUDPConnection(ctx, conn, *connect)
 			}
+
 			log.Printf("Connection closed: %s\n", conn.RemoteAddr())
 		}(conn)
 	}
