@@ -137,8 +137,8 @@ func (r *protectedResolver) newHTTPTransport() *http.Transport {
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
 		// Keep captcha DNS and dial on the protected path.
-		DialContext:         r.DialContext,
-		Proxy:               nil,
+		DialContext: r.DialContext,
+		Proxy:       nil,
 	}
 }
 

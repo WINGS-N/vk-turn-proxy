@@ -3,6 +3,7 @@ package main
 import (
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -39,6 +40,7 @@ var errCaptchaDeferredAlreadyPending = errors.New("deferred captcha already pend
 type captchaBrowserMode struct {
 	eventPrefix        string
 	source             string
+	userAgent          string
 	autoOpenBrowser    bool
 	markCaptchaPending bool
 	waitTimeout        time.Duration
@@ -69,7 +71,7 @@ func endDeferredCaptchaPrompt() {
 	deferredCaptchaPromptState.Store(0)
 }
 
-func solveCaptchaViaHTTP(captchaImg string, resolver *protectedResolver) (string, error) {
+func solveCaptchaViaHTTP(captchaImg string, resolver *protectedResolver, userAgent string) (string, error) {
 	return runCaptchaBrowserServer(
 		resolver,
 		nil,
@@ -88,13 +90,14 @@ func solveCaptchaViaHTTP(captchaImg string, resolver *protectedResolver) (string
 		captchaBrowserMode{
 			eventPrefix:        "CAPTCHA_REQUIRED: ",
 			source:             "primary",
+			userAgent:          userAgent,
 			autoOpenBrowser:    true,
 			markCaptchaPending: true,
 		},
 	)
 }
 
-func solveCaptchaViaHTTPDeferred(captchaImg string, resolver *protectedResolver) (string, error) {
+func solveCaptchaViaHTTPDeferred(captchaImg string, resolver *protectedResolver, userAgent string) (string, error) {
 	return runCaptchaBrowserServer(
 		resolver,
 		nil,
@@ -113,13 +116,14 @@ func solveCaptchaViaHTTPDeferred(captchaImg string, resolver *protectedResolver)
 		captchaBrowserMode{
 			eventPrefix:     "CAPTCHA_PENDING: ",
 			source:          "pool",
+			userAgent:       userAgent,
 			autoOpenBrowser: false,
 			waitTimeout:     deferredCaptchaWaitTimeout,
 		},
 	)
 }
 
-func solveCaptchaViaProxy(redirectURI string, resolver *protectedResolver) (string, error) {
+func solveCaptchaViaProxy(redirectURI string, resolver *protectedResolver, userAgent string) (string, error) {
 	targetURL, err := neturl.Parse(redirectURI)
 	if err != nil {
 		return "", fmt.Errorf("invalid redirect URI: %w", err)
@@ -131,13 +135,14 @@ func solveCaptchaViaProxy(redirectURI string, resolver *protectedResolver) (stri
 		captchaBrowserMode{
 			eventPrefix:        "CAPTCHA_REQUIRED: ",
 			source:             "primary",
+			userAgent:          userAgent,
 			autoOpenBrowser:    true,
 			markCaptchaPending: true,
 		},
 	)
 }
 
-func solveCaptchaViaProxyDeferred(redirectURI string, resolver *protectedResolver) (string, error) {
+func solveCaptchaViaProxyDeferred(redirectURI string, resolver *protectedResolver, userAgent string) (string, error) {
 	targetURL, err := neturl.Parse(redirectURI)
 	if err != nil {
 		return "", fmt.Errorf("invalid redirect URI: %w", err)
@@ -149,6 +154,7 @@ func solveCaptchaViaProxyDeferred(redirectURI string, resolver *protectedResolve
 		captchaBrowserMode{
 			eventPrefix:     "CAPTCHA_PENDING: ",
 			source:          "pool",
+			userAgent:       userAgent,
 			autoOpenBrowser: false,
 			waitTimeout:     deferredCaptchaWaitTimeout,
 		},
@@ -237,11 +243,11 @@ func runCaptchaBrowserServer(
 			return
 		}
 		log.Printf("captcha generic proxy target=%s", targetParsed.String())
-		newCaptchaGenericReverseProxy(resolver, baseURL, targetParsed).ServeHTTP(w, r)
+		newCaptchaGenericReverseProxy(resolver, baseURL, targetParsed, mode.userAgent).ServeHTTP(w, r)
 	})
 
 	if targetURL != nil {
-		mux.Handle("/", newCaptchaReverseProxy(resolver, targetURL, baseURL, true))
+		mux.Handle("/", newCaptchaReverseProxy(resolver, targetURL, baseURL, true, mode.userAgent))
 	} else {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			log.Printf("captcha root request: method=%s uri=%s host=%s", r.Method, r.RequestURI, r.Host)
@@ -277,7 +283,11 @@ func runCaptchaBrowserServer(
 	if source == "" {
 		source = "primary"
 	}
-	fmt.Println(eventPrefix + "source=" + source + " url=" + captchaURL)
+	eventLine := eventPrefix + "source=" + source + " url=" + captchaURL
+	if strings.TrimSpace(mode.userAgent) != "" {
+		eventLine += " ua_b64=" + base64.RawURLEncoding.EncodeToString([]byte(mode.userAgent))
+	}
+	fmt.Println(eventLine)
 	if mode.autoOpenBrowser {
 		openBrowser(captchaURL)
 	}
@@ -317,6 +327,7 @@ func newCaptchaGenericReverseProxy(
 	resolver *protectedResolver,
 	baseURL string,
 	targetURL *neturl.URL,
+	userAgent string,
 ) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Transport: resolver.newHTTPTransport(),
@@ -327,6 +338,9 @@ func newCaptchaGenericReverseProxy(
 			req.URL.RawPath = targetURL.RawPath
 			req.URL.RawQuery = targetURL.RawQuery
 			req.Host = targetURL.Host
+			if strings.TrimSpace(userAgent) != "" {
+				req.Header.Set("User-Agent", userAgent)
+			}
 		},
 		ModifyResponse: func(res *http.Response) error {
 			if res.StatusCode >= http.StatusBadRequest {
@@ -354,6 +368,7 @@ func newCaptchaReverseProxy(
 	targetURL *neturl.URL,
 	baseURL string,
 	injectHTML bool,
+	userAgent string,
 ) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Transport: resolver.newHTTPTransport(),
@@ -365,6 +380,9 @@ func newCaptchaReverseProxy(
 				req.URL.RawQuery = targetURL.RawQuery
 			}
 			req.Host = targetURL.Host
+			if strings.TrimSpace(userAgent) != "" {
+				req.Header.Set("User-Agent", userAgent)
+			}
 		},
 		ModifyResponse: func(res *http.Response) error {
 			if res.StatusCode >= http.StatusBadRequest {
