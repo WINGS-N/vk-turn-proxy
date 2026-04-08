@@ -23,6 +23,7 @@ const (
 	muxReadyTimeout          = 30 * time.Second
 	muxProbeTimeout          = 15 * time.Second
 	waitPollInterval         = 250 * time.Millisecond
+	controlHeartbeatInterval = 60 * time.Second
 )
 
 func buildProbeHelloForVersion(version uint32) ([]byte, error) {
@@ -56,6 +57,16 @@ func parseAndValidateServerHelloForVersion(payload []byte, version uint32) (*ses
 		return nil, fmt.Errorf("unexpected server hello version: %d", hello.GetVersion())
 	}
 	return hello, nil
+}
+
+func buildControlHeartbeatPayload() ([]byte, error) {
+	return sessionproto.MarshalHeartbeat(&sessionproto.Heartbeat{
+		Version:                       1,
+		WallClockMs:                   time.Now().UnixMilli(),
+		ActiveStreams:                 uint32(max(0, connectedStreams.Load())),
+		Online:                        true,
+		WireguardPublicKeyFingerprint: wireGuardPublicKeyFingerprint,
+	})
 }
 
 func exchangeServerHello(dtlsConn net.Conn, hello []byte) (*sessionproto.ServerHello, error) {
@@ -97,6 +108,9 @@ func probeMuxVersionOnActiveMainline(dtlsConn net.Conn, writeMu *sync.Mutex, con
 			log.Printf("Mainline upgrade v%d probe attempt %d/%d failed: %s", version, attempt, attempts, err)
 			continue
 		}
+		if serverHello.GetControlHeartbeatSupported() {
+			return serverHello.GetMuxSupported()
+		}
 		if serverHello.GetMuxSupported() {
 			return true
 		}
@@ -107,6 +121,66 @@ func probeMuxVersionOnActiveMainline(dtlsConn net.Conn, writeMu *sync.Mutex, con
 	}
 
 	return false
+}
+
+func negotiateMainlineFeatures(dtlsConn net.Conn, writeMu *sync.Mutex, controlResponses <-chan []byte) (uint32, bool) {
+	for _, version := range []uint32{muxProtocolV2, muxProtocolV1} {
+		hello, err := buildProbeHelloForVersion(version)
+		if err != nil {
+			continue
+		}
+		serverHello, err := exchangeMainlineProbeHello(
+			dtlsConn,
+			writeMu,
+			controlResponses,
+			sessionproto.BuildControlProbeRequest(hello),
+			version,
+		)
+		if err != nil {
+			continue
+		}
+		if serverHello.GetMuxSupported() {
+			return version, serverHello.GetControlHeartbeatSupported()
+		}
+		return muxProtocolNone, serverHello.GetControlHeartbeatSupported()
+	}
+	return muxProtocolNone, false
+}
+
+func startControlHeartbeatLoop(ctx context.Context, dtlsConn net.Conn, writeMu *sync.Mutex) {
+	ticker := time.NewTicker(controlHeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			payload, err := buildControlHeartbeatPayload()
+			if err != nil {
+				log.Printf("Failed to build control heartbeat: %s", err)
+				continue
+			}
+			packet := sessionproto.BuildControlHeartbeatRequest(payload)
+			writeMu.Lock()
+			if err = writeRawControlPacket(dtlsConn, packet); err != nil {
+				writeMu.Unlock()
+				log.Printf("Failed to write control heartbeat: %s", err)
+				return
+			}
+			writeMu.Unlock()
+		}
+	}
+}
+
+func writeRawControlPacket(conn net.Conn, payload []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	if _, err := conn.Write(payload); err != nil {
+		return err
+	}
+	return conn.SetWriteDeadline(time.Time{})
 }
 
 func exchangeMainlineProbeHello(

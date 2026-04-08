@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -10,12 +11,13 @@ import (
 	"io"
 	"log"
 	"math/rand"
-	"net/http"
 	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	tlsclient "github.com/bogdanfinn/tls-client"
 )
 
 type vkCaptchaError struct {
@@ -66,8 +68,13 @@ func solveVkCaptcha(ctx context.Context, captchaErr *vkCaptchaError, resolver *p
 		return "", fmt.Errorf("no session_token in redirect_uri")
 	}
 	log.Printf("Solving VK Smart Captcha automatically...")
+	client, err := resolver.newTLSHTTPClient(profile, 20*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize tls client: %w", err)
+	}
+	defer client.CloseIdleConnections()
 
-	powInput, difficulty, err := fetchPowInput(ctx, captchaErr.RedirectURI, resolver, profile)
+	powInput, difficulty, err := fetchPowInput(ctx, captchaErr.RedirectURI, client, profile)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch PoW input: %w", err)
 	}
@@ -77,7 +84,7 @@ func solveVkCaptcha(ctx context.Context, captchaErr *vkCaptchaError, resolver *p
 		return "", fmt.Errorf("failed to solve PoW")
 	}
 
-	successToken, err := callCaptchaNotRobot(ctx, captchaErr.SessionToken, hash, resolver, profile)
+	successToken, err := callCaptchaNotRobot(ctx, captchaErr.SessionToken, hash, client, profile)
 	if err != nil {
 		return "", fmt.Errorf("captchaNotRobot API failed: %w", err)
 	}
@@ -86,16 +93,13 @@ func solveVkCaptcha(ctx context.Context, captchaErr *vkCaptchaError, resolver *p
 	return successToken, nil
 }
 
-func fetchPowInput(ctx context.Context, redirectURI string, resolver *protectedResolver, profile Profile) (string, int, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", redirectURI, nil)
+func fetchPowInput(ctx context.Context, redirectURI string, client tlsclient.HttpClient, profile Profile) (string, int, error) {
+	req, err := newFHTTPRequest(ctx, "GET", redirectURI, nil)
 	if err != nil {
 		return "", 0, err
 	}
-	applyBrowserProfile(req, profile)
+	applyBrowserProfileFhttp(req, profile)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-
-	client := resolver.newHTTPClient(20 * time.Second)
-	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", 0, err
@@ -145,22 +149,19 @@ func callCaptchaNotRobot(
 	ctx context.Context,
 	sessionToken string,
 	hash string,
-	resolver *protectedResolver,
+	client tlsclient.HttpClient,
 	profile Profile,
 ) (string, error) {
 	vkReq := func(method string, postData string) (map[string]interface{}, error) {
 		reqURL := "https://api.vk.ru/method/" + method + "?v=5.131"
-		req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(postData))
+		req, err := newFHTTPRequest(ctx, "POST", reqURL, []byte(postData))
 		if err != nil {
 			return nil, err
 		}
-		applyBrowserProfile(req, profile)
+		applyBrowserProfileFhttp(req, profile)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Origin", "https://vk.ru")
 		req.Header.Set("Referer", "https://vk.ru/")
-
-		client := resolver.newHTTPClient(20 * time.Second)
-		defer client.CloseIdleConnections()
 		httpResp, err := client.Do(req)
 		if err != nil {
 			return nil, err
@@ -192,8 +193,11 @@ func callCaptchaNotRobot(
 	}
 	time.Sleep(200 * time.Millisecond)
 
-	browserFp := fmt.Sprintf("%032x", rand.Int63())
-	deviceJSON := `{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1032,"innerWidth":1920,"innerHeight":945,"devicePixelRatio":1,"language":"en-US","languages":["en-US"],"webdriver":false,"hardwareConcurrency":16,"deviceMemory":8,"connectionEffectiveType":"4g","notificationsPermission":"denied"}`
+	browserFp := generateBrowserFp(profile)
+	deviceJSON := fmt.Sprintf(
+		`{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1040,"innerWidth":1920,"innerHeight":969,"devicePixelRatio":1,"language":"en-US","languages":["en-US"],"webdriver":false,"hardwareConcurrency":8,"deviceMemory":8,"connectionEffectiveType":"4g","notificationsPermission":"default","userAgent":"%s","platform":"Win32"}`,
+		profile.UserAgent,
+	)
 	componentDoneData := baseParams + fmt.Sprintf(
 		"&browser_fp=%s&device=%s",
 		browserFp,
@@ -205,9 +209,15 @@ func callCaptchaNotRobot(
 	}
 	time.Sleep(200 * time.Millisecond)
 
-	cursorJSON := `[{"x":950,"y":500},{"x":945,"y":510},{"x":940,"y":520},{"x":938,"y":525},{"x":938,"y":525}]`
+	cursorJSON := generateFakeCursor()
 	answer := base64.StdEncoding.EncodeToString([]byte("{}"))
-	debugInfo := "d44f534ce8deb56ba20be52e05c433309b49ee4d2a70602deeb17a1954257785"
+	debugInfoBytes := md5.Sum([]byte(profile.UserAgent + strconv.FormatInt(time.Now().UnixNano(), 10)))
+	debugInfo := hex.EncodeToString(debugInfoBytes[:])
+	connectionDownlinkSamples := make([]string, 0, 16)
+	for i := 0; i < 16; i++ {
+		connectionDownlinkSamples = append(connectionDownlinkSamples, fmt.Sprintf("%.1f", 8.5+rand.Float64()*2.0))
+	}
+	connectionDownlink := "[" + strings.Join(connectionDownlinkSamples, ",") + "]"
 	checkData := baseParams + fmt.Sprintf(
 		"&accelerometer=%s&gyroscope=%s&motion=%s&cursor=%s&taps=%s&connectionRtt=%s&connectionDownlink=%s&browser_fp=%s&hash=%s&answer=%s&debug_info=%s",
 		neturl.QueryEscape("[]"),
@@ -216,7 +226,7 @@ func callCaptchaNotRobot(
 		neturl.QueryEscape(cursorJSON),
 		neturl.QueryEscape("[]"),
 		neturl.QueryEscape("[]"),
-		neturl.QueryEscape("[9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5]"),
+		neturl.QueryEscape(connectionDownlink),
 		browserFp,
 		hash,
 		answer,

@@ -22,20 +22,21 @@ const (
 )
 
 type streamMetrics struct {
-	Key       string
-	Protocol  string
-	Version   uint32
-	Remote    string
-	ClientIP  string
-	SessionID string
-	StreamID  byte
-	RxBytes   uint64
-	TxBytes   uint64
-	LastRx    uint64
-	LastTx    uint64
-	RxRate    uint64
-	TxRate    uint64
-	StartedAt time.Time
+	Key             string
+	Protocol        string
+	Version         uint32
+	Remote          string
+	ClientIP        string
+	SessionID       string
+	StreamID        byte
+	RxBytes         uint64
+	TxBytes         uint64
+	LastRx          uint64
+	LastTx          uint64
+	RxRate          uint64
+	TxRate          uint64
+	StartedAt       time.Time
+	LastHeartbeatAt time.Time
 }
 
 type clientMetrics struct {
@@ -207,6 +208,17 @@ func (t *serverTUI) addStreamRx(key, clientIP string, n int) {
 
 func (t *serverTUI) addStreamTx(key, clientIP string, n int) {
 	t.addStreamBytes(key, clientIP, n, false)
+}
+
+func (t *serverTUI) noteStreamHeartbeat(key string) {
+	if t == nil || key == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if stream := t.streams[key]; stream != nil {
+		stream.LastHeartbeatAt = time.Now()
+	}
 }
 
 func (t *serverTUI) addStreamBytes(key, clientIP string, n int, rx bool) {
@@ -446,17 +458,18 @@ func renderStreamsTable(t *serverTUI, streams []streamMetrics) string {
 	}
 	tw := table.NewWriter()
 	tw.SetStyle(table.StyleRounded)
-	tw.AppendHeader(table.Row{"Protocol", "Remote", "Client", "Session", "SID", "RX/s", "TX/s", "RX Total", "TX Total"})
+	tw.AppendHeader(table.Row{"Protocol", "Remote", "Client", "Session", "SID", "HB", "RX/s", "TX/s", "RX Total", "TX Total"})
 	tw.SetColumnConfigs([]table.ColumnConfig{
 		{Number: 1, WidthMax: 14},
 		{Number: 2, WidthMax: 22},
 		{Number: 3, WidthMax: 15},
 		{Number: 4, WidthMax: 20},
 		{Number: 5, WidthMax: 4, Align: text.AlignRight},
-		{Number: 6, WidthMax: 10, Align: text.AlignRight},
+		{Number: 6, WidthMax: 6, Align: text.AlignRight},
 		{Number: 7, WidthMax: 10, Align: text.AlignRight},
-		{Number: 8, WidthMax: 11, Align: text.AlignRight},
+		{Number: 8, WidthMax: 10, Align: text.AlignRight},
 		{Number: 9, WidthMax: 11, Align: text.AlignRight},
+		{Number: 10, WidthMax: 11, Align: text.AlignRight},
 	})
 	for i, stream := range streams {
 		if i >= 10 {
@@ -468,6 +481,7 @@ func renderStreamsTable(t *serverTUI, streams []streamMetrics) string {
 			trimMiddle(stream.ClientIP, 15),
 			trimMiddle(stream.SessionID, 20),
 			stream.StreamID,
+			heartbeatAgeLabel(stream.LastHeartbeatAt),
 			colorRate(t, stream.RxRate),
 			colorRate(t, stream.TxRate),
 			humanBytes(stream.RxBytes),
@@ -475,6 +489,17 @@ func renderStreamsTable(t *serverTUI, streams []streamMetrics) string {
 		})
 	}
 	return tw.Render() + "\n"
+}
+
+func heartbeatAgeLabel(lastHeartbeatAt time.Time) string {
+	if lastHeartbeatAt.IsZero() {
+		return "—"
+	}
+	age := time.Since(lastHeartbeatAt).Round(time.Second)
+	if age < time.Second {
+		return "now"
+	}
+	return age.String()
 }
 
 func renderClientsTable(t *serverTUI, clients []clientMetrics) string {

@@ -4,20 +4,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
-	"github.com/cacggghp/vk-turn-proxy/sessionproto"
-	"github.com/cbeuw/connutil"
-	"github.com/google/uuid"
-	"github.com/pion/dtls/v3"
-	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
-	"github.com/pion/logging"
-	"github.com/pion/turn/v5"
 	"io"
 	"log"
 	"math/rand"
@@ -31,11 +24,70 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/cacggghp/vk-turn-proxy/sessionproto"
+	"github.com/cbeuw/connutil"
+	"github.com/google/uuid"
+	"github.com/pion/dtls/v3"
+	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
+	"github.com/pion/logging"
+	"github.com/pion/turn/v5"
 )
 
 type getCredsFunc func(string) (string, string, string, error)
 
-var manualCaptcha bool
+const captchaLockoutDuration = 60 * time.Second
+
+var (
+	manualCaptcha                 bool
+	globalCaptchaLockout          atomic.Int64
+	connectedStreams              atomic.Int32
+	globalAppCancel               context.CancelFunc
+	processStartedAt              = time.Now()
+	proxyAuthReadyState           atomic.Bool
+	proxyTurnReadyState           atomic.Bool
+	proxyDtlsReadyState           atomic.Bool
+	wireGuardPublicKeyFingerprint string
+)
+
+func setCaptchaLockout(duration time.Duration) {
+	globalCaptchaLockout.Store(time.Now().Add(duration).Unix())
+	emitCaptchaLockoutStatus(duration)
+}
+
+func captchaLockoutRemaining() time.Duration {
+	lockoutEnd := globalCaptchaLockout.Load()
+	if lockoutEnd == 0 {
+		return 0
+	}
+	remaining := time.Until(time.Unix(lockoutEnd, 0))
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+func isCaptchaWaitRequired(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "CAPTCHA_WAIT_REQUIRED")
+}
+
+func isFatalCaptchaFailure(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "FATAL_CAPTCHA_FAILED_NO_STREAMS")
+}
+
+func wrapCaptchaFailure(err error, allowInteractiveFallback bool) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errCaptchaDeferredAlreadyPending) {
+		return err
+	}
+	setCaptchaLockout(captchaLockoutDuration)
+	if allowInteractiveFallback && connectedStreams.Load() == 0 {
+		return fmt.Errorf("FATAL_CAPTCHA_FAILED_NO_STREAMS: %w", err)
+	}
+	return fmt.Errorf("CAPTCHA_WAIT_REQUIRED: %w", err)
+}
 
 func vkDelayRandom(minMs, maxMs int) {
 	if maxMs <= minMs {
@@ -47,21 +99,31 @@ func vkDelayRandom(minMs, maxMs int) {
 }
 
 func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, string, error) {
+	if remaining := captchaLockoutRemaining(); remaining > 0 {
+		emitCaptchaLockoutStatus(remaining)
+		return "", "", "", fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active for %s", remaining.Round(time.Second))
+	}
+
 	profile := getRandomProfile()
 	name := generateName()
 	escapedName := neturl.QueryEscape(name)
+	client, err := resolver.newTLSHTTPClient(profile, 20*time.Second)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to initialize tls client: %w", err)
+	}
+	defer client.CloseIdleConnections()
 
 	log.Printf("Connecting identity - Name: %s | User-Agent: %s", name, profile.UserAgent)
 
 	doRequest := func(data string, url string) (resp map[string]interface{}, err error) {
-		client := resolver.newHTTPClient(20 * time.Second)
-		defer client.CloseIdleConnections()
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(data)))
+		req, err := newFHTTPRequest(context.Background(), "POST", url, []byte(data))
 		if err != nil {
 			return nil, err
 		}
 
-		applyBrowserProfile(req, profile)
+		parsedURL, _ := neturl.Parse(url)
+		req.Host = parsedURL.Hostname()
+		applyBrowserProfileFhttp(req, profile)
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "*/*")
 		req.Header.Set("Origin", "https://vk.ru")
@@ -104,7 +166,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 	data := "client_id=6287487&token_type=messages&client_secret=QbYic1K3lEV5kTGiqlq2&version=1&app_id=6287487"
 	url := "https://login.vk.ru/?act=get_anonym_token"
 
-	resp, err := doRequest(data, url)
+	resp, err = doRequest(data, url)
 	if err != nil {
 		return "", "", "", fmt.Errorf("request error:%s", err)
 	}
@@ -139,7 +201,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 			errCode, _ := errObj["error_code"].(float64)
 			if errCode == 14 {
 				if attempt == maxCaptchaAttempts {
-					return "", "", "", fmt.Errorf("captcha failed after %d attempts", maxCaptchaAttempts)
+					return "", "", "", wrapCaptchaFailure(fmt.Errorf("captcha failed after %d attempts", maxCaptchaAttempts), allowInteractiveFallback)
 				}
 
 				captchaErr := parseVkCaptchaError(errObj)
@@ -179,7 +241,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						)
 					}
 					if solveErr != nil {
-						return "", "", "", fmt.Errorf("smart captcha solve error: %s", solveErr)
+						return "", "", "", wrapCaptchaFailure(fmt.Errorf("smart captcha solve error: %w", solveErr), allowInteractiveFallback)
 					}
 					captchaAttempt := captchaErr.CaptchaAttempt
 					if captchaAttempt == "" || captchaAttempt == "0" {
@@ -204,7 +266,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						}
 						captchaKey, solveErr := solveCaptchaViaHTTPDeferred(captchaImg, resolver, profile.UserAgent)
 						if solveErr != nil {
-							return "", "", "", fmt.Errorf("captcha solve error: %s", solveErr)
+							return "", "", "", wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), false)
 						}
 						data = fmt.Sprintf(
 							"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_sid=%s&captcha_key=%s",
@@ -223,7 +285,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 					}
 					captchaKey, solveErr := solveCaptchaViaHTTP(captchaImg, resolver, profile.UserAgent)
 					if solveErr != nil {
-						return "", "", "", fmt.Errorf("captcha solve error: %s", solveErr)
+						return "", "", "", wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), true)
 					}
 					data = fmt.Sprintf(
 						"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_sid=%s&captcha_key=%s",
@@ -627,7 +689,7 @@ func startDtlsTurnWorkers(
 		oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, firstReady, firstProbeResult, sessionMode, sessionID, protocolVersion, 0)
 	})
 	wg.Go(func() {
-		oneTurnConnectionLoop(ctx, params, peer, connchan, t)
+		oneTurnConnectionLoop(ctx, params, peer, connchan, t, 0)
 	})
 
 	for i := 0; i < n-1; i++ {
@@ -637,7 +699,7 @@ func startDtlsTurnWorkers(
 			oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, nil, nil, sessionMode, sessionID, protocolVersion, streamID)
 		})
 		wg.Go(func() {
-			oneTurnConnectionLoop(ctx, params, peer, connchan, t)
+			oneTurnConnectionLoop(ctx, params, peer, connchan, t, int(streamID))
 		})
 	}
 
@@ -691,6 +753,7 @@ func oneDtlsConnection(
 	}()
 	dtlsWriteMu := &sync.Mutex{}
 	controlResponses := make(chan []byte, 4)
+	controlHeartbeatSupported := false
 	if sessionMode == sessionproto.ModeMux {
 		hello, err1 := buildSessionHelloForVersion(protocolVersion, sessionID, streamID)
 		if err1 != nil {
@@ -710,11 +773,15 @@ func oneDtlsConnection(
 			}
 			return
 		}
+		controlHeartbeatSupported = serverHello.GetControlHeartbeatSupported()
 		log.Printf("Established DTLS connection and completed mux negotiation for stream %d!\n", streamID)
 	} else {
 		log.Printf("Established DTLS connection!\n")
 	}
-	fmt.Println("PROXY_STATUS: dtls_ready")
+	if controlHeartbeatSupported && streamID == 0 {
+		go startControlHeartbeatLoop(dtlsctx, dtlsConn, dtlsWriteMu)
+	}
+	emitProxyStatus("dtls_ready")
 	if okchan != nil {
 		go func() {
 			select {
@@ -788,6 +855,12 @@ func oneDtlsConnection(
 				}
 				continue
 			}
+			if payload, ok := sessionproto.ParseControlHeartbeatResponse(buf[:n]); ok {
+				if _, parseErr := sessionproto.ParseHeartbeatMessage(payload); parseErr != nil {
+					log.Printf("Failed to parse control heartbeat response: %s", parseErr)
+				}
+				continue
+			}
 			addr1, ok := addr.Load().(net.Addr)
 			if !ok {
 				continue
@@ -800,12 +873,15 @@ func oneDtlsConnection(
 			}
 		}
 	}()
-	if sessionMode != sessionproto.ModeMux && probeResult != nil {
+	if sessionMode != sessionproto.ModeMux && streamID == 0 && probeResult != nil {
 		go func() {
-			version := probeHighestMuxVersionOnActiveMainline(dtlsConn, dtlsWriteMu, controlResponses)
+			version, heartbeatSupported := negotiateMainlineFeatures(dtlsConn, dtlsWriteMu, controlResponses)
 			select {
 			case probeResult <- version:
 			default:
+			}
+			if heartbeatSupported {
+				go startControlHeartbeatLoop(dtlsctx, dtlsConn, dtlsWriteMu)
 			}
 		}()
 	}
@@ -836,7 +912,7 @@ type turnParams struct {
 	resolver *protectedResolver
 }
 
-func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UDPAddr, conn2 net.PacketConn, c chan<- error) {
+func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UDPAddr, conn2 net.PacketConn, streamID int, c chan<- error) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error = nil
 	defer func() { c <- err }()
@@ -848,6 +924,7 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 		err = fmt.Errorf("failed to get TURN credentials: %s", err1)
 		return
 	}
+	emitProxyStatus("auth_ready")
 	urlhost, urlport, err1 := net.SplitHostPort(url)
 	if err1 != nil {
 		err = fmt.Errorf("failed to parse TURN server address: %s", err1)
@@ -946,7 +1023,9 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 		err = fmt.Errorf("failed to allocate: %s", err1)
 		return
 	}
+	connectedStreams.Add(1)
 	defer func() {
+		connectedStreams.Add(-1)
 		if err1 := relayConn.Close(); err1 != nil {
 			err = fmt.Errorf("failed to close TURN allocated connection: %s", err1)
 		}
@@ -954,8 +1033,8 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 
 	// The relayConn's local address is actually the transport
 	// address assigned on the TURN server.
-	log.Printf("relayed-address=%s", relayConn.LocalAddr().String())
-	fmt.Println("PROXY_STATUS: turn_ready")
+	log.Printf("[STREAM %d] relayed-address=%s", streamID, relayConn.LocalAddr().String())
+	emitProxyStatus("turn_ready")
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
@@ -1065,7 +1144,7 @@ func oneDtlsConnectionLoop(
 	}
 }
 
-func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *net.UDPAddr, connchan <-chan net.PacketConn, t <-chan time.Time) {
+func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *net.UDPAddr, connchan <-chan net.PacketConn, t <-chan time.Time, streamID int) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -1074,11 +1153,33 @@ func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *ne
 			select {
 			case <-t:
 				c := make(chan error)
-				go oneTurnConnection(ctx, turnParams, peer, conn2, c)
+				go oneTurnConnection(ctx, turnParams, peer, conn2, streamID, c)
 				if err := <-c; err != nil {
-					log.Printf("%s; reconnecting in %s", err, workerReconnectBackoff)
+					if isFatalCaptchaFailure(err) {
+						log.Printf("[STREAM %d] Fatal captcha error, shutting down runtime: %s", streamID, err)
+						if globalAppCancel != nil {
+							globalAppCancel()
+						}
+						return
+					}
+					if isCaptchaWaitRequired(err) {
+						wait := captchaLockoutRemaining()
+						if wait <= 0 {
+							wait = captchaLockoutDuration
+						}
+						log.Printf("[STREAM %d] %s; backing off for %s", streamID, err, wait.Round(time.Second))
+						timer := time.NewTimer(wait)
+						select {
+						case <-ctx.Done():
+							timer.Stop()
+							return
+						case <-timer.C:
+						}
+						continue
+					}
+					log.Printf("[STREAM %d] %s; reconnecting in %s", streamID, err, workerReconnectBackoff)
 				} else {
-					log.Printf("TURN worker stopped; reconnecting in %s", workerReconnectBackoff)
+					log.Printf("[STREAM %d] TURN worker stopped; reconnecting in %s", streamID, workerReconnectBackoff)
 				}
 				if !waitReconnectBackoff(ctx) {
 					return
@@ -1091,6 +1192,7 @@ func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *ne
 
 func main() { //nolint:cyclop
 	ctx, cancel := context.WithCancel(context.Background())
+	globalAppCancel = cancel
 	defer cancel()
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
@@ -1116,6 +1218,7 @@ func main() { //nolint:cyclop
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip automatic captcha solving and use manual captcha flow immediately")
 	protectSock := flag.String("protect-sock", "", "unix socket used for VpnService.protect fd bridge")
+	wgPubFingerprint := flag.String("wg-pub-fp", "", "WireGuard public key fingerprint to include in heartbeat telemetry")
 	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: mainline|mux|auto")
 	sessionIDFlag := flag.String("session-id", "", "override session ID (hex, 32 chars) for mux mode")
 	flag.Parse()
@@ -1136,6 +1239,8 @@ func main() { //nolint:cyclop
 	}
 	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
 	manualCaptcha = *manualCaptchaFlag
+	wireGuardPublicKeyFingerprint = strings.TrimSpace(*wgPubFingerprint)
+	emitProxyCaps()
 
 	peer, err := peerResolver.ResolveUDPAddr(ctx, *peerAddr)
 	if err != nil {
@@ -1209,8 +1314,9 @@ func main() { //nolint:cyclop
 	t := time.Tick(200 * time.Millisecond)
 	if *direct {
 		for i := 0; i < *n; i++ {
+			streamID := i
 			wg1.Go(func() {
-				oneTurnConnectionLoop(ctx, params, peer, listenConnChan, t)
+				oneTurnConnectionLoop(ctx, params, peer, listenConnChan, t, streamID)
 			})
 		}
 	} else {

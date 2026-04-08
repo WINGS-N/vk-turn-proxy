@@ -44,21 +44,6 @@ jobs:
           - goos: linux
             goarch: riscv64
             cgo: 0
-          - goos: darwin
-            goarch: amd64
-            cgo: 0
-          - goos: darwin
-            goarch: arm64
-            cgo: 0
-          - goos: windows
-            goarch: amd64
-            cgo: 0
-          - goos: windows
-            goarch: arm64
-            cgo: 0
-          - goos: windows
-            goarch: 386
-            cgo: 0
           - goos: android
             goarch: arm64
             cgo: 1
@@ -67,9 +52,6 @@ jobs:
             goarch: arm
             cgo: 1
             api: 21
-          - goos: freebsd
-            goarch: amd64
-            cgo: 0
 
     steps:
       - name: Check out code

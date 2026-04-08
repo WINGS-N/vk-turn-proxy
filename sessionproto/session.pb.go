@@ -139,12 +139,13 @@ func (x *ClientHello) GetStreamId() uint32 {
 }
 
 type ServerHello struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	MuxSupported  bool                   `protobuf:"varint,2,opt,name=mux_supported,json=muxSupported,proto3" json:"mux_supported,omitempty"`
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	Version                   uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	MuxSupported              bool                   `protobuf:"varint,2,opt,name=mux_supported,json=muxSupported,proto3" json:"mux_supported,omitempty"`
+	Error                     string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	ControlHeartbeatSupported bool                   `protobuf:"varint,4,opt,name=control_heartbeat_supported,json=controlHeartbeatSupported,proto3" json:"control_heartbeat_supported,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *ServerHello) Reset() {
@@ -198,6 +199,89 @@ func (x *ServerHello) GetError() string {
 	return ""
 }
 
+func (x *ServerHello) GetControlHeartbeatSupported() bool {
+	if x != nil {
+		return x.ControlHeartbeatSupported
+	}
+	return false
+}
+
+type Heartbeat struct {
+	state                         protoimpl.MessageState `protogen:"open.v1"`
+	Version                       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	WallClockMs                   int64                  `protobuf:"varint,2,opt,name=wall_clock_ms,json=wallClockMs,proto3" json:"wall_clock_ms,omitempty"`
+	ActiveStreams                 uint32                 `protobuf:"varint,3,opt,name=active_streams,json=activeStreams,proto3" json:"active_streams,omitempty"`
+	Online                        bool                   `protobuf:"varint,4,opt,name=online,proto3" json:"online,omitempty"`
+	WireguardPublicKeyFingerprint string                 `protobuf:"bytes,5,opt,name=wireguard_public_key_fingerprint,json=wireguardPublicKeyFingerprint,proto3" json:"wireguard_public_key_fingerprint,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
+}
+
+func (x *Heartbeat) Reset() {
+	*x = Heartbeat{}
+	mi := &file_proto_session_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Heartbeat) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Heartbeat) ProtoMessage() {}
+
+func (x *Heartbeat) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_session_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
+func (*Heartbeat) Descriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Heartbeat) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetWallClockMs() int64 {
+	if x != nil {
+		return x.WallClockMs
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetActiveStreams() uint32 {
+	if x != nil {
+		return x.ActiveStreams
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetOnline() bool {
+	if x != nil {
+		return x.Online
+	}
+	return false
+}
+
+func (x *Heartbeat) GetWireguardPublicKeyFingerprint() string {
+	if x != nil {
+		return x.WireguardPublicKeyFingerprint
+	}
+	return ""
+}
+
 var File_proto_session_proto protoreflect.FileDescriptor
 
 const file_proto_session_proto_rawDesc = "" +
@@ -208,11 +292,18 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x04type\x18\x02 \x01(\x0e2\x1d.sessionproto.ClientHelloTypeR\x04type\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x03 \x01(\fR\tsessionId\x12\x1b\n" +
-	"\tstream_id\x18\x04 \x01(\rR\bstreamId\"b\n" +
+	"\tstream_id\x18\x04 \x01(\rR\bstreamId\"\xa2\x01\n" +
 	"\vServerHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12#\n" +
 	"\rmux_supported\x18\x02 \x01(\bR\fmuxSupported\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error*p\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\x12>\n" +
+	"\x1bcontrol_heartbeat_supported\x18\x04 \x01(\bR\x19controlHeartbeatSupported\"\xd1\x01\n" +
+	"\tHeartbeat\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\rR\aversion\x12\"\n" +
+	"\rwall_clock_ms\x18\x02 \x01(\x03R\vwallClockMs\x12%\n" +
+	"\x0eactive_streams\x18\x03 \x01(\rR\ractiveStreams\x12\x16\n" +
+	"\x06online\x18\x04 \x01(\bR\x06online\x12G\n" +
+	" wireguard_public_key_fingerprint\x18\x05 \x01(\tR\x1dwireguardPublicKeyFingerprint*p\n" +
 	"\x0fClientHelloType\x12!\n" +
 	"\x1dCLIENT_HELLO_TYPE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17CLIENT_HELLO_TYPE_PROBE\x10\x01\x12\x1d\n" +
@@ -231,11 +322,12 @@ func file_proto_session_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_session_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_proto_session_proto_goTypes = []any{
 	(ClientHelloType)(0), // 0: sessionproto.ClientHelloType
 	(*ClientHello)(nil),  // 1: sessionproto.ClientHello
 	(*ServerHello)(nil),  // 2: sessionproto.ServerHello
+	(*Heartbeat)(nil),    // 3: sessionproto.Heartbeat
 }
 var file_proto_session_proto_depIdxs = []int32{
 	0, // 0: sessionproto.ClientHello.type:type_name -> sessionproto.ClientHelloType
@@ -257,7 +349,7 @@ func file_proto_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_session_proto_rawDesc), len(file_proto_session_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

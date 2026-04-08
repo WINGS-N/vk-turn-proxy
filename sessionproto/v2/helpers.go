@@ -31,10 +31,11 @@ func ValidateClientHello(hello *sessionproto.ClientHello) error {
 	return sessionproto.ValidateHelloShape(hello, ProtocolVersion)
 }
 
-func BuildServerHello(muxSupported bool, errorText string) ([]byte, error) {
+func BuildServerHello(muxSupported bool, errorText string, controlHeartbeatSupported bool) ([]byte, error) {
 	return sessionproto.MarshalServerHello(&sessionproto.ServerHello{
-		Version:      ProtocolVersion,
-		MuxSupported: muxSupported,
-		Error:        errorText,
+		Version:                   ProtocolVersion,
+		MuxSupported:              muxSupported,
+		Error:                     errorText,
+		ControlHeartbeatSupported: controlHeartbeatSupported,
 	})
 }

@@ -288,6 +288,11 @@ func runCaptchaBrowserServer(
 		eventLine += " ua_b64=" + base64.RawURLEncoding.EncodeToString([]byte(mode.userAgent))
 	}
 	fmt.Println(eventLine)
+	if strings.HasPrefix(eventPrefix, "CAPTCHA_PENDING") {
+		emitCaptchaPromptEvent("pending", source, captchaURL, mode.userAgent)
+	} else {
+		emitCaptchaPromptEvent("required", source, captchaURL, mode.userAgent)
+	}
 	if mode.autoOpenBrowser {
 		openBrowser(captchaURL)
 	}
@@ -298,6 +303,7 @@ func runCaptchaBrowserServer(
 		case outcome = <-resultCh:
 		case <-time.After(mode.waitTimeout):
 			fmt.Println("CAPTCHA_EXPIRED")
+			emitCaptchaStateEvent("expired")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			_ = server.Shutdown(shutdownCtx)
@@ -314,12 +320,14 @@ func runCaptchaBrowserServer(
 
 	if outcome.cancelled {
 		fmt.Println("CAPTCHA_CANCELLED")
+		emitCaptchaStateEvent("cancelled")
 		return "", fmt.Errorf("captcha cancelled")
 	}
 	if strings.TrimSpace(outcome.value) == "" {
 		return "", fmt.Errorf("captcha returned empty result")
 	}
 	fmt.Println("CAPTCHA_SOLVED")
+	emitCaptchaStateEvent("solved")
 	return outcome.value, nil
 }
 
