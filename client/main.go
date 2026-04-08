@@ -142,10 +142,18 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						log.Printf("VK smart captcha produced success token, retrying auth")
 					} else if allowInteractiveFallback {
 						log.Printf("Auto captcha solve did not complete, opening browser fallback: %s", solveErr)
-						successToken, solveErr = solveCaptchaViaProxy(captchaErr.RedirectURI, resolver)
+						successToken, solveErr = solveCaptchaViaProxy(
+							captchaErr.RedirectURI,
+							resolver,
+							profile.UserAgent,
+						)
 					} else {
 						log.Printf("Auto captcha solve needs user confirmation, deferring to app notification")
-						successToken, solveErr = solveCaptchaViaProxyDeferred(captchaErr.RedirectURI, resolver)
+						successToken, solveErr = solveCaptchaViaProxyDeferred(
+							captchaErr.RedirectURI,
+							resolver,
+							profile.UserAgent,
+						)
 					}
 					if solveErr != nil {
 						return "", "", "", fmt.Errorf("smart captcha solve error: %s", solveErr)
@@ -171,7 +179,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						} else {
 							log.Printf("Image captcha required, deferring to app notification")
 						}
-						captchaKey, solveErr := solveCaptchaViaHTTPDeferred(captchaImg, resolver)
+						captchaKey, solveErr := solveCaptchaViaHTTPDeferred(captchaImg, resolver, profile.UserAgent)
 						if solveErr != nil {
 							return "", "", "", fmt.Errorf("captcha solve error: %s", solveErr)
 						}
@@ -190,7 +198,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 					} else {
 						log.Printf("Opening browser captcha fallback for image captcha")
 					}
-					captchaKey, solveErr := solveCaptchaViaHTTP(captchaImg, resolver)
+					captchaKey, solveErr := solveCaptchaViaHTTP(captchaImg, resolver, profile.UserAgent)
 					if solveErr != nil {
 						return "", "", "", fmt.Errorf("captcha solve error: %s", solveErr)
 					}
