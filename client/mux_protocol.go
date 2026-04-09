@@ -11,6 +11,7 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	sessionv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/v1"
 	sessionv2 "github.com/cacggghp/vk-turn-proxy/sessionproto/v2"
+	sessionv3 "github.com/cacggghp/vk-turn-proxy/sessionproto/v3"
 	"github.com/google/uuid"
 )
 
@@ -18,6 +19,7 @@ const (
 	muxProtocolNone uint32 = 0
 	muxProtocolV1   uint32 = sessionv1.ProtocolVersion
 	muxProtocolV2   uint32 = sessionv2.ProtocolVersion
+	muxProtocolV3   uint32 = sessionv3.ProtocolVersion
 
 	mainlineBootstrapTimeout = 30 * time.Second
 	muxReadyTimeout          = 30 * time.Second
@@ -28,6 +30,8 @@ const (
 
 func buildProbeHelloForVersion(version uint32) ([]byte, error) {
 	switch version {
+	case muxProtocolV3:
+		return sessionv3.BuildProbeHello()
 	case muxProtocolV1:
 		return sessionv1.BuildProbeHello()
 	case muxProtocolV2:
@@ -43,6 +47,8 @@ func buildSessionHelloForVersion(version uint32, sessionID []byte, streamID byte
 		return sessionv1.BuildSessionHello(sessionID, streamID)
 	case muxProtocolV2:
 		return sessionv2.BuildSessionHello(sessionID, streamID)
+	case muxProtocolV3:
+		return sessionv3.BuildSessionHello(sessionID, streamID)
 	default:
 		return nil, fmt.Errorf("unsupported mux protocol version: %d", version)
 	}
@@ -61,11 +67,11 @@ func parseAndValidateServerHelloForVersion(payload []byte, version uint32) (*ses
 
 func buildControlHeartbeatPayload() ([]byte, error) {
 	return sessionproto.MarshalHeartbeat(&sessionproto.Heartbeat{
-		Version:                       1,
-		WallClockMs:                   time.Now().UnixMilli(),
-		ActiveStreams:                 uint32(max(0, connectedStreams.Load())),
-		Online:                        true,
-		WireguardPublicKeyFingerprint: wireGuardPublicKeyFingerprint,
+		Version:          1,
+		WallClockMs:      time.Now().UnixMilli(),
+		ActiveStreams:    uint32(max(0, connectedStreams.Load())),
+		Online:           true,
+		ProtoFingerprint: protoFingerprint,
 	})
 }
 
@@ -94,37 +100,47 @@ func exchangeServerHello(dtlsConn net.Conn, hello []byte) (*sessionproto.ServerH
 	return sessionproto.ParseServerHelloMessage(buf[:n])
 }
 
-func probeMuxVersionOnActiveMainline(dtlsConn net.Conn, writeMu *sync.Mutex, controlResponses <-chan []byte, version uint32, attempts int) bool {
-	hello, err := buildProbeHelloForVersion(version)
+func exchangeMuxSessionHello(dtlsConn net.Conn, hello []byte, version uint32) (*sessionproto.ServerHello, error) {
+	packet := hello
+	if version >= muxProtocolV3 {
+		packet = sessionproto.BuildControlSessionRequest(hello)
+	}
+
+	if err := dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, err
+	}
+	if _, err := dtlsConn.Write(packet); err != nil {
+		return nil, err
+	}
+	if err := dtlsConn.SetWriteDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, 512)
+	if err := dtlsConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return nil, err
+	}
+	n, err := dtlsConn.Read(buf)
 	if err != nil {
-		log.Printf("Failed to build v%d probe hello: %s", version, err)
-		return false
+		return nil, err
 	}
-	controlRequest := sessionproto.BuildControlProbeRequest(hello)
-
-	for attempt := 1; attempt <= attempts; attempt++ {
-		serverHello, err := exchangeMainlineProbeHello(dtlsConn, writeMu, controlResponses, controlRequest, version)
-		if err != nil {
-			log.Printf("Mainline upgrade v%d probe attempt %d/%d failed: %s", version, attempt, attempts, err)
-			continue
-		}
-		if serverHello.GetControlHeartbeatSupported() {
-			return serverHello.GetMuxSupported()
-		}
-		if serverHello.GetMuxSupported() {
-			return true
-		}
-		if serverHello.GetError() != "" {
-			log.Printf("Mainline upgrade v%d probe rejected: %s", version, serverHello.GetError())
-		}
-		return false
+	if err := dtlsConn.SetReadDeadline(time.Time{}); err != nil {
+		return nil, err
 	}
 
-	return false
+	payload := buf[:n]
+	if version >= muxProtocolV3 {
+		sessionPayload, ok := sessionproto.ParseControlSessionResponse(payload)
+		if !ok {
+			return nil, fmt.Errorf("expected wrapped session response for v%d", version)
+		}
+		payload = sessionPayload
+	}
+	return sessionproto.ParseServerHelloMessage(payload)
 }
 
 func negotiateMainlineFeatures(dtlsConn net.Conn, writeMu *sync.Mutex, controlResponses <-chan []byte) (uint32, bool) {
-	for _, version := range []uint32{muxProtocolV2, muxProtocolV1} {
+	for _, version := range []uint32{muxProtocolV3, muxProtocolV2, muxProtocolV1} {
 		hello, err := buildProbeHelloForVersion(version)
 		if err != nil {
 			continue
@@ -211,15 +227,6 @@ func exchangeMainlineProbeHello(
 	case <-timer.C:
 		return nil, fmt.Errorf("timed out waiting for probe response")
 	}
-}
-
-func probeHighestMuxVersionOnActiveMainline(dtlsConn net.Conn, writeMu *sync.Mutex, controlResponses <-chan []byte) uint32 {
-	for _, version := range []uint32{muxProtocolV2, muxProtocolV1} {
-		if probeMuxVersionOnActiveMainline(dtlsConn, writeMu, controlResponses, version, 3) {
-			return version
-		}
-	}
-	return muxProtocolNone
 }
 
 func resolveSessionID(sessionMode sessionproto.Mode, sessionIDFlag string) []byte {

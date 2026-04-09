@@ -36,19 +36,70 @@ import (
 
 type getCredsFunc func(string) (string, string, string, error)
 
+type UDPPacket struct {
+	Data []byte
+	N    int
+}
+
+var packetPool = sync.Pool{
+	New: func() any { return &UDPPacket{Data: make([]byte, 2048)} },
+}
+
+func parseRequestedTransport(raw string, vlessAlias bool) (sessionproto.TransportMode, error) {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	if normalized == "" {
+		normalized = "datagram"
+	}
+	if vlessAlias {
+		if normalized != "datagram" && normalized != "tcp" {
+			return sessionproto.TransportMode_TRANSPORT_MODE_UNSPECIFIED, fmt.Errorf("unsupported transport: %s", raw)
+		}
+		if normalized == "datagram" {
+			normalized = "tcp"
+		}
+	}
+	switch normalized {
+	case "datagram", "udp":
+		return sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM, nil
+	case "tcp", "vless":
+		return sessionproto.TransportMode_TRANSPORT_MODE_TCP, nil
+	default:
+		return sessionproto.TransportMode_TRANSPORT_MODE_UNSPECIFIED, fmt.Errorf("unsupported transport: %s", raw)
+	}
+}
+
 const captchaLockoutDuration = 60 * time.Second
 
 var (
-	manualCaptcha                 bool
-	globalCaptchaLockout          atomic.Int64
-	connectedStreams              atomic.Int32
-	globalAppCancel               context.CancelFunc
-	processStartedAt              = time.Now()
-	proxyAuthReadyState           atomic.Bool
-	proxyTurnReadyState           atomic.Bool
-	proxyDtlsReadyState           atomic.Bool
-	wireGuardPublicKeyFingerprint string
+	activeLocalPeer      atomic.Value
+	manualCaptcha        bool
+	globalCaptchaLockout atomic.Int64
+	connectedStreams     atomic.Int32
+	globalAppCancel      context.CancelFunc
+	proxyAuthReadyState  atomic.Bool
+	proxyTurnReadyState  atomic.Bool
+	proxyDtlsReadyState  atomic.Bool
+	protoFingerprint     string
+	handshakeSem         = make(chan struct{}, 3)
+	cachedCaptchaTokenMu sync.Mutex
+	cachedCaptchaToken   string
 )
+
+func loadCachedCaptchaToken() string {
+	cachedCaptchaTokenMu.Lock()
+	defer cachedCaptchaTokenMu.Unlock()
+	return strings.TrimSpace(cachedCaptchaToken)
+}
+
+func storeCachedCaptchaToken(token string) {
+	normalized := strings.TrimSpace(token)
+	if normalized == "" {
+		return
+	}
+	cachedCaptchaTokenMu.Lock()
+	cachedCaptchaToken = normalized
+	cachedCaptchaTokenMu.Unlock()
+}
 
 func setCaptchaLockout(duration time.Duration) {
 	globalCaptchaLockout.Store(time.Now().Add(duration).Unix())
@@ -186,6 +237,10 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 	vkDelayRandom(200, 400)
 
 	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s", link, escapedName, token1)
+	if cachedSuccessToken := loadCachedCaptchaToken(); cachedSuccessToken != "" {
+		log.Printf("Reusing cached VK success_token for auth warmup")
+		data += fmt.Sprintf("&success_token=%s", neturl.QueryEscape(cachedSuccessToken))
+	}
 	url = "https://api.vk.ru/method/calls.getAnonymousToken?v=5.275&client_id=6287487"
 
 	var token2 string
@@ -215,34 +270,55 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 					allowInteractiveFallback,
 				)
 
-				if captchaErr.SessionToken != "" && !manualCaptcha {
-					successToken, solveErr := solveVkCaptcha(
-						context.Background(),
-						captchaErr,
-						resolver,
-						profile,
-					)
-					if solveErr == nil {
-						usedAutoCaptcha = true
-						log.Printf("VK smart captcha produced success token, retrying auth")
-					} else if allowInteractiveFallback {
-						log.Printf("Auto captcha solve did not complete, opening browser fallback: %s", solveErr)
-						successToken, solveErr = solveCaptchaViaProxy(
-							captchaErr.RedirectURI,
-							resolver,
-							profile.UserAgent,
-						)
+				if captchaErr.SessionToken != "" {
+					var successToken string
+					var solveErr error
+					if manualCaptcha {
+						if allowInteractiveFallback {
+							log.Printf("Manual captcha mode enabled, opening browser smart captcha flow")
+							successToken, solveErr = solveCaptchaViaProxy(
+								captchaErr.RedirectURI,
+								resolver,
+								profile.UserAgent,
+							)
+						} else {
+							log.Printf("Manual captcha mode enabled, deferring smart captcha to app notification")
+							successToken, solveErr = solveCaptchaViaProxyDeferred(
+								captchaErr.RedirectURI,
+								resolver,
+								profile.UserAgent,
+							)
+						}
 					} else {
-						log.Printf("Auto captcha solve needs user confirmation, deferring to app notification")
-						successToken, solveErr = solveCaptchaViaProxyDeferred(
-							captchaErr.RedirectURI,
+						successToken, solveErr = solveVkCaptcha(
+							context.Background(),
+							captchaErr,
 							resolver,
-							profile.UserAgent,
+							profile,
 						)
+						if solveErr == nil {
+							usedAutoCaptcha = true
+							log.Printf("VK smart captcha produced success token, retrying auth")
+						} else if allowInteractiveFallback {
+							log.Printf("Auto captcha solve did not complete, opening browser fallback: %s", solveErr)
+							successToken, solveErr = solveCaptchaViaProxy(
+								captchaErr.RedirectURI,
+								resolver,
+								profile.UserAgent,
+							)
+						} else {
+							log.Printf("Auto captcha solve needs user confirmation, deferring to app notification")
+							successToken, solveErr = solveCaptchaViaProxyDeferred(
+								captchaErr.RedirectURI,
+								resolver,
+								profile.UserAgent,
+							)
+						}
 					}
 					if solveErr != nil {
 						return "", "", "", wrapCaptchaFailure(fmt.Errorf("smart captcha solve error: %w", solveErr), allowInteractiveFallback)
 					}
+					storeCachedCaptchaToken(successToken)
 					captchaAttempt := captchaErr.CaptchaAttempt
 					if captchaAttempt == "" || captchaAttempt == "0" {
 						captchaAttempt = "1"
@@ -264,7 +340,12 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						} else {
 							log.Printf("Image captcha required, deferring to app notification")
 						}
-						captchaKey, solveErr := solveCaptchaViaHTTPDeferred(captchaImg, resolver, profile.UserAgent)
+						captchaKey, solveErr := solveCaptchaViaHTTPDeferred(
+							captchaImg,
+							captchaErr.RedirectURI,
+							resolver,
+							profile.UserAgent,
+						)
 						if solveErr != nil {
 							return "", "", "", wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), false)
 						}
@@ -283,7 +364,12 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 					} else {
 						log.Printf("Opening browser captcha fallback for image captcha")
 					}
-					captchaKey, solveErr := solveCaptchaViaHTTP(captchaImg, resolver, profile.UserAgent)
+					captchaKey, solveErr := solveCaptchaViaHTTP(
+						captchaImg,
+						captchaErr.RedirectURI,
+						resolver,
+						profile.UserAgent,
+					)
 					if solveErr != nil {
 						return "", "", "", wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), true)
 					}
@@ -636,6 +722,16 @@ func dtlsFunc(ctx context.Context, conn net.PacketConn, peer *net.UDPAddr) (net.
 	if err != nil {
 		return nil, err
 	}
+
+	select {
+	case handshakeSem <- struct{}{}:
+		defer func() { <-handshakeSem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	ctx1, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	config := &dtls.Config{
 		Certificates:          []tls.Certificate{certificate},
 		InsecureSkipVerify:    true,
@@ -643,8 +739,6 @@ func dtlsFunc(ctx context.Context, conn net.PacketConn, peer *net.UDPAddr) (net.
 		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		ConnectionIDGenerator: dtls.OnlySendCIDGenerator(),
 	}
-	ctx1, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	dtlsConn, err := dtls.Client(conn, peer, config)
 	if err != nil {
 		return nil, err
@@ -672,36 +766,81 @@ func waitReconnectBackoff(ctx context.Context) bool {
 func startDtlsTurnWorkers(
 	ctx context.Context,
 	peer *net.UDPAddr,
-	listenConnChan <-chan net.PacketConn,
+	listenConn net.PacketConn,
+	inboundChan <-chan *UDPPacket,
 	params *turnParams,
 	t <-chan time.Time,
 	n int,
 	sessionMode sessionproto.Mode,
 	sessionID []byte,
 	protocolVersion uint32,
-	firstReady chan<- struct{},
+	firstReady chan struct{},
 	firstProbeResult chan<- uint32,
+	probeOnly bool,
 ) *sync.WaitGroup {
 	wg := &sync.WaitGroup{}
 	connchan := make(chan net.PacketConn)
+	delayAdditionalWorkers := sessionMode == sessionproto.ModeMainline && !probeOnly && firstReady != nil
 
 	wg.Go(func() {
-		oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, firstReady, firstProbeResult, sessionMode, sessionID, protocolVersion, 0)
+		oneDtlsConnectionLoop(
+			ctx,
+			peer,
+			listenConn,
+			inboundChan,
+			connchan,
+			firstReady,
+			firstProbeResult,
+			sessionMode,
+			sessionID,
+			protocolVersion,
+			0,
+			probeOnly,
+		)
 	})
 	wg.Go(func() {
-		oneTurnConnectionLoop(ctx, params, peer, connchan, t, 0)
+		oneTurnConnectionLoop(ctx, params, peer, connchan, t, 0, probeOnly)
 	})
 
-	for i := 0; i < n-1; i++ {
-		connchan := make(chan net.PacketConn)
-		streamID := byte(i + 1)
-		wg.Go(func() {
-			oneDtlsConnectionLoop(ctx, peer, listenConnChan, connchan, nil, nil, sessionMode, sessionID, protocolVersion, streamID)
-		})
-		wg.Go(func() {
-			oneTurnConnectionLoop(ctx, params, peer, connchan, t, int(streamID))
-		})
+	spawnAdditionalWorkers := func() {
+		for i := 0; i < n-1; i++ {
+			connchan := make(chan net.PacketConn)
+			streamID := byte(i + 1)
+			wg.Go(func() {
+				oneDtlsConnectionLoop(
+					ctx,
+					peer,
+					listenConn,
+					inboundChan,
+					connchan,
+					nil,
+					nil,
+					sessionMode,
+					sessionID,
+					protocolVersion,
+					streamID,
+					probeOnly,
+				)
+			})
+			wg.Go(func() {
+				oneTurnConnectionLoop(ctx, params, peer, connchan, t, int(streamID), probeOnly)
+			})
+		}
 	}
+
+	if !delayAdditionalWorkers {
+		spawnAdditionalWorkers()
+		return wg
+	}
+
+	wg.Go(func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-firstReady:
+		}
+		spawnAdditionalWorkers()
+	})
 
 	return wg
 }
@@ -710,6 +849,7 @@ func oneDtlsConnection(
 	ctx context.Context,
 	peer *net.UDPAddr,
 	listenConn net.PacketConn,
+	inboundChan <-chan *UDPPacket,
 	connchan chan<- net.PacketConn,
 	okchan chan<- struct{},
 	probeResult chan<- uint32,
@@ -718,6 +858,7 @@ func oneDtlsConnection(
 	sessionID []byte,
 	protocolVersion uint32,
 	streamID byte,
+	probeOnly bool,
 ) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error = nil
@@ -760,7 +901,7 @@ func oneDtlsConnection(
 			err = fmt.Errorf("failed to build session hello: %s", err1)
 			return
 		}
-		serverHello, err1 := exchangeServerHello(dtlsConn, hello)
+		serverHello, err1 := exchangeMuxSessionHello(dtlsConn, hello, protocolVersion)
 		if err1 != nil {
 			err = fmt.Errorf("failed to complete mux negotiation: %s", err1)
 			return
@@ -776,12 +917,18 @@ func oneDtlsConnection(
 		controlHeartbeatSupported = serverHello.GetControlHeartbeatSupported()
 		log.Printf("Established DTLS connection and completed mux negotiation for stream %d!\n", streamID)
 	} else {
-		log.Printf("Established DTLS connection!\n")
+		if probeOnly {
+			log.Printf("Established DTLS probe connection!\n")
+		} else {
+			log.Printf("Established DTLS connection!\n")
+		}
 	}
 	if controlHeartbeatSupported && streamID == 0 {
 		go startControlHeartbeatLoop(dtlsctx, dtlsConn, dtlsWriteMu)
 	}
-	emitProxyStatus("dtls_ready")
+	if !probeOnly {
+		emitProxyStatus("dtls_ready")
+	}
 	if okchan != nil {
 		go func() {
 			select {
@@ -792,44 +939,35 @@ func oneDtlsConnection(
 	}
 
 	wg := sync.WaitGroup{}
-	wg.Add(2)
+	wg.Add(1)
 	context.AfterFunc(dtlsctx, func() {
-		if err := listenConn.SetDeadline(time.Now()); err != nil {
-			log.Printf("Failed to set listener deadline: %s", err)
-		}
 		if err := dtlsConn.SetDeadline(time.Now()); err != nil {
 			log.Printf("Failed to set DTLS deadline: %s", err)
 		}
 	})
-	var addr atomic.Value
-	// Start read-loop on listenConn
-	go func() {
-		defer wg.Done()
-		defer dtlscancel()
-		buf := make([]byte, 1600)
-		for {
-			select {
-			case <-dtlsctx.Done():
-				return
-			default:
+	if !probeOnly {
+		go func() {
+			defer dtlscancel()
+			for {
+				select {
+				case <-dtlsctx.Done():
+					return
+				case pkt, ok := <-inboundChan:
+					if !ok {
+						return
+					}
+					dtlsWriteMu.Lock()
+					_, err1 := dtlsConn.Write(pkt.Data[:pkt.N])
+					dtlsWriteMu.Unlock()
+					packetPool.Put(pkt)
+					if err1 != nil {
+						log.Printf("Failed: %s", err1)
+						return
+					}
+				}
 			}
-			n, addr1, err1 := listenConn.ReadFrom(buf)
-			if err1 != nil {
-				log.Printf("Failed: %s", err1)
-				return
-			}
-
-			addr.Store(addr1) // store peer
-
-			dtlsWriteMu.Lock()
-			_, err1 = dtlsConn.Write(buf[:n])
-			dtlsWriteMu.Unlock()
-			if err1 != nil {
-				log.Printf("Failed: %s", err1)
-				return
-			}
-		}
-	}()
+		}()
+	}
 
 	// Start read-loop on dtlsConn
 	go func() {
@@ -861,7 +999,10 @@ func oneDtlsConnection(
 				}
 				continue
 			}
-			addr1, ok := addr.Load().(net.Addr)
+			if probeOnly {
+				continue
+			}
+			addr1, ok := activeLocalPeer.Load().(net.Addr)
 			if !ok {
 				continue
 			}
@@ -887,9 +1028,6 @@ func oneDtlsConnection(
 	}
 
 	wg.Wait()
-	if err := listenConn.SetDeadline(time.Time{}); err != nil {
-		log.Printf("Failed to clear listener deadline: %s", err)
-	}
 	if err := dtlsConn.SetDeadline(time.Time{}); err != nil {
 		log.Printf("Failed to clear DTLS deadline: %s", err)
 	}
@@ -912,7 +1050,15 @@ type turnParams struct {
 	resolver *protectedResolver
 }
 
-func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UDPAddr, conn2 net.PacketConn, streamID int, c chan<- error) {
+func oneTurnConnection(
+	ctx context.Context,
+	turnParams *turnParams,
+	peer *net.UDPAddr,
+	conn2 net.PacketConn,
+	streamID int,
+	c chan<- error,
+	probeOnly bool,
+) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error = nil
 	defer func() { c <- err }()
@@ -924,7 +1070,9 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 		err = fmt.Errorf("failed to get TURN credentials: %s", err1)
 		return
 	}
-	emitProxyStatus("auth_ready")
+	if !probeOnly {
+		emitProxyStatus("auth_ready")
+	}
 	urlhost, urlport, err1 := net.SplitHostPort(url)
 	if err1 != nil {
 		err = fmt.Errorf("failed to parse TURN server address: %s", err1)
@@ -1034,11 +1182,13 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	// The relayConn's local address is actually the transport
 	// address assigned on the TURN server.
 	log.Printf("[STREAM %d] relayed-address=%s", streamID, relayConn.LocalAddr().String())
-	emitProxyStatus("turn_ready")
+	if !probeOnly {
+		emitProxyStatus("turn_ready")
+	}
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
-	turnctx, turncancel := context.WithCancel(context.Background())
+	turnctx, turncancel := context.WithCancel(ctx)
 	context.AfterFunc(turnctx, func() {
 		if err := relayConn.SetDeadline(time.Now()); err != nil {
 			log.Printf("Failed to set relay deadline: %s", err)
@@ -1116,7 +1266,8 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 func oneDtlsConnectionLoop(
 	ctx context.Context,
 	peer *net.UDPAddr,
-	listenConnChan <-chan net.PacketConn,
+	listenConn net.PacketConn,
+	inboundChan <-chan *UDPPacket,
 	connchan chan<- net.PacketConn,
 	okchan chan<- struct{},
 	probeResult chan<- uint32,
@@ -1124,27 +1275,50 @@ func oneDtlsConnectionLoop(
 	sessionID []byte,
 	protocolVersion uint32,
 	streamID byte,
+	probeOnly bool,
 ) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case listenConn := <-listenConnChan:
-			c := make(chan error)
-			go oneDtlsConnection(ctx, peer, listenConn, connchan, okchan, probeResult, c, sessionMode, sessionID, protocolVersion, streamID)
-			if err := <-c; err != nil {
-				log.Printf("%s; reconnecting in %s", err, workerReconnectBackoff)
-			} else {
-				log.Printf("DTLS worker stopped; reconnecting in %s", workerReconnectBackoff)
-			}
-			if !waitReconnectBackoff(ctx) {
-				return
-			}
+		default:
+		}
+		c := make(chan error)
+		go oneDtlsConnection(
+			ctx,
+			peer,
+			listenConn,
+			inboundChan,
+			connchan,
+			okchan,
+			probeResult,
+			c,
+			sessionMode,
+			sessionID,
+			protocolVersion,
+			streamID,
+			probeOnly,
+		)
+		if err := <-c; err != nil {
+			log.Printf("%s; reconnecting in %s", err, workerReconnectBackoff)
+		} else {
+			log.Printf("DTLS worker stopped; reconnecting in %s", workerReconnectBackoff)
+		}
+		if !waitReconnectBackoff(ctx) {
+			return
 		}
 	}
 }
 
-func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *net.UDPAddr, connchan <-chan net.PacketConn, t <-chan time.Time, streamID int) {
+func oneTurnConnectionLoop(
+	ctx context.Context,
+	turnParams *turnParams,
+	peer *net.UDPAddr,
+	connchan <-chan net.PacketConn,
+	t <-chan time.Time,
+	streamID int,
+	probeOnly bool,
+) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -1153,7 +1327,7 @@ func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *ne
 			select {
 			case <-t:
 				c := make(chan error)
-				go oneTurnConnection(ctx, turnParams, peer, conn2, streamID, c)
+				go oneTurnConnection(ctx, turnParams, peer, conn2, streamID, c, probeOnly)
 				if err := <-c; err != nil {
 					if isFatalCaptchaFailure(err) {
 						log.Printf("[STREAM %d] Fatal captcha error, shutting down runtime: %s", streamID, err)
@@ -1214,13 +1388,18 @@ func main() { //nolint:cyclop
 	yalink := flag.String("yandex-link", "", "Yandex telemost invite link \"https://telemost.yandex.ru/j/...\"")
 	peerAddr := flag.String("peer", "", "peer server address (host:port)")
 	n := flag.Int("n", 0, "connections to TURN (default 10 for VK, 1 for Yandex)")
+	transportFlag := flag.String("transport", "datagram", "transport mode: datagram|tcp")
+	vlessModeFlag := flag.Bool("vless", false, "deprecated alias for -transport=tcp")
 	udp := flag.Bool("udp", false, "connect to TURN with UDP")
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip automatic captcha solving and use manual captcha flow immediately")
 	protectSock := flag.String("protect-sock", "", "unix socket used for VpnService.protect fd bridge")
-	wgPubFingerprint := flag.String("wg-pub-fp", "", "WireGuard public key fingerprint to include in heartbeat telemetry")
+	protoFingerprintFlag := flag.String("proto-fp", "", "protocol fingerprint to include in heartbeat telemetry")
 	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: mainline|mux|auto")
 	sessionIDFlag := flag.String("session-id", "", "override session ID (hex, 32 chars) for mux mode")
+	adaptivePoolMinFlag := flag.Int("adaptive-pool-min", 1, "minimum TURN identity pool size for mux protocol v3")
+	adaptivePoolMaxFlag := flag.Int("adaptive-pool-max", 0, "maximum TURN identity pool size for mux protocol v3 (default: stream count)")
+	adaptivePoolStreamsPerIdentityFlag := flag.Int("adaptive-pool-streams-per-id", defaultAdaptivePoolStreamsPerIdentity, "target concurrent streams per TURN identity for mux protocol v3")
 	flag.Parse()
 	if *peerAddr == "" {
 		log.Panicf("Need peer address!")
@@ -1239,7 +1418,7 @@ func main() { //nolint:cyclop
 	}
 	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
 	manualCaptcha = *manualCaptchaFlag
-	wireGuardPublicKeyFingerprint = strings.TrimSpace(*wgPubFingerprint)
+	protoFingerprint = strings.TrimSpace(*protoFingerprintFlag)
 	emitProxyCaps()
 
 	peer, err := peerResolver.ResolveUDPAddr(ctx, *peerAddr)
@@ -1253,28 +1432,88 @@ func main() { //nolint:cyclop
 	if err != nil {
 		log.Panicf("Invalid session mode: %v", err)
 	}
+	requestedTransport, err := parseRequestedTransport(*transportFlag, *vlessModeFlag)
+	if err != nil {
+		log.Panicf("Invalid transport mode: %v", err)
+	}
 
 	var link string
-	var getCreds getCredsFunc
+	var baseGetCreds pooledGetCredsFunc
 	if *vklink != "" {
 		parts := strings.Split(*vklink, "join/")
 		link = parts[len(parts)-1]
 
 		if *n <= 0 {
-			*n = 10
+			if requestedTransport == sessionproto.TransportMode_TRANSPORT_MODE_TCP {
+				*n = 16
+			} else {
+				*n = 10
+			}
 		}
-		getCreds = poolCreds(func(s string, allowInteractiveFallback bool) (string, string, string, error) {
+		baseGetCreds = func(s string, allowInteractiveFallback bool) (string, string, string, error) {
 			return getVkCredsWithFallback(s, peerResolver, allowInteractiveFallback)
-		}, *n)
+		}
 	} else {
 		parts := strings.Split(*yalink, "j/")
 		link = parts[len(parts)-1]
 		if *n <= 0 {
 			*n = 1
 		}
-		getCreds = poolCreds(func(s string, _ bool) (string, string, string, error) {
+		baseGetCreds = func(s string, _ bool) (string, string, string, error) {
 			return getYandexCreds(s, peerResolver)
-		}, *n)
+		}
+	}
+	configuredPoolSize := max(1, *n)
+	effectiveStreamCount := func(sessionMode sessionproto.Mode, protocolVersion uint32) int {
+		if sessionMode == sessionproto.ModeMainline {
+			return 1
+		}
+		if sessionMode == sessionproto.ModeMux && protocolVersion != muxProtocolNone && protocolVersion < muxProtocolV3 {
+			return 1
+		}
+		return configuredPoolSize
+	}
+	logLegacyMuxCompatibility := func(protocolVersion uint32, effectiveCount int) {
+		if protocolVersion >= muxProtocolV3 || effectiveCount >= configuredPoolSize {
+			return
+		}
+		if protocolVersion == muxProtocolNone {
+			log.Printf(
+				"Mainline datagram mode detected; forcing %d data stream for WireGuard compatibility",
+				effectiveCount,
+			)
+			return
+		}
+		log.Printf(
+			"Legacy mux v%d detected; forcing %d data stream for compatibility with older servers",
+			protocolVersion,
+			effectiveCount,
+		)
+	}
+	buildGetCreds := func(sessionMode sessionproto.Mode, protocolVersion uint32, effectiveCount int) getCredsFunc {
+		switch {
+		case sessionMode == sessionproto.ModeMainline:
+			log.Printf("TURN identity pool: fixed size 1 for mainline")
+			return poolCreds(baseGetCreds, 1)
+		case sessionMode == sessionproto.ModeMux && protocolVersion >= muxProtocolV3:
+			adaptivePool := normalizeAdaptivePoolConfig(
+				*adaptivePoolMinFlag,
+				*adaptivePoolMaxFlag,
+				*adaptivePoolStreamsPerIdentityFlag,
+				effectiveCount,
+			)
+			log.Printf(
+				"TURN identity pool: adaptive for mux v%d (min=%d max=%d streams_per_id=%d)",
+				protocolVersion,
+				adaptivePool.minSize,
+				adaptivePool.maxSize,
+				adaptivePool.streamsPerIdentity,
+			)
+			return poolCredsAdaptive(baseGetCreds, adaptivePool)
+		default:
+			log.Printf("TURN identity pool: fixed size %d", effectiveCount)
+			return poolCreds(baseGetCreds, effectiveCount)
+		}
 	}
 	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
 		link = link[:idx]
@@ -1285,12 +1524,24 @@ func main() { //nolint:cyclop
 		port:     *port,
 		link:     link,
 		udp:      *udp,
-		getCreds: getCreds,
+		getCreds: nil,
 		resolver: peerResolver,
 	}
 	sessionID := []byte(nil)
 
-	listenConnChan := make(chan net.PacketConn)
+	if requestedTransport == sessionproto.TransportMode_TRANSPORT_MODE_TCP {
+		if *direct {
+			log.Panicf("TCP transport does not support -no-dtls")
+		}
+		if requestedSessionMode == sessionproto.ModeMux {
+			log.Panicf("transport=tcp is not supported with session-mode=mux")
+		}
+		params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+		log.Printf("Transport mode: tcp")
+		runTCPMode(ctx, params, peer, *listen, *n)
+		return
+	}
+
 	listenConn, err := net.ListenPacket("udp", *listen) // nolint: noctx
 	if err != nil {
 		log.Panicf("Failed to listen: %s", err)
@@ -1300,26 +1551,95 @@ func main() { //nolint:cyclop
 			log.Panicf("Failed to close local connection: %s", closeErr)
 		}
 	})
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case listenConnChan <- listenConn:
-			}
-		}
-	}()
 
 	wg1 := sync.WaitGroup{}
 	t := time.Tick(200 * time.Millisecond)
 	if *direct {
+		listenConnChan := make(chan net.PacketConn)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case listenConnChan <- listenConn:
+				}
+			}
+		}()
+		params.getCreds = poolCreds(baseGetCreds, configuredPoolSize)
 		for i := 0; i < *n; i++ {
 			streamID := i
 			wg1.Go(func() {
-				oneTurnConnectionLoop(ctx, params, peer, listenConnChan, t, streamID)
+				oneTurnConnectionLoop(ctx, params, peer, listenConnChan, t, streamID, false)
 			})
 		}
 	} else {
+		inboundChan := make(chan *UDPPacket, 2000)
+		go func() {
+			for {
+				pktIface := packetPool.Get()
+				pkt, ok := pktIface.(*UDPPacket)
+				if !ok {
+					log.Printf("packetPool returned unexpected type: %T", pktIface)
+					continue
+				}
+				nRead, addr, readErr := listenConn.ReadFrom(pkt.Data)
+				if readErr != nil {
+					packetPool.Put(pkt)
+					return
+				}
+				current := activeLocalPeer.Load()
+				if current == nil {
+					activeLocalPeer.Store(addr)
+				} else if currentAddr, ok := current.(net.Addr); !ok || currentAddr.String() != addr.String() {
+					activeLocalPeer.Store(addr)
+				}
+				pkt.N = nRead
+				select {
+				case inboundChan <- pkt:
+				default:
+					packetPool.Put(pkt)
+				}
+			}
+		}()
+		probeMuxCompatibility := func(candidateVersion uint32) bool {
+			probeSessionID := resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
+			params.getCreds = buildGetCreds(sessionproto.ModeMux, candidateVersion, 1)
+			log.Printf(
+				"Compatibility probe: testing mux v%d session hello, session ID: %s",
+				candidateVersion,
+				hex.EncodeToString(probeSessionID),
+			)
+
+			probeCtx, probeCancel := context.WithCancel(ctx)
+			defer probeCancel()
+
+			okchan := make(chan struct{}, 1)
+			probeWG := startDtlsTurnWorkers(
+				probeCtx,
+				peer,
+				listenConn,
+				inboundChan,
+				params,
+				t,
+				1,
+				sessionproto.ModeMux,
+				probeSessionID,
+				candidateVersion,
+				okchan,
+				nil,
+				true,
+			)
+			compatible := waitForReady(ctx, okchan, muxProbeTimeout)
+			probeCancel()
+			probeWG.Wait()
+			if compatible {
+				log.Printf("Compatibility probe: mux v%d session hello acknowledged", candidateVersion)
+			} else {
+				log.Printf("Compatibility probe: mux v%d session hello was not acknowledged", candidateVersion)
+			}
+			return compatible
+		}
+
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer func() {
 			runtimeCancel()
@@ -1328,15 +1648,50 @@ func main() { //nolint:cyclop
 
 		switch requestedSessionMode {
 		case sessionproto.ModeMainline:
-			runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMainline, nil, muxProtocolNone, nil, nil)
+			params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+			effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+			logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
+			okchan := make(chan struct{}, 1)
+			runtimeWG = startDtlsTurnWorkers(
+				runtimeCtx,
+				peer,
+				listenConn,
+				inboundChan,
+				params,
+				t,
+				effectiveCount,
+				sessionproto.ModeMainline,
+				nil,
+				muxProtocolNone,
+				okchan,
+				nil,
+				false,
+			)
 		case sessionproto.ModeMux:
 			upgraded := false
-			for _, candidateVersion := range []uint32{muxProtocolV2, muxProtocolV1} {
+			for _, candidateVersion := range []uint32{muxProtocolV3, muxProtocolV2, muxProtocolV1} {
+				effectiveCount := effectiveStreamCount(sessionproto.ModeMux, candidateVersion)
+				logLegacyMuxCompatibility(candidateVersion, effectiveCount)
 				sessionID = resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
+				params.getCreds = buildGetCreds(sessionproto.ModeMux, candidateVersion, effectiveCount)
 				log.Printf("Session mode: mux v%d, session ID: %s", candidateVersion, hex.EncodeToString(sessionID))
 
 				okchan := make(chan struct{})
-				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMux, sessionID, candidateVersion, okchan, nil)
+				runtimeWG = startDtlsTurnWorkers(
+					runtimeCtx,
+					peer,
+					listenConn,
+					inboundChan,
+					params,
+					t,
+					effectiveCount,
+					sessionproto.ModeMux,
+					sessionID,
+					candidateVersion,
+					okchan,
+					nil,
+					false,
+				)
 				if waitForReady(ctx, okchan, muxReadyTimeout) {
 					upgraded = true
 					break
@@ -1350,12 +1705,45 @@ func main() { //nolint:cyclop
 
 			if !upgraded {
 				log.Printf("Session mode: mux fallback -> mainline")
-				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMainline, nil, muxProtocolNone, nil, nil)
+				params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+				effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+				logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
+				okchan := make(chan struct{}, 1)
+				runtimeWG = startDtlsTurnWorkers(
+					runtimeCtx,
+					peer,
+					listenConn,
+					inboundChan,
+					params,
+					t,
+					effectiveCount,
+					sessionproto.ModeMainline,
+					nil,
+					muxProtocolNone,
+					okchan,
+					nil,
+					false,
+				)
 			}
 		case sessionproto.ModeAuto:
 			okchan := make(chan struct{})
 			probeResult := make(chan uint32, 1)
-			runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, 1, sessionproto.ModeMainline, nil, muxProtocolNone, okchan, probeResult)
+			params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+			runtimeWG = startDtlsTurnWorkers(
+				runtimeCtx,
+				peer,
+				listenConn,
+				inboundChan,
+				params,
+				t,
+				1,
+				sessionproto.ModeMainline,
+				nil,
+				muxProtocolNone,
+				okchan,
+				probeResult,
+				true,
+			)
 			if !waitForReady(ctx, okchan, mainlineBootstrapTimeout) {
 				runtimeCancel()
 				runtimeWG.Wait()
@@ -1363,39 +1751,100 @@ func main() { //nolint:cyclop
 			}
 
 			supportedVersion := waitForProbeVersion(ctx, probeResult, muxProbeTimeout)
-			candidateVersions := make([]uint32, 0, 2)
+			candidateVersions := make([]uint32, 0, 3)
 			switch supportedVersion {
+			case muxProtocolV3:
+				candidateVersions = append(candidateVersions, muxProtocolV3, muxProtocolV2, muxProtocolV1)
 			case muxProtocolV2:
 				candidateVersions = append(candidateVersions, muxProtocolV2, muxProtocolV1)
 			case muxProtocolV1:
 				candidateVersions = append(candidateVersions, muxProtocolV1)
 			}
 
-			upgraded := false
+			selectedMuxVersion := uint32(0)
 			for _, candidateVersion := range candidateVersions {
-				runtimeCancel()
-				runtimeWG.Wait()
+				if probeMuxCompatibility(candidateVersion) {
+					selectedMuxVersion = candidateVersion
+					break
+				}
+			}
 
+			runtimeCancel()
+			runtimeWG.Wait()
+
+			if selectedMuxVersion == 0 {
+				log.Printf("Session mode: staying on mainline")
+
+				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
+				params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+				effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+				logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
+				okchan := make(chan struct{}, 1)
+				runtimeWG = startDtlsTurnWorkers(
+					runtimeCtx,
+					peer,
+					listenConn,
+					inboundChan,
+					params,
+					t,
+					effectiveCount,
+					sessionproto.ModeMainline,
+					nil,
+					muxProtocolNone,
+					okchan,
+					nil,
+					false,
+				)
+			} else {
+				effectiveCount := effectiveStreamCount(sessionproto.ModeMux, selectedMuxVersion)
+				logLegacyMuxCompatibility(selectedMuxVersion, effectiveCount)
 				sessionID = resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
-				log.Printf("Session mode: mainline -> mux v%d, session ID: %s", candidateVersion, hex.EncodeToString(sessionID))
+				params.getCreds = buildGetCreds(sessionproto.ModeMux, selectedMuxVersion, effectiveCount)
+				log.Printf("Session mode: mainline -> mux v%d, session ID: %s", selectedMuxVersion, hex.EncodeToString(sessionID))
 
 				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
 				okchan = make(chan struct{})
-				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMux, sessionID, candidateVersion, okchan, nil)
-				if waitForReady(ctx, okchan, muxReadyTimeout) {
-					upgraded = true
-					break
+				runtimeWG = startDtlsTurnWorkers(
+					runtimeCtx,
+					peer,
+					listenConn,
+					inboundChan,
+					params,
+					t,
+					effectiveCount,
+					sessionproto.ModeMux,
+					sessionID,
+					selectedMuxVersion,
+					okchan,
+					nil,
+					false,
+				)
+				if !waitForReady(ctx, okchan, muxReadyTimeout) {
+					log.Printf("Session mode: mux v%d failed after successful compatibility probe, staying on mainline", selectedMuxVersion)
+					runtimeCancel()
+					runtimeWG.Wait()
+
+					runtimeCtx, runtimeCancel = context.WithCancel(ctx)
+					params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+					effectiveCount = effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+					logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
+					okchan = make(chan struct{}, 1)
+					runtimeWG = startDtlsTurnWorkers(
+						runtimeCtx,
+						peer,
+						listenConn,
+						inboundChan,
+						params,
+						t,
+						effectiveCount,
+						sessionproto.ModeMainline,
+						nil,
+						muxProtocolNone,
+						okchan,
+						nil,
+						false,
+					)
 				}
-				log.Printf("Session mode: mux v%d failed, falling back", candidateVersion)
-			}
-
-			if !upgraded {
-				log.Printf("Session mode: staying on mainline")
-				runtimeCancel()
-				runtimeWG.Wait()
-
-				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-				runtimeWG = startDtlsTurnWorkers(runtimeCtx, peer, listenConnChan, params, t, *n, sessionproto.ModeMainline, nil, muxProtocolNone, nil, nil)
 			}
 		}
 

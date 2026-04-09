@@ -70,14 +70,65 @@ func (ClientHelloType) EnumDescriptor() ([]byte, []int) {
 	return file_proto_session_proto_rawDescGZIP(), []int{0}
 }
 
+type TransportMode int32
+
+const (
+	TransportMode_TRANSPORT_MODE_UNSPECIFIED TransportMode = 0
+	TransportMode_TRANSPORT_MODE_DATAGRAM    TransportMode = 1
+	TransportMode_TRANSPORT_MODE_TCP         TransportMode = 2
+)
+
+// Enum value maps for TransportMode.
+var (
+	TransportMode_name = map[int32]string{
+		0: "TRANSPORT_MODE_UNSPECIFIED",
+		1: "TRANSPORT_MODE_DATAGRAM",
+		2: "TRANSPORT_MODE_TCP",
+	}
+	TransportMode_value = map[string]int32{
+		"TRANSPORT_MODE_UNSPECIFIED": 0,
+		"TRANSPORT_MODE_DATAGRAM":    1,
+		"TRANSPORT_MODE_TCP":         2,
+	}
+)
+
+func (x TransportMode) Enum() *TransportMode {
+	p := new(TransportMode)
+	*p = x
+	return p
+}
+
+func (x TransportMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TransportMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_session_proto_enumTypes[1].Descriptor()
+}
+
+func (TransportMode) Type() protoreflect.EnumType {
+	return &file_proto_session_proto_enumTypes[1]
+}
+
+func (x TransportMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TransportMode.Descriptor instead.
+func (TransportMode) EnumDescriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{1}
+}
+
 type ClientHello struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	Type          ClientHelloType        `protobuf:"varint,2,opt,name=type,proto3,enum=sessionproto.ClientHelloType" json:"type,omitempty"`
-	SessionId     []byte                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	StreamId      uint32                 `protobuf:"varint,4,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Version             uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Type                ClientHelloType        `protobuf:"varint,2,opt,name=type,proto3,enum=sessionproto.ClientHelloType" json:"type,omitempty"`
+	SessionId           []byte                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	StreamId            uint32                 `protobuf:"varint,4,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	RequestedTransport  TransportMode          `protobuf:"varint,5,opt,name=requested_transport,json=requestedTransport,proto3,enum=sessionproto.TransportMode" json:"requested_transport,omitempty"`
+	SupportedTransports []TransportMode        `protobuf:"varint,6,rep,packed,name=supported_transports,json=supportedTransports,proto3,enum=sessionproto.TransportMode" json:"supported_transports,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ClientHello) Reset() {
@@ -138,12 +189,28 @@ func (x *ClientHello) GetStreamId() uint32 {
 	return 0
 }
 
+func (x *ClientHello) GetRequestedTransport() TransportMode {
+	if x != nil {
+		return x.RequestedTransport
+	}
+	return TransportMode_TRANSPORT_MODE_UNSPECIFIED
+}
+
+func (x *ClientHello) GetSupportedTransports() []TransportMode {
+	if x != nil {
+		return x.SupportedTransports
+	}
+	return nil
+}
+
 type ServerHello struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
 	Version                   uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	MuxSupported              bool                   `protobuf:"varint,2,opt,name=mux_supported,json=muxSupported,proto3" json:"mux_supported,omitempty"`
 	Error                     string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
 	ControlHeartbeatSupported bool                   `protobuf:"varint,4,opt,name=control_heartbeat_supported,json=controlHeartbeatSupported,proto3" json:"control_heartbeat_supported,omitempty"`
+	SelectedTransport         TransportMode          `protobuf:"varint,5,opt,name=selected_transport,json=selectedTransport,proto3,enum=sessionproto.TransportMode" json:"selected_transport,omitempty"`
+	SupportedTransports       []TransportMode        `protobuf:"varint,6,rep,packed,name=supported_transports,json=supportedTransports,proto3,enum=sessionproto.TransportMode" json:"supported_transports,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -206,15 +273,29 @@ func (x *ServerHello) GetControlHeartbeatSupported() bool {
 	return false
 }
 
+func (x *ServerHello) GetSelectedTransport() TransportMode {
+	if x != nil {
+		return x.SelectedTransport
+	}
+	return TransportMode_TRANSPORT_MODE_UNSPECIFIED
+}
+
+func (x *ServerHello) GetSupportedTransports() []TransportMode {
+	if x != nil {
+		return x.SupportedTransports
+	}
+	return nil
+}
+
 type Heartbeat struct {
-	state                         protoimpl.MessageState `protogen:"open.v1"`
-	Version                       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	WallClockMs                   int64                  `protobuf:"varint,2,opt,name=wall_clock_ms,json=wallClockMs,proto3" json:"wall_clock_ms,omitempty"`
-	ActiveStreams                 uint32                 `protobuf:"varint,3,opt,name=active_streams,json=activeStreams,proto3" json:"active_streams,omitempty"`
-	Online                        bool                   `protobuf:"varint,4,opt,name=online,proto3" json:"online,omitempty"`
-	WireguardPublicKeyFingerprint string                 `protobuf:"bytes,5,opt,name=wireguard_public_key_fingerprint,json=wireguardPublicKeyFingerprint,proto3" json:"wireguard_public_key_fingerprint,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Version          uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	WallClockMs      int64                  `protobuf:"varint,2,opt,name=wall_clock_ms,json=wallClockMs,proto3" json:"wall_clock_ms,omitempty"`
+	ActiveStreams    uint32                 `protobuf:"varint,3,opt,name=active_streams,json=activeStreams,proto3" json:"active_streams,omitempty"`
+	Online           bool                   `protobuf:"varint,4,opt,name=online,proto3" json:"online,omitempty"`
+	ProtoFingerprint string                 `protobuf:"bytes,5,opt,name=proto_fingerprint,json=protoFingerprint,proto3" json:"proto_fingerprint,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -275,9 +356,9 @@ func (x *Heartbeat) GetOnline() bool {
 	return false
 }
 
-func (x *Heartbeat) GetWireguardPublicKeyFingerprint() string {
+func (x *Heartbeat) GetProtoFingerprint() string {
 	if x != nil {
-		return x.WireguardPublicKeyFingerprint
+		return x.ProtoFingerprint
 	}
 	return ""
 }
@@ -286,28 +367,36 @@ var File_proto_session_proto protoreflect.FileDescriptor
 
 const file_proto_session_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/session.proto\x12\fsessionproto\"\x96\x01\n" +
+	"\x13proto/session.proto\x12\fsessionproto\"\xb4\x02\n" +
 	"\vClientHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x121\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1d.sessionproto.ClientHelloTypeR\x04type\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x03 \x01(\fR\tsessionId\x12\x1b\n" +
-	"\tstream_id\x18\x04 \x01(\rR\bstreamId\"\xa2\x01\n" +
+	"\tstream_id\x18\x04 \x01(\rR\bstreamId\x12L\n" +
+	"\x13requested_transport\x18\x05 \x01(\x0e2\x1b.sessionproto.TransportModeR\x12requestedTransport\x12N\n" +
+	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\"\xbe\x02\n" +
 	"\vServerHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12#\n" +
 	"\rmux_supported\x18\x02 \x01(\bR\fmuxSupported\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x12>\n" +
-	"\x1bcontrol_heartbeat_supported\x18\x04 \x01(\bR\x19controlHeartbeatSupported\"\xd1\x01\n" +
+	"\x1bcontrol_heartbeat_supported\x18\x04 \x01(\bR\x19controlHeartbeatSupported\x12J\n" +
+	"\x12selected_transport\x18\x05 \x01(\x0e2\x1b.sessionproto.TransportModeR\x11selectedTransport\x12N\n" +
+	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\"\xb5\x01\n" +
 	"\tHeartbeat\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\"\n" +
 	"\rwall_clock_ms\x18\x02 \x01(\x03R\vwallClockMs\x12%\n" +
 	"\x0eactive_streams\x18\x03 \x01(\rR\ractiveStreams\x12\x16\n" +
-	"\x06online\x18\x04 \x01(\bR\x06online\x12G\n" +
-	" wireguard_public_key_fingerprint\x18\x05 \x01(\tR\x1dwireguardPublicKeyFingerprint*p\n" +
+	"\x06online\x18\x04 \x01(\bR\x06online\x12+\n" +
+	"\x11proto_fingerprint\x18\x05 \x01(\tR\x10protoFingerprint*p\n" +
 	"\x0fClientHelloType\x12!\n" +
 	"\x1dCLIENT_HELLO_TYPE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17CLIENT_HELLO_TYPE_PROBE\x10\x01\x12\x1d\n" +
-	"\x19CLIENT_HELLO_TYPE_SESSION\x10\x02B=Z;github.com/cacggghp/vk-turn-proxy/sessionproto;sessionprotob\x06proto3"
+	"\x19CLIENT_HELLO_TYPE_SESSION\x10\x02*d\n" +
+	"\rTransportMode\x12\x1e\n" +
+	"\x1aTRANSPORT_MODE_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17TRANSPORT_MODE_DATAGRAM\x10\x01\x12\x16\n" +
+	"\x12TRANSPORT_MODE_TCP\x10\x02B=Z;github.com/cacggghp/vk-turn-proxy/sessionproto;sessionprotob\x06proto3"
 
 var (
 	file_proto_session_proto_rawDescOnce sync.Once
@@ -321,21 +410,26 @@ func file_proto_session_proto_rawDescGZIP() []byte {
 	return file_proto_session_proto_rawDescData
 }
 
-var file_proto_session_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_proto_session_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_proto_session_proto_goTypes = []any{
 	(ClientHelloType)(0), // 0: sessionproto.ClientHelloType
-	(*ClientHello)(nil),  // 1: sessionproto.ClientHello
-	(*ServerHello)(nil),  // 2: sessionproto.ServerHello
-	(*Heartbeat)(nil),    // 3: sessionproto.Heartbeat
+	(TransportMode)(0),   // 1: sessionproto.TransportMode
+	(*ClientHello)(nil),  // 2: sessionproto.ClientHello
+	(*ServerHello)(nil),  // 3: sessionproto.ServerHello
+	(*Heartbeat)(nil),    // 4: sessionproto.Heartbeat
 }
 var file_proto_session_proto_depIdxs = []int32{
 	0, // 0: sessionproto.ClientHello.type:type_name -> sessionproto.ClientHelloType
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 1: sessionproto.ClientHello.requested_transport:type_name -> sessionproto.TransportMode
+	1, // 2: sessionproto.ClientHello.supported_transports:type_name -> sessionproto.TransportMode
+	1, // 3: sessionproto.ServerHello.selected_transport:type_name -> sessionproto.TransportMode
+	1, // 4: sessionproto.ServerHello.supported_transports:type_name -> sessionproto.TransportMode
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_proto_session_proto_init() }
@@ -348,7 +442,7 @@ func file_proto_session_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_session_proto_rawDesc), len(file_proto_session_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,

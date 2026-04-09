@@ -6,15 +6,19 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
+	sessionv3 "github.com/cacggghp/vk-turn-proxy/sessionproto/v3"
 	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 )
@@ -22,6 +26,124 @@ import (
 const initialNegotiationTimeout = 750 * time.Millisecond
 
 var serverUI *serverTUI
+
+type transportBackends struct {
+	udpConnect string
+	tcpConnect string
+}
+
+func (backends transportBackends) supportsDatagram() bool {
+	return strings.TrimSpace(backends.udpConnect) != ""
+}
+
+func (backends transportBackends) supportsTCP() bool {
+	return strings.TrimSpace(backends.tcpConnect) != ""
+}
+
+func (backends transportBackends) describe() string {
+	parts := make([]string, 0, 2)
+	if backends.supportsDatagram() {
+		parts = append(parts, "udp="+backends.udpConnect)
+	}
+	if backends.supportsTCP() {
+		parts = append(parts, "tcp="+backends.tcpConnect)
+	}
+	if len(parts) == 0 {
+		return "<none>"
+	}
+	return strings.Join(parts, " ")
+}
+
+func allowsMux(mode sessionproto.Mode) bool {
+	return mode != sessionproto.ModeMainline
+}
+
+func resolveServerBackends(connect, udpConnect, tcpConnect string, tcpAlias bool) (transportBackends, error) {
+	connect = strings.TrimSpace(connect)
+	udpConnect = strings.TrimSpace(udpConnect)
+	tcpConnect = strings.TrimSpace(tcpConnect)
+
+	if connect != "" && (udpConnect != "" || tcpConnect != "") {
+		return transportBackends{}, fmt.Errorf("-connect cannot be combined with -udp-connect or -tcp-connect")
+	}
+
+	if connect != "" {
+		if tcpAlias {
+			tcpConnect = connect
+		} else {
+			udpConnect = connect
+		}
+	}
+
+	backends := transportBackends{
+		udpConnect: udpConnect,
+		tcpConnect: tcpConnect,
+	}
+	if !backends.supportsDatagram() && !backends.supportsTCP() {
+		return transportBackends{}, fmt.Errorf("at least one backend is required")
+	}
+	return backends, nil
+}
+
+func supportedTransportsForHello(mode sessionproto.Mode, backends transportBackends, hello *sessionproto.ClientHello) []sessionproto.TransportMode {
+	supported := make([]sessionproto.TransportMode, 0, 2)
+	if backends.supportsDatagram() {
+		supported = append(supported, sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM)
+	}
+	helloType := sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_UNSPECIFIED
+	if hello != nil {
+		helloType = hello.GetType()
+	}
+	if helloType != sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_SESSION && mode != sessionproto.ModeMux && backends.supportsTCP() {
+		supported = append(supported, sessionproto.TransportMode_TRANSPORT_MODE_TCP)
+	}
+	return sessionproto.NormalizeSupportedTransports(supported)
+}
+
+func requestedTransportForHello(hello *sessionproto.ClientHello) sessionproto.TransportMode {
+	if hello == nil {
+		return sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM
+	}
+	requested := hello.GetRequestedTransport()
+	if hello.GetVersion() < sessionv3.ProtocolVersion || requested == sessionproto.TransportMode_TRANSPORT_MODE_UNSPECIFIED {
+		return sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM
+	}
+	return requested
+}
+
+func firstSupportedTransport(supported []sessionproto.TransportMode) sessionproto.TransportMode {
+	normalized := sessionproto.NormalizeSupportedTransports(supported)
+	if len(normalized) == 0 {
+		return sessionproto.TransportMode_TRANSPORT_MODE_UNSPECIFIED
+	}
+	return normalized[0]
+}
+
+func selectTransportForHello(mode sessionproto.Mode, backends transportBackends, hello *sessionproto.ClientHello) (sessionproto.TransportMode, []sessionproto.TransportMode, string) {
+	supported := supportedTransportsForHello(mode, backends, hello)
+	requested := requestedTransportForHello(hello)
+
+	switch requested {
+	case sessionproto.TransportMode_TRANSPORT_MODE_TCP:
+		if hello != nil && hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_SESSION {
+			return firstSupportedTransport(supported), supported, "mux session mode does not support tcp transport"
+		}
+		if mode == sessionproto.ModeMux {
+			return firstSupportedTransport(supported), supported, "server session mode does not support tcp transport"
+		}
+		if !backends.supportsTCP() {
+			return firstSupportedTransport(supported), supported, "server tcp transport is unavailable"
+		}
+		return sessionproto.TransportMode_TRANSPORT_MODE_TCP, supported, ""
+	case sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM:
+		if !backends.supportsDatagram() {
+			return firstSupportedTransport(supported), supported, "server datagram transport is unavailable"
+		}
+		return sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM, supported, ""
+	default:
+		return firstSupportedTransport(supported), supported, fmt.Sprintf("unsupported transport: %s", requested)
+	}
+}
 
 type streamEntry struct {
 	id       byte
@@ -38,6 +160,8 @@ type UserSession struct {
 	Ctx         context.Context
 	Cancel      context.CancelFunc
 	Manager     *SessionManager
+	DebugRx     atomic.Uint32
+	DebugTx     atomic.Uint32
 }
 
 type SessionManager struct {
@@ -71,6 +195,12 @@ func (s *SessionManager) GetOrCreate(ctx context.Context, id string, connectAddr
 	if serverUI != nil {
 		serverUI.registerSession(id)
 	}
+	log.Printf(
+		"Session %s backend connected: local=%s remote=%s",
+		id,
+		backendConn.LocalAddr(),
+		backendConn.RemoteAddr(),
+	)
 	go session.backendReaderLoop()
 
 	return session, nil
@@ -186,43 +316,82 @@ func (s *UserSession) Cleanup() {
 	s.Lock.Unlock()
 }
 
-func readInitialHelloOrLegacy(conn net.Conn, mode sessionproto.Mode) (*sessionproto.ClientHello, []byte, error) {
+func readInitialHelloOrLegacy(conn net.Conn, mode sessionproto.Mode) (*sessionproto.ClientHello, []byte, bool, error) {
 	buf := make([]byte, 1600)
 	if err := conn.SetReadDeadline(time.Now().Add(initialNegotiationTimeout)); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	n, err := conn.Read(buf)
 	if clearErr := conn.SetReadDeadline(time.Time{}); clearErr != nil {
-		return nil, nil, clearErr
+		return nil, nil, false, clearErr
 	}
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			if mode == sessionproto.ModeMux {
-				return nil, nil, fmt.Errorf("timed out waiting for mux hello")
+				return nil, nil, false, fmt.Errorf("timed out waiting for mux hello")
 			}
-			return nil, nil, nil
+			return nil, nil, false, nil
 		}
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 
 	payload := append([]byte(nil), buf[:n]...)
+	if sessionPayload, ok := sessionproto.ParseControlSessionRequest(payload); ok {
+		hello, parseErr := sessionproto.ParseClientHelloMessage(sessionPayload)
+		if parseErr != nil {
+			return nil, nil, false, fmt.Errorf("invalid mux hello: %w", parseErr)
+		}
+		if validateErr := validateClientHelloForVersion(hello); validateErr != nil {
+			return nil, nil, false, fmt.Errorf("invalid mux hello: %w", validateErr)
+		}
+		return hello, nil, true, nil
+	}
 	hello, parseErr := sessionproto.ParseClientHelloMessage(payload)
 	if parseErr != nil {
 		if mode == sessionproto.ModeMux {
-			return nil, nil, fmt.Errorf("invalid mux hello: %w", parseErr)
+			return nil, nil, false, fmt.Errorf("invalid mux hello: %w", parseErr)
 		}
-		return nil, payload, nil
+		return nil, payload, false, nil
 	}
 	if validateErr := validateClientHelloForVersion(hello); validateErr != nil {
 		if mode == sessionproto.ModeMux {
-			return nil, nil, fmt.Errorf("invalid mux hello: %w", validateErr)
+			return nil, nil, false, fmt.Errorf("invalid mux hello: %w", validateErr)
 		}
-		return nil, payload, nil
+		return nil, payload, false, nil
 	}
-	return hello, nil, nil
+	return hello, nil, false, nil
 }
 
-func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, firstPacket []byte, mode sessionproto.Mode) error {
+func logInitialNegotiationPayload(conn net.Conn, hello *sessionproto.ClientHello, firstPacket []byte, wrappedSession bool) {
+	if hello != nil {
+		if wrappedSession {
+			log.Printf("protobuf initial wrapped session hello from %s: %s", conn.RemoteAddr(), describeClientHello(hello))
+			return
+		}
+		log.Printf("protobuf initial hello from %s: %s", conn.RemoteAddr(), describeClientHello(hello))
+		return
+	}
+	if len(firstPacket) == 0 {
+		log.Printf("no initial protobuf hello from %s", conn.RemoteAddr())
+		return
+	}
+	if probePayload, ok := sessionproto.ParseControlProbeRequest(firstPacket); ok {
+		probeHello, err := sessionproto.ParseClientHelloMessage(probePayload)
+		if err == nil {
+			log.Printf("protobuf initial wrapped probe from %s: %s", conn.RemoteAddr(), describeClientHello(probeHello))
+			return
+		}
+	}
+	prefixLen := min(len(firstPacket), 16)
+	log.Printf(
+		"mainline legacy payload from %s: %d bytes, prefix=%x",
+		conn.RemoteAddr(),
+		len(firstPacket),
+		firstPacket[:prefixLen],
+	)
+}
+
+func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, firstPacket []byte, mode sessionproto.Mode, backends transportBackends) error {
 	streamKey := ""
 	clientIP := clientIPFromAddr(conn.RemoteAddr())
 	if serverUI != nil {
@@ -241,7 +410,7 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 	}()
 
 	if len(firstPacket) > 0 {
-		if handled, controlErr := handleMainlineControlPacket(conn, firstPacket, mode); handled {
+		if handled, controlErr := handleMainlineControlPacket(conn, firstPacket, mode, backends); handled {
 			if controlErr != nil {
 				return controlErr
 			}
@@ -293,7 +462,7 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 				log.Printf("Failed: %s", readErr)
 				return
 			}
-			if handled, controlErr := handleMainlineControlPacket(conn, buf[:n], mode); handled {
+			if handled, controlErr := handleMainlineControlPacket(conn, buf[:n], mode, backends); handled {
 				if controlErr != nil {
 					log.Printf("Failed: %s", controlErr)
 					return
@@ -360,7 +529,34 @@ func runLegacyStream(ctx context.Context, conn net.Conn, connectAddr string, fir
 	return nil
 }
 
-func runMuxStream(ctx context.Context, conn net.Conn, manager *SessionManager, connectAddr string, hello *sessionproto.ClientHello) error {
+func writeMuxSessionHelloResponse(
+	conn net.Conn,
+	version uint32,
+	muxSupported bool,
+	errorText string,
+	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	wrappedSession bool,
+) error {
+	payload, err := buildServerHelloForVersion(
+		version,
+		muxSupported,
+		errorText,
+		controlHeartbeatSupported,
+		selectedTransport,
+		supportedTransports,
+	)
+	if err != nil {
+		return err
+	}
+	if wrappedSession && version >= sessionv3.ProtocolVersion {
+		return writeRawPacket(conn, sessionproto.BuildControlSessionResponse(payload))
+	}
+	return writeRawPacket(conn, payload)
+}
+
+func runMuxStream(ctx context.Context, conn net.Conn, manager *SessionManager, connectAddr string, hello *sessionproto.ClientHello, wrappedSession bool) error {
 	sessionID := hex.EncodeToString(hello.GetSessionId())
 	streamID := byte(hello.GetStreamId())
 	clientIP := clientIPFromAddr(conn.RemoteAddr())
@@ -392,7 +588,16 @@ func runMuxStream(ctx context.Context, conn net.Conn, manager *SessionManager, c
 	session.AddConn(streamID, streamKey, clientIP, conn)
 	defer session.RemoveConn(streamID, conn)
 
-	if err := writeServerHelloForVersion(conn, hello.GetVersion(), true, "", true); err != nil {
+	if err := writeMuxSessionHelloResponse(
+		conn,
+		hello.GetVersion(),
+		true,
+		"",
+		true,
+		sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
+		[]sessionproto.TransportMode{sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM},
+		wrappedSession,
+	); err != nil {
 		return err
 	}
 
@@ -426,7 +631,7 @@ func runMuxStream(ctx context.Context, conn net.Conn, manager *SessionManager, c
 	}
 }
 
-func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManager, connectAddr string, mode sessionproto.Mode) error {
+func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManager, backends transportBackends, mode sessionproto.Mode) error {
 	dtlsConn, ok := conn.(*dtls.Conn)
 	if !ok {
 		return fmt.Errorf("unexpected connection type")
@@ -438,35 +643,67 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 		return err
 	}
 
-	hello, firstPacket, err := readInitialHelloOrLegacy(conn, mode)
+	hello, firstPacket, wrappedSession, err := readInitialHelloOrLegacy(conn, mode)
 	if err != nil {
 		return err
 	}
-	if hello != nil {
-		log.Printf("protobuf initial hello from %s: %s", conn.RemoteAddr(), describeClientHello(hello))
-	} else if len(firstPacket) > 0 {
-		log.Printf("mainline legacy payload from %s: %d bytes", conn.RemoteAddr(), len(firstPacket))
-	} else {
-		log.Printf("no initial protobuf hello from %s", conn.RemoteAddr())
+	logInitialNegotiationPayload(conn, hello, firstPacket, wrappedSession)
+
+	handledWrappedControlProbe := false
+	for hello == nil && len(firstPacket) > 0 {
+		if handled, controlErr := handleMainlineControlPacket(conn, firstPacket, mode, backends); handled {
+			if controlErr != nil {
+				return controlErr
+			}
+			handledWrappedControlProbe = true
+			hello, firstPacket, wrappedSession, err = readInitialHelloOrLegacy(conn, mode)
+			if err != nil {
+				if err == io.EOF {
+					return nil
+				}
+				return err
+			}
+			logInitialNegotiationPayload(conn, hello, firstPacket, wrappedSession)
+			continue
+		}
+		break
+	}
+	if handledWrappedControlProbe && hello == nil && len(firstPacket) == 0 {
+		log.Printf("no data after wrapped mainline probe from %s; closing probe connection", conn.RemoteAddr())
+		return nil
 	}
 
 	for hello != nil && hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE {
-		muxSupported := mode != sessionproto.ModeMainline
-		errorText := ""
-		if !muxSupported {
-			errorText = "server session mode is mainline"
-		}
+		selectedTransport, supportedTransports, errorText := selectTransportForHello(mode, backends, hello)
+		muxSupported := allowsMux(mode) && errorText == ""
 		log.Printf(
-			"protobuf direct probe from %s: version=%d mux_supported=%t error=%q",
+			"protobuf direct probe from %s: version=%d requested_transport=%s selected_transport=%s mux_supported=%t error=%q",
 			conn.RemoteAddr(),
 			hello.GetVersion(),
+			requestedTransportForHello(hello),
+			selectedTransport,
 			muxSupported,
 			errorText,
 		)
-		if err := writeServerHelloForVersion(conn, hello.GetVersion(), muxSupported, errorText, true); err != nil {
+		if err := writeServerHelloForVersion(
+			conn,
+			hello.GetVersion(),
+			muxSupported,
+			errorText,
+			true,
+			selectedTransport,
+			supportedTransports,
+		); err != nil {
 			return err
 		}
-		hello, firstPacket, err = readInitialHelloOrLegacy(conn, mode)
+		if errorText != "" {
+			return fmt.Errorf("%s", errorText)
+		}
+		if selectedTransport == sessionproto.TransportMode_TRANSPORT_MODE_TCP {
+			log.Printf("switching %s to tcp data path", conn.RemoteAddr())
+			return handleTCPConnection(ctx, dtlsConn, backends.tcpConnect)
+		}
+		hello, firstPacket, wrappedSession, err = readInitialHelloOrLegacy(conn, mode)
 		if err != nil {
 			return err
 		}
@@ -481,13 +718,41 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 		switch hello.GetType() {
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_SESSION:
 			if mode == sessionproto.ModeMainline {
+				selectedTransport, supportedTransports, _ := selectTransportForHello(mode, backends, hello)
 				log.Printf(
 					"protobuf mux session rejected for %s: server session mode is mainline",
 					conn.RemoteAddr(),
 				)
-				return writeServerHelloForVersion(conn, hello.GetVersion(), false, "server session mode is mainline", true)
+				return writeMuxSessionHelloResponse(
+					conn,
+					hello.GetVersion(),
+					false,
+					"server session mode is mainline",
+					true,
+					selectedTransport,
+					supportedTransports,
+					wrappedSession,
+				)
 			}
-			return runMuxStream(ctx, conn, manager, connectAddr, hello)
+			selectedTransport, supportedTransports, errorText := selectTransportForHello(mode, backends, hello)
+			if errorText != "" {
+				log.Printf(
+					"protobuf mux session rejected for %s: %s",
+					conn.RemoteAddr(),
+					errorText,
+				)
+				return writeMuxSessionHelloResponse(
+					conn,
+					hello.GetVersion(),
+					false,
+					errorText,
+					true,
+					selectedTransport,
+					supportedTransports,
+					wrappedSession,
+				)
+			}
+			return runMuxStream(ctx, conn, manager, backends.udpConnect, hello, wrappedSession)
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE:
 			if mode == sessionproto.ModeMux {
 				log.Printf("protobuf probe without session hello from %s in mux mode", conn.RemoteAddr())
@@ -505,13 +770,19 @@ func handleConnection(ctx context.Context, conn net.Conn, manager *SessionManage
 		log.Printf("protobuf mux hello missing from %s", conn.RemoteAddr())
 		return fmt.Errorf("expected mux hello")
 	}
+	if !backends.supportsDatagram() {
+		return fmt.Errorf("server datagram transport is unavailable")
+	}
 	log.Printf("switching %s to mainline data path", conn.RemoteAddr())
-	return runLegacyStream(ctx, conn, connectAddr, firstPacket, mode)
+	return runLegacyStream(ctx, conn, backends.udpConnect, firstPacket, mode, backends)
 }
 
 func main() {
 	listen := flag.String("listen", "0.0.0.0:56000", "listen on ip:port")
-	connect := flag.String("connect", "", "connect to ip:port")
+	connect := flag.String("connect", "", "deprecated alias for -udp-connect (or -tcp-connect when -vless is set)")
+	udpConnectFlag := flag.String("udp-connect", "", "UDP backend for datagram transport")
+	tcpConnectFlag := flag.String("tcp-connect", "", "TCP backend for tcp transport")
+	vlessModeFlag := flag.Bool("vless", false, "deprecated alias: treat legacy -connect as -tcp-connect")
 	sessionModeFlag := flag.String("session-mode", string(sessionproto.ModeAuto), "TURN session mode: mainline|mux|auto")
 	tuiModeFlag := flag.String("tui", "auto", "server TUI mode: auto|on|off")
 	flag.Parse()
@@ -520,7 +791,23 @@ func main() {
 	if err != nil {
 		log.Panicf("invalid session mode: %v", err)
 	}
-	serverUI = newServerTUI(*listen, *connect, string(mode), *tuiModeFlag)
+	backends, err := resolveServerBackends(*connect, *udpConnectFlag, *tcpConnectFlag, *vlessModeFlag)
+	if err != nil {
+		log.Panicf("invalid backend flags: %v", err)
+	}
+	if mode == sessionproto.ModeMux && !backends.supportsDatagram() {
+		log.Panicf("session-mode=mux requires -udp-connect")
+	}
+	modeLabel := string(mode)
+	switch {
+	case backends.supportsDatagram() && backends.supportsTCP():
+		modeLabel += "+datagram/tcp"
+	case backends.supportsTCP():
+		modeLabel += "+tcp"
+	default:
+		modeLabel += "+datagram"
+	}
+	serverUI = newServerTUI(*listen, backends.describe(), modeLabel, *tuiModeFlag)
 	defer serverUI.Close()
 	log.SetOutput(serverUI.logWriter())
 
@@ -539,9 +826,6 @@ func main() {
 	addr, err := net.ResolveUDPAddr("udp", *listen)
 	if err != nil {
 		panic(err)
-	}
-	if len(*connect) == 0 {
-		log.Panicf("server address is required")
 	}
 
 	certificate, genErr := selfsign.GenerateSelfSigned()
@@ -570,7 +854,7 @@ func main() {
 		Sessions: make(map[string]*UserSession),
 	}
 
-	log.Printf("Listening on %s, forwarding to %s, session mode=%s", *listen, *connect, mode)
+	log.Printf("Listening on %s, session mode=%s, backends=%s", *listen, mode, backends.describe())
 
 	var wg sync.WaitGroup
 	for {
@@ -603,7 +887,7 @@ func main() {
 			}()
 
 			log.Printf("Connection from %s", conn.RemoteAddr())
-			if err := handleConnection(ctx, conn, manager, *connect, mode); err != nil {
+			if err := handleConnection(ctx, conn, manager, backends, mode); err != nil {
 				log.Printf("Connection closed: %s (%v)", conn.RemoteAddr(), err)
 			} else {
 				log.Printf("Connection closed: %s", conn.RemoteAddr())

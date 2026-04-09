@@ -10,9 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	neturl "net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -74,35 +72,74 @@ func solveVkCaptcha(ctx context.Context, captchaErr *vkCaptchaError, resolver *p
 	}
 	defer client.CloseIdleConnections()
 
-	powInput, difficulty, err := fetchPowInput(ctx, captchaErr.RedirectURI, client, profile)
+	bootstrap, err := fetchCaptchaBootstrap(ctx, captchaErr.RedirectURI, client, profile)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch PoW input: %w", err)
+		return "", fmt.Errorf("failed to fetch captcha bootstrap: %w", err)
 	}
 
-	hash := solvePoW(powInput, difficulty)
+	hash := solvePoW(bootstrap.PowInput, bootstrap.Difficulty)
 	if hash == "" {
 		return "", fmt.Errorf("failed to solve PoW")
 	}
 
 	successToken, err := callCaptchaNotRobot(ctx, captchaErr.SessionToken, hash, client, profile)
-	if err != nil {
+	if err == nil {
+		log.Printf("VK Smart Captcha solved automatically")
+		return successToken, nil
+	}
+	log.Printf("VK Smart Captcha PoW-only check did not complete: %v", err)
+
+	if bootstrap.Settings == nil || len(bootstrap.Settings.SettingsByType) == 0 {
 		return "", fmt.Errorf("captchaNotRobot API failed: %w", err)
 	}
 
-	log.Printf("VK Smart Captcha solved automatically")
+	if sliderSettings := bootstrap.Settings.SettingsByType[sliderCaptchaType]; sliderSettings == "" {
+		return "", fmt.Errorf("captchaNotRobot API failed: %w", err)
+	}
+
+	log.Printf("Trying slider captcha PoC fallback after PoW-only check failure")
+	successToken, fallbackErr := callCaptchaNotRobotWithSliderPOC(
+		ctx,
+		captchaErr.SessionToken,
+		hash,
+		0,
+		client,
+		profile,
+		bootstrap.Settings,
+	)
+	if fallbackErr != nil {
+		return "", fmt.Errorf("captchaNotRobot API failed: %w; slider POC fallback failed: %v", err, fallbackErr)
+	}
+
+	log.Printf("VK Smart Captcha solved via slider PoC fallback")
 	return successToken, nil
 }
 
-func fetchPowInput(ctx context.Context, redirectURI string, client tlsclient.HttpClient, profile Profile) (string, int, error) {
+func fetchCaptchaBootstrap(
+	ctx context.Context,
+	redirectURI string,
+	client tlsclient.HttpClient,
+	profile Profile,
+) (*captchaBootstrap, error) {
+	parsedURL, err := neturl.Parse(redirectURI)
+	if err != nil {
+		return nil, err
+	}
+	domain := parsedURL.Hostname()
+
 	req, err := newFHTTPRequest(ctx, "GET", redirectURI, nil)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
+	req.Host = domain
 	applyBrowserProfileFhttp(req, profile)
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Dest", "document")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
@@ -112,25 +149,9 @@ func fetchPowInput(ctx context.Context, redirectURI string, client tlsclient.Htt
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
-	html := string(body)
-
-	powInputRe := regexp.MustCompile(`const\s+powInput\s*=\s*"([^"]+)"`)
-	powInputMatch := powInputRe.FindStringSubmatch(html)
-	if len(powInputMatch) < 2 {
-		return "", 0, fmt.Errorf("powInput not found in captcha HTML")
-	}
-
-	diffRe := regexp.MustCompile(`startsWith\('0'\.repeat\((\d+)\)\)`)
-	diffMatch := diffRe.FindStringSubmatch(html)
-	difficulty := 2
-	if len(diffMatch) >= 2 {
-		if parsedDifficulty, parseErr := strconv.Atoi(diffMatch[1]); parseErr == nil {
-			difficulty = parsedDifficulty
-		}
-	}
-	return powInputMatch[1], difficulty, nil
+	return parseCaptchaBootstrapHTML(string(body))
 }
 
 func solvePoW(powInput string, difficulty int) string {
@@ -154,14 +175,27 @@ func callCaptchaNotRobot(
 ) (string, error) {
 	vkReq := func(method string, postData string) (map[string]interface{}, error) {
 		reqURL := "https://api.vk.ru/method/" + method + "?v=5.131"
+		parsedURL, err := neturl.Parse(reqURL)
+		if err != nil {
+			return nil, fmt.Errorf("parse request URL: %w", err)
+		}
+		domain := parsedURL.Hostname()
+
 		req, err := newFHTTPRequest(ctx, "POST", reqURL, []byte(postData))
 		if err != nil {
 			return nil, err
 		}
+		req.Host = domain
 		applyBrowserProfileFhttp(req, profile)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Header.Set("Origin", "https://vk.ru")
-		req.Header.Set("Referer", "https://vk.ru/")
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("Origin", "https://id.vk.ru")
+		req.Header.Set("Referer", "https://id.vk.ru/")
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Sec-Fetch-Dest", "empty")
+		req.Header.Set("Sec-GPC", "1")
+		req.Header.Set("Priority", "u=1, i")
 		httpResp, err := client.Do(req)
 		if err != nil {
 			return nil, err
@@ -194,10 +228,7 @@ func callCaptchaNotRobot(
 	time.Sleep(200 * time.Millisecond)
 
 	browserFp := generateBrowserFp(profile)
-	deviceJSON := fmt.Sprintf(
-		`{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1040,"innerWidth":1920,"innerHeight":969,"devicePixelRatio":1,"language":"en-US","languages":["en-US"],"webdriver":false,"hardwareConcurrency":8,"deviceMemory":8,"connectionEffectiveType":"4g","notificationsPermission":"default","userAgent":"%s","platform":"Win32"}`,
-		profile.UserAgent,
-	)
+	deviceJSON := buildCaptchaDeviceJSON(profile)
 	componentDoneData := baseParams + fmt.Sprintf(
 		"&browser_fp=%s&device=%s",
 		browserFp,
@@ -213,11 +244,8 @@ func callCaptchaNotRobot(
 	answer := base64.StdEncoding.EncodeToString([]byte("{}"))
 	debugInfoBytes := md5.Sum([]byte(profile.UserAgent + strconv.FormatInt(time.Now().UnixNano(), 10)))
 	debugInfo := hex.EncodeToString(debugInfoBytes[:])
-	connectionDownlinkSamples := make([]string, 0, 16)
-	for i := 0; i < 16; i++ {
-		connectionDownlinkSamples = append(connectionDownlinkSamples, fmt.Sprintf("%.1f", 8.5+rand.Float64()*2.0))
-	}
-	connectionDownlink := "[" + strings.Join(connectionDownlinkSamples, ",") + "]"
+	connectionRtt := "[50,50,50,50,50,50,50,50,50,50]"
+	connectionDownlink := "[9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5,9.5]"
 	checkData := baseParams + fmt.Sprintf(
 		"&accelerometer=%s&gyroscope=%s&motion=%s&cursor=%s&taps=%s&connectionRtt=%s&connectionDownlink=%s&browser_fp=%s&hash=%s&answer=%s&debug_info=%s",
 		neturl.QueryEscape("[]"),
@@ -225,7 +253,7 @@ func callCaptchaNotRobot(
 		neturl.QueryEscape("[]"),
 		neturl.QueryEscape(cursorJSON),
 		neturl.QueryEscape("[]"),
-		neturl.QueryEscape("[]"),
+		neturl.QueryEscape(connectionRtt),
 		neturl.QueryEscape(connectionDownlink),
 		browserFp,
 		hash,
@@ -239,14 +267,21 @@ func callCaptchaNotRobot(
 	}
 	respObj, ok := checkResp["response"].(map[string]interface{})
 	if !ok {
+		log.Printf("captchaNotRobot.check returned invalid response: %s", compactCaptchaJSON(checkResp))
 		return "", fmt.Errorf("invalid check response: %v", checkResp)
 	}
 	status, _ := respObj["status"].(string)
 	if status != "OK" {
+		log.Printf(
+			"captchaNotRobot.check non-OK response: status=%q response=%s",
+			status,
+			compactCaptchaJSON(respObj),
+		)
 		return "", fmt.Errorf("check status: %s", status)
 	}
 	successToken, ok := respObj["success_token"].(string)
 	if !ok || successToken == "" {
+		log.Printf("captchaNotRobot.check missing success_token: %s", compactCaptchaJSON(respObj))
 		return "", fmt.Errorf("success_token not found")
 	}
 
@@ -263,4 +298,16 @@ func stringCaptchaField(errData map[string]interface{}, key string) string {
 		return fmt.Sprintf("%.0f", value)
 	}
 	return ""
+}
+
+func compactCaptchaJSON(value interface{}) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	const maxLen = 512
+	if len(data) <= maxLen {
+		return string(data)
+	}
+	return string(data[:maxLen]) + "...(truncated)"
 }

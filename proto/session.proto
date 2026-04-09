@@ -10,11 +10,19 @@ enum ClientHelloType {
   CLIENT_HELLO_TYPE_SESSION = 2;
 }
 
+enum TransportMode {
+  TRANSPORT_MODE_UNSPECIFIED = 0;
+  TRANSPORT_MODE_DATAGRAM = 1;
+  TRANSPORT_MODE_TCP = 2;
+}
+
 message ClientHello {
   uint32 version = 1;
   ClientHelloType type = 2;
   bytes session_id = 3;
   uint32 stream_id = 4;
+  TransportMode requested_transport = 5;
+  repeated TransportMode supported_transports = 6;
 }
 
 message ServerHello {
@@ -22,6 +30,8 @@ message ServerHello {
   bool mux_supported = 2;
   string error = 3;
   bool control_heartbeat_supported = 4;
+  TransportMode selected_transport = 5;
+  repeated TransportMode supported_transports = 6;
 }
 
 message Heartbeat {
@@ -29,5 +39,5 @@ message Heartbeat {
   int64 wall_clock_ms = 2;
   uint32 active_streams = 3;
   bool online = 4;
-  string wireguard_public_key_fingerprint = 5;
+  string proto_fingerprint = 5;
 }
