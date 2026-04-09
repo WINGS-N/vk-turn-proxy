@@ -72,3 +72,28 @@ func ParseHeartbeatMessage(payload []byte) (*Heartbeat, error) {
 	}
 	return &heartbeat, nil
 }
+
+func NormalizeSupportedTransports(transports []TransportMode) []TransportMode {
+	normalized := make([]TransportMode, 0, len(transports))
+	seen := make(map[TransportMode]struct{}, len(transports))
+	for _, transport := range transports {
+		if transport == TransportMode_TRANSPORT_MODE_UNSPECIFIED {
+			continue
+		}
+		if _, exists := seen[transport]; exists {
+			continue
+		}
+		seen[transport] = struct{}{}
+		normalized = append(normalized, transport)
+	}
+	return normalized
+}
+
+func HasSupportedTransport(transports []TransportMode, target TransportMode) bool {
+	for _, transport := range NormalizeSupportedTransports(transports) {
+		if transport == target {
+			return true
+		}
+	}
+	return false
+}

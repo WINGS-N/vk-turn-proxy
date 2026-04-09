@@ -71,12 +71,17 @@ func endDeferredCaptchaPrompt() {
 	deferredCaptchaPromptState.Store(0)
 }
 
-func solveCaptchaViaHTTP(captchaImg string, resolver *protectedResolver, userAgent string) (string, error) {
+func solveCaptchaViaHTTP(captchaImg string, redirectURI string, resolver *protectedResolver, userAgent string) (string, error) {
+	imageTargetURL := resolveCaptchaImageURL(captchaImg, redirectURI)
+	if imageTargetURL == "" {
+		return "", fmt.Errorf("captcha image URL is missing")
+	}
+	log.Printf("Opening manual image captcha via local proxy: image=%q redirect=%q resolved=%q", captchaImg, redirectURI, imageTargetURL)
 	return runCaptchaBrowserServer(
 		resolver,
 		nil,
 		func(baseURL string) string {
-			imageURL := localProxyURL(baseURL, captchaImg)
+			imageURL := localProxyURL(baseURL, imageTargetURL)
 			return renderCaptchaTemplate("captcha_form", captchaFormPageData{
 				PageTitle:    "VK captcha",
 				Headline:     "Выполните Captcha действие",
@@ -97,12 +102,27 @@ func solveCaptchaViaHTTP(captchaImg string, resolver *protectedResolver, userAge
 	)
 }
 
-func solveCaptchaViaHTTPDeferred(captchaImg string, resolver *protectedResolver, userAgent string) (string, error) {
+func solveCaptchaViaHTTPDeferred(
+	captchaImg string,
+	redirectURI string,
+	resolver *protectedResolver,
+	userAgent string,
+) (string, error) {
+	imageTargetURL := resolveCaptchaImageURL(captchaImg, redirectURI)
+	if imageTargetURL == "" {
+		return "", fmt.Errorf("captcha image URL is missing")
+	}
+	log.Printf(
+		"Deferring manual image captcha via local proxy: image=%q redirect=%q resolved=%q",
+		captchaImg,
+		redirectURI,
+		imageTargetURL,
+	)
 	return runCaptchaBrowserServer(
 		resolver,
 		nil,
 		func(baseURL string) string {
-			imageURL := localProxyURL(baseURL, captchaImg)
+			imageURL := localProxyURL(baseURL, imageTargetURL)
 			return renderCaptchaTemplate("captcha_form", captchaFormPageData{
 				PageTitle:    "VK captcha",
 				Headline:     "Выполните Captcha действие",
@@ -128,6 +148,7 @@ func solveCaptchaViaProxy(redirectURI string, resolver *protectedResolver, userA
 	if err != nil {
 		return "", fmt.Errorf("invalid redirect URI: %w", err)
 	}
+	log.Printf("Opening manual smart captcha via local reverse proxy: redirect=%q", targetURL.String())
 	return runCaptchaBrowserServer(
 		resolver,
 		targetURL,
@@ -147,6 +168,7 @@ func solveCaptchaViaProxyDeferred(redirectURI string, resolver *protectedResolve
 	if err != nil {
 		return "", fmt.Errorf("invalid redirect URI: %w", err)
 	}
+	log.Printf("Deferring manual smart captcha via local reverse proxy: redirect=%q", targetURL.String())
 	return runCaptchaBrowserServer(
 		resolver,
 		targetURL,
@@ -286,6 +308,11 @@ func runCaptchaBrowserServer(
 	eventLine := eventPrefix + "source=" + source + " url=" + captchaURL
 	if strings.TrimSpace(mode.userAgent) != "" {
 		eventLine += " ua_b64=" + base64.RawURLEncoding.EncodeToString([]byte(mode.userAgent))
+	}
+	if targetURL != nil {
+		log.Printf("Captcha browser server ready: local=%s target=%s source=%s", captchaURL, targetURL.String(), source)
+	} else {
+		log.Printf("Captcha browser server ready: local=%s static_page=true source=%s", captchaURL, source)
 	}
 	fmt.Println(eventLine)
 	if strings.HasPrefix(eventPrefix, "CAPTCHA_PENDING") {
@@ -696,6 +723,28 @@ func rewriteCaptchaRedirectLocation(res *http.Response, baseURL string, targetUR
 
 func localProxyURL(baseURL string, target string) string {
 	return baseURL + captchaGenericPath + "?proxy_url=" + neturl.QueryEscape(target)
+}
+
+func resolveCaptchaImageURL(captchaImg string, redirectURI string) string {
+	trimmed := strings.TrimSpace(captchaImg)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "//") {
+		return "https:" + trimmed
+	}
+	if parsed, err := neturl.Parse(trimmed); err == nil && parsed.IsAbs() {
+		return parsed.String()
+	}
+	if base, err := neturl.Parse(strings.TrimSpace(redirectURI)); err == nil && base.IsAbs() {
+		if ref, refErr := neturl.Parse(trimmed); refErr == nil {
+			return base.ResolveReference(ref).String()
+		}
+	}
+	if strings.HasPrefix(trimmed, "/") {
+		return "https://api.vk.ru" + trimmed
+	}
+	return "https://api.vk.ru/" + strings.TrimPrefix(trimmed, "/")
 }
 
 func captchaInjectedEnhancements() string {

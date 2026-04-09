@@ -1,13 +1,12 @@
 name: Release
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    tags:
+      - 'v*'
 
 jobs:
   build:
@@ -106,21 +105,14 @@ jobs:
 
           mkdir -p dist
 
-          # Set extension for windows
-          if [ "${GOOS}" = "windows" ]; then
-            EXT=.exe
-          else
-            EXT=
-          fi
-
           GOOS=$GOOS GOARCH=$GOARCH GOARM=$GOARM GOMIPS=$GOMIPS \
           go build -ldflags "-s -w -checklinkname=0" -trimpath \
-            -o "dist/client-${GOOS}-${GOARCH}${EXT}" \
+            -o "dist/client-${GOOS}-${GOARCH}" \
             ./client
 
           GOOS=$GOOS GOARCH=$GOARCH GOARM=$GOARM GOMIPS=$GOMIPS \
           go build -ldflags "-s -w -checklinkname=0" -trimpath \
-            -o "dist/server-${GOOS}-${GOARCH}${EXT}" \
+            -o "dist/server-${GOOS}-${GOARCH}" \
             ./server
 
       - name: Upload artifact
@@ -133,187 +125,23 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    outputs:
-      should_release: ${{ steps.meta.outputs.should_release }}
-      tag_name: ${{ steps.meta.outputs.tag_name }}
     permissions:
       contents: write
     steps:
-      - name: Check out code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
       - name: Download build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v5
         with:
           path: dist
 
-      - name: Prepare release metadata
-        id: meta
-        run: |
-          LATEST_TAG="$(git tag -l | grep -E '^(v)?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
-          PREFIX=""
-          BASE_VERSION="$LATEST_TAG"
-
-          if [ -z "$LATEST_TAG" ]; then
-            BASE_VERSION="0.0.0"
-          elif [ "${LATEST_TAG#v}" != "$LATEST_TAG" ]; then
-            PREFIX="v"
-            BASE_VERSION="${LATEST_TAG#v}"
-          fi
-
-          IFS=. read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
-
-          if [ -n "$LATEST_TAG" ]; then
-            RANGE="$LATEST_TAG..HEAD"
-          else
-            RANGE="HEAD"
-          fi
-
-          COMMITS="$(git log --no-merges --format='%s' "$RANGE")"
-          BUMP=""
-
-          if printf '%s\n' "$COMMITS" | grep -Eiq '^break([(:! ]|$)'; then
-            BUMP="major"
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-          elif printf '%s\n' "$COMMITS" | grep -Eiq '^feat([(:! ]|$)'; then
-            BUMP="minor"
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          elif printf '%s\n' "$COMMITS" | grep -Eiq '^fix([(:! ]|$)'; then
-            BUMP="patch"
-            PATCH=$((PATCH + 1))
-          fi
-
-          NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          NEXT_TAG="${PREFIX}${NEXT_VERSION}"
-
-          {
-            echo "previous_tag=$LATEST_TAG"
-            echo "range=$RANGE"
-            echo "bump=$BUMP"
-            echo "should_release=$([ -n "$BUMP" ] && echo true || echo false)"
-            echo "tag_name=$NEXT_TAG"
-            echo "release_name=$NEXT_TAG"
-            echo "body_path=release-notes.md"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Generate release notes from commit messages
-        id: notes
-        if: steps.meta.outputs.should_release == 'true'
-        env:
-          PREVIOUS_TAG: ${{ steps.meta.outputs.previous_tag }}
-          NEXT_TAG: ${{ steps.meta.outputs.tag_name }}
-          BUMP: ${{ steps.meta.outputs.bump }}
-          RANGE: ${{ steps.meta.outputs.range }}
-        run: |
-          strip_prefix() {
-            sed -E 's/^(feat|fix|break)([(!:]|[[:space:]])+[[:space:]]*//I'
-          }
-
-          FEATURES="$(git log --no-merges --format='%s (%h)' "$RANGE" | grep -Ei '^feat([(:! ]|$)' | strip_prefix | LC_ALL=C sort -f || true)"
-          FIXES="$(git log --no-merges --format='%s (%h)' "$RANGE" | grep -Ei '^fix([(:! ]|$)' | strip_prefix | LC_ALL=C sort -f || true)"
-          BREAKING="$(git log --no-merges --format='%s (%h)' "$RANGE" | grep -Ei '^break([(:! ]|$)' | strip_prefix | LC_ALL=C sort -f || true)"
-
-          {
-            echo "body_path=release-notes.md"
-          } >> "$GITHUB_OUTPUT"
-
-          {
-            if [ -n "$BREAKING" ]; then
-              echo "### Breaking Changes"
-              echo
-              printf '%s\n' "$BREAKING" | sed 's/^/- /'
-              echo
-            fi
-
-            if [ -n "$FEATURES" ]; then
-              echo "### Features"
-              echo
-              printf '%s\n' "$FEATURES" | sed 's/^/- /'
-              echo
-            fi
-
-            if [ -n "$FIXES" ]; then
-              echo "### Bug Fixes"
-              echo
-              printf '%s\n' "$FIXES" | sed 's/^/- /'
-              echo
-            fi
-          } > release-notes.md
-
       - name: Create Release
-        if: steps.meta.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          # upload every file in dist/ including nested files
           files: |
             dist/**
-          tag_name: ${{ steps.meta.outputs.tag_name }}
+          tag_name: ${{ github.ref_name }}
           target_commitish: ${{ github.sha }}
-          name: ${{ steps.meta.outputs.release_name }}
-          body_path: ${{ steps.meta.outputs.body_path }}
+          name: ${{ github.ref_name }}
+          body: "Release based on tag ${{ github.ref_name }}"
           overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Skip release when no semantic commit is found
-        if: steps.meta.outputs.should_release != 'true'
-        run: |
-          echo "No new semantic release created."
-          echo "Add a commit starting with break, feat, or fix after the latest tag."
-
-  docker:
-    name: Publish Docker image
-    needs: release
-    if: needs.release.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Prepare image name
-        id: image
-        env:
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          echo "name=ghcr.io/$(echo "$REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ steps.image.outputs.name }}
-          tags: |
-            type=raw,value=latest
-            type=raw,value=${{ needs.release.outputs.tag_name }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}

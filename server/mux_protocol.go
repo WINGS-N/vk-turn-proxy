@@ -10,6 +10,7 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	sessionv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/v1"
 	sessionv2 "github.com/cacggghp/vk-turn-proxy/sessionproto/v2"
+	sessionv3 "github.com/cacggghp/vk-turn-proxy/sessionproto/v3"
 )
 
 func describeClientHello(hello *sessionproto.ClientHello) string {
@@ -21,11 +22,12 @@ func describeClientHello(hello *sessionproto.ClientHello) string {
 		sessionID = hex.EncodeToString(hello.GetSessionId())
 	}
 	return fmt.Sprintf(
-		"version=%d type=%s stream=%d session=%s",
+		"version=%d type=%s stream=%d session=%s requested_transport=%s",
 		hello.GetVersion(),
 		hello.GetType(),
 		hello.GetStreamId(),
 		sessionID,
+		hello.GetRequestedTransport(),
 	)
 }
 
@@ -35,8 +37,17 @@ func writeServerHelloForVersion(
 	muxSupported bool,
 	errorText string,
 	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
 ) error {
-	payload, err := buildServerHelloForVersion(version, muxSupported, errorText, controlHeartbeatSupported)
+	payload, err := buildServerHelloForVersion(
+		version,
+		muxSupported,
+		errorText,
+		controlHeartbeatSupported,
+		selectedTransport,
+		supportedTransports,
+	)
 	if err != nil {
 		return err
 	}
@@ -54,12 +65,22 @@ func buildServerHelloForVersion(
 	muxSupported bool,
 	errorText string,
 	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
 ) ([]byte, error) {
 	switch version {
 	case sessionv1.ProtocolVersion:
 		return sessionv1.BuildServerHello(muxSupported, errorText, controlHeartbeatSupported)
 	case sessionv2.ProtocolVersion:
 		return sessionv2.BuildServerHello(muxSupported, errorText, controlHeartbeatSupported)
+	case sessionv3.ProtocolVersion:
+		return sessionv3.BuildServerHelloWithTransport(
+			muxSupported,
+			errorText,
+			controlHeartbeatSupported,
+			selectedTransport,
+			supportedTransports,
+		)
 	default:
 		return nil, fmt.Errorf("unsupported protocol version: %d", version)
 	}
@@ -71,12 +92,14 @@ func validateClientHelloForVersion(hello *sessionproto.ClientHello) error {
 		return sessionv1.ValidateClientHello(hello)
 	case sessionv2.ProtocolVersion:
 		return sessionv2.ValidateClientHello(hello)
+	case sessionv3.ProtocolVersion:
+		return sessionv3.ValidateClientHello(hello)
 	default:
 		return fmt.Errorf("unsupported protocol version: %d", hello.GetVersion())
 	}
 }
 
-func handleMainlineControlPacket(conn net.Conn, payload []byte, mode sessionproto.Mode) (bool, error) {
+func handleMainlineControlPacket(conn net.Conn, payload []byte, mode sessionproto.Mode, backends transportBackends) (bool, error) {
 	probePayload, ok := sessionproto.ParseControlProbeRequest(payload)
 	if !ok {
 		return false, nil
@@ -91,7 +114,14 @@ func handleMainlineControlPacket(conn net.Conn, payload []byte, mode sessionprot
 	log.Printf("protobuf mainline control hello from %s: %s", conn.RemoteAddr(), describeClientHello(hello))
 	if err := validateClientHelloForVersion(hello); err != nil {
 		log.Printf("protobuf mainline control reject from %s: %v", conn.RemoteAddr(), err)
-		responsePayload, buildErr := buildServerHelloForVersion(hello.GetVersion(), false, err.Error(), true)
+		responsePayload, buildErr := buildServerHelloForVersion(
+			hello.GetVersion(),
+			false,
+			err.Error(),
+			true,
+			sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
+			supportedTransportsForHello(mode, backends, hello),
+		)
 		if buildErr != nil {
 			return true, nil
 		}
@@ -111,14 +141,24 @@ func handleMainlineControlPacket(conn net.Conn, payload []byte, mode sessionprot
 	if !muxSupported {
 		errorText = "server session mode is mainline"
 	}
+	selectedTransport := sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM
+	supportedTransports := supportedTransportsForHello(mode, backends, hello)
 	log.Printf(
-		"protobuf mainline control response to %s: version=%d mux_supported=%t error=%q",
+		"protobuf mainline control response to %s: version=%d mux_supported=%t selected_transport=%s error=%q",
 		conn.RemoteAddr(),
 		hello.GetVersion(),
 		muxSupported,
+		selectedTransport,
 		errorText,
 	)
-	responsePayload, err := buildServerHelloForVersion(hello.GetVersion(), muxSupported, errorText, true)
+	responsePayload, err := buildServerHelloForVersion(
+		hello.GetVersion(),
+		muxSupported,
+		errorText,
+		true,
+		selectedTransport,
+		supportedTransports,
+	)
 	if err != nil {
 		return true, err
 	}
@@ -159,12 +199,12 @@ func handleControlHeartbeatPacket(conn net.Conn, payload []byte, streamKey strin
 		serverUI.noteStreamHeartbeat(streamKey)
 	}
 	log.Printf(
-		"protobuf heartbeat from %s: online=%t active_streams=%d version=%d wg_fp=%q",
+		"protobuf heartbeat from %s: online=%t active_streams=%d version=%d proto_fp=%q",
 		conn.RemoteAddr(),
 		heartbeat.GetOnline(),
 		heartbeat.GetActiveStreams(),
 		heartbeat.GetVersion(),
-		heartbeat.GetWireguardPublicKeyFingerprint(),
+		heartbeat.GetProtoFingerprint(),
 	)
 	responsePayload, err := buildServerHeartbeatPayload(activeStreams)
 	if err != nil {

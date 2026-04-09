@@ -12,6 +12,8 @@ const (
 	controlPacketKindProbeResponse byte = 2
 	controlPacketKindHeartbeatReq  byte = 3
 	controlPacketKindHeartbeatResp byte = 4
+	controlPacketKindSessionReq    byte = 5
+	controlPacketKindSessionResp   byte = 6
 )
 
 func BuildControlProbeRequest(payload []byte) []byte {
@@ -44,6 +46,22 @@ func ParseControlHeartbeatRequest(payload []byte) ([]byte, bool) {
 
 func ParseControlHeartbeatResponse(payload []byte) ([]byte, bool) {
 	return parseControlPacket(payload, controlPacketKindHeartbeatResp)
+}
+
+func BuildControlSessionRequest(payload []byte) []byte {
+	return buildControlPacket(controlPacketKindSessionReq, payload)
+}
+
+func BuildControlSessionResponse(payload []byte) []byte {
+	return buildControlPacket(controlPacketKindSessionResp, payload)
+}
+
+func ParseControlSessionRequest(payload []byte) ([]byte, bool) {
+	return parseControlPacket(payload, controlPacketKindSessionReq)
+}
+
+func ParseControlSessionResponse(payload []byte) ([]byte, bool) {
+	return parseControlPacket(payload, controlPacketKindSessionResp)
 }
 
 func buildControlPacket(kind byte, payload []byte) []byte {
