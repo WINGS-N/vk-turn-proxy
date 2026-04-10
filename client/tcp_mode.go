@@ -282,6 +282,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 		STUNServerAddr:         turnServerAddr,
 		TURNServerAddr:         turnServerAddr,
 		Conn:                   turnConn,
+		Net:                    newDirectNet(),
 		Username:               user,
 		Password:               pass,
 		RequestedAddressFamily: addrFamily,

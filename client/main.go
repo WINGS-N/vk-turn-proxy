@@ -31,10 +31,21 @@ import (
 	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 	"github.com/pion/logging"
+	"github.com/pion/transport/v4"
 	"github.com/pion/turn/v5"
 )
 
 type getCredsFunc func(string) (string, string, string, error)
+
+type directNet struct{}
+
+type directDialer struct {
+	*net.Dialer
+}
+
+type directListenConfig struct {
+	*net.ListenConfig
+}
 
 type UDPPacket struct {
 	Data []byte
@@ -43,6 +54,91 @@ type UDPPacket struct {
 
 var packetPool = sync.Pool{
 	New: func() any { return &UDPPacket{Data: make([]byte, 2048)} },
+}
+
+func newDirectNet() transport.Net {
+	return directNet{}
+}
+
+func (directNet) ListenPacket(network string, address string) (net.PacketConn, error) {
+	return net.ListenPacket(network, address)
+}
+
+func (directNet) ListenUDP(network string, locAddr *net.UDPAddr) (transport.UDPConn, error) {
+	return net.ListenUDP(network, locAddr)
+}
+
+func (directNet) ListenTCP(network string, laddr *net.TCPAddr) (transport.TCPListener, error) {
+	listener, err := net.ListenTCP(network, laddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return directTCPListener{listener}, nil
+}
+
+func (directNet) Dial(network, address string) (net.Conn, error) {
+	return net.Dial(network, address)
+}
+
+func (directNet) DialUDP(network string, laddr, raddr *net.UDPAddr) (transport.UDPConn, error) {
+	return net.DialUDP(network, laddr, raddr)
+}
+
+func (directNet) DialTCP(network string, laddr, raddr *net.TCPAddr) (transport.TCPConn, error) {
+	return net.DialTCP(network, laddr, raddr)
+}
+
+func (directNet) ResolveIPAddr(network, address string) (*net.IPAddr, error) {
+	return net.ResolveIPAddr(network, address)
+}
+
+func (directNet) ResolveUDPAddr(network, address string) (*net.UDPAddr, error) {
+	return net.ResolveUDPAddr(network, address)
+}
+
+func (directNet) ResolveTCPAddr(network, address string) (*net.TCPAddr, error) {
+	return net.ResolveTCPAddr(network, address)
+}
+
+func (directNet) Interfaces() ([]*transport.Interface, error) {
+	return nil, transport.ErrNotSupported
+}
+
+func (directNet) InterfaceByIndex(index int) (*transport.Interface, error) {
+	return nil, fmt.Errorf("%w: index=%d", transport.ErrInterfaceNotFound, index)
+}
+
+func (directNet) InterfaceByName(name string) (*transport.Interface, error) {
+	return nil, fmt.Errorf("%w: %s", transport.ErrInterfaceNotFound, name)
+}
+
+func (directNet) CreateDialer(dialer *net.Dialer) transport.Dialer {
+	return directDialer{Dialer: dialer}
+}
+
+func (directNet) CreateListenConfig(listenerConfig *net.ListenConfig) transport.ListenConfig {
+	return directListenConfig{ListenConfig: listenerConfig}
+}
+
+func (d directDialer) Dial(network, address string) (net.Conn, error) {
+	return d.Dialer.Dial(network, address)
+}
+
+func (d directListenConfig) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	return d.ListenConfig.Listen(ctx, network, address)
+}
+
+func (d directListenConfig) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	return d.ListenConfig.ListenPacket(ctx, network, address)
+}
+
+type directTCPListener struct {
+	*net.TCPListener
+}
+
+func (listener directTCPListener) AcceptTCP() (transport.TCPConn, error) {
+	return listener.TCPListener.AcceptTCP()
 }
 
 func parseRequestedTransport(raw string, vlessAlias bool) (sessionproto.TransportMode, error) {
@@ -776,6 +872,7 @@ func startDtlsTurnWorkers(
 	protocolVersion uint32,
 	firstReady chan struct{},
 	firstProbeResult chan<- uint32,
+	firstMainlineControl chan<- *mainlineControlHandle,
 	probeOnly bool,
 ) *sync.WaitGroup {
 	wg := &sync.WaitGroup{}
@@ -791,6 +888,7 @@ func startDtlsTurnWorkers(
 			connchan,
 			firstReady,
 			firstProbeResult,
+			firstMainlineControl,
 			sessionMode,
 			sessionID,
 			protocolVersion,
@@ -813,6 +911,7 @@ func startDtlsTurnWorkers(
 					listenConn,
 					inboundChan,
 					connchan,
+					nil,
 					nil,
 					nil,
 					sessionMode,
@@ -853,6 +952,7 @@ func oneDtlsConnection(
 	connchan chan<- net.PacketConn,
 	okchan chan<- struct{},
 	probeResult chan<- uint32,
+	mainlineControl chan<- *mainlineControlHandle,
 	c chan<- error,
 	sessionMode sessionproto.Mode,
 	sessionID []byte,
@@ -894,6 +994,8 @@ func oneDtlsConnection(
 	}()
 	dtlsWriteMu := &sync.Mutex{}
 	controlResponses := make(chan []byte, 4)
+	sessionResponses := make(chan []byte, 4)
+	var expectRawSessionHello atomic.Bool
 	controlHeartbeatSupported := false
 	if sessionMode == sessionproto.ModeMux {
 		hello, err1 := buildSessionHelloForVersion(protocolVersion, sessionID, streamID)
@@ -921,6 +1023,18 @@ func oneDtlsConnection(
 			log.Printf("Established DTLS probe connection!\n")
 		} else {
 			log.Printf("Established DTLS connection!\n")
+		}
+	}
+	if sessionMode != sessionproto.ModeMux && streamID == 0 && mainlineControl != nil {
+		select {
+		case mainlineControl <- &mainlineControlHandle{
+			dtlsConn:              dtlsConn,
+			writeMu:               dtlsWriteMu,
+			probeResponses:        controlResponses,
+			sessionResponses:      sessionResponses,
+			expectRawSessionHello: &expectRawSessionHello,
+		}:
+		default:
 		}
 	}
 	if controlHeartbeatSupported && streamID == 0 {
@@ -998,6 +1112,24 @@ func oneDtlsConnection(
 					log.Printf("Failed to parse control heartbeat response: %s", parseErr)
 				}
 				continue
+			}
+			if payload, ok := sessionproto.ParseControlSessionResponse(buf[:n]); ok {
+				select {
+				case sessionResponses <- append([]byte(nil), payload...):
+				default:
+					log.Printf("Dropped stale session response")
+				}
+				continue
+			}
+			if expectRawSessionHello.Load() {
+				if _, parseErr := sessionproto.ParseServerHelloMessage(buf[:n]); parseErr == nil {
+					select {
+					case sessionResponses <- append([]byte(nil), buf[:n]...):
+					default:
+						log.Printf("Dropped stale raw session response")
+					}
+					continue
+				}
 			}
 			if probeOnly {
 				continue
@@ -1143,6 +1275,7 @@ func oneTurnConnection(
 		STUNServerAddr:         turnServerAddr,
 		TURNServerAddr:         turnServerAddr,
 		Conn:                   turnConn,
+		Net:                    newDirectNet(),
 		Username:               user,
 		Password:               pass,
 		RequestedAddressFamily: addrFamily,
@@ -1271,6 +1404,7 @@ func oneDtlsConnectionLoop(
 	connchan chan<- net.PacketConn,
 	okchan chan<- struct{},
 	probeResult chan<- uint32,
+	mainlineControl chan<- *mainlineControlHandle,
 	sessionMode sessionproto.Mode,
 	sessionID []byte,
 	protocolVersion uint32,
@@ -1292,6 +1426,7 @@ func oneDtlsConnectionLoop(
 			connchan,
 			okchan,
 			probeResult,
+			mainlineControl,
 			c,
 			sessionMode,
 			sessionID,
@@ -1515,6 +1650,53 @@ func main() { //nolint:cyclop
 			return poolCreds(baseGetCreds, effectiveCount)
 		}
 	}
+	buildAutoGetCreds := func() (getCredsFunc, func(sessionproto.Mode, uint32, int)) {
+		var fixedPoolSize atomic.Int32
+		var adaptiveEnabled atomic.Bool
+		var adaptiveConfig atomic.Value
+		adaptiveConfig.Store(normalizeAdaptivePoolConfig(1, 1, defaultAdaptivePoolStreamsPerIdentity, 1))
+
+		targetPoolSize := func() int {
+			if adaptiveEnabled.Load() {
+				config, ok := adaptiveConfig.Load().(adaptivePoolConfig)
+				if ok {
+					return config.targetPoolSize()
+				}
+			}
+			return max(1, int(fixedPoolSize.Load()))
+		}
+
+		setStrategy := func(sessionMode sessionproto.Mode, protocolVersion uint32, effectiveCount int) {
+			switch {
+			case sessionMode == sessionproto.ModeMainline:
+				adaptiveEnabled.Store(false)
+				fixedPoolSize.Store(1)
+				log.Printf("TURN identity pool: fixed size 1 for mainline")
+			case sessionMode == sessionproto.ModeMux && protocolVersion >= muxProtocolV3:
+				config := normalizeAdaptivePoolConfig(
+					*adaptivePoolMinFlag,
+					*adaptivePoolMaxFlag,
+					*adaptivePoolStreamsPerIdentityFlag,
+					effectiveCount,
+				)
+				adaptiveConfig.Store(config)
+				adaptiveEnabled.Store(true)
+				log.Printf(
+					"TURN identity pool: adaptive for mux v%d (min=%d max=%d streams_per_id=%d)",
+					protocolVersion,
+					config.minSize,
+					config.maxSize,
+					config.streamsPerIdentity,
+				)
+			default:
+				adaptiveEnabled.Store(false)
+				fixedPoolSize.Store(int32(max(1, effectiveCount)))
+				log.Printf("TURN identity pool: fixed size %d", max(1, effectiveCount))
+			}
+		}
+
+		return poolCredsDynamic(baseGetCreds, targetPoolSize), setStrategy
+	}
 	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
 		link = link[:idx]
 	}
@@ -1601,43 +1783,33 @@ func main() { //nolint:cyclop
 				}
 			}
 		}()
-		probeMuxCompatibility := func(candidateVersion uint32) bool {
+		probeMuxCompatibility := func(control *mainlineControlHandle, candidateVersion uint32) bool {
 			probeSessionID := resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
-			params.getCreds = buildGetCreds(sessionproto.ModeMux, candidateVersion, 1)
 			log.Printf(
 				"Compatibility probe: testing mux v%d session hello, session ID: %s",
 				candidateVersion,
 				hex.EncodeToString(probeSessionID),
 			)
-
-			probeCtx, probeCancel := context.WithCancel(ctx)
-			defer probeCancel()
-
-			okchan := make(chan struct{}, 1)
-			probeWG := startDtlsTurnWorkers(
-				probeCtx,
-				peer,
-				listenConn,
-				inboundChan,
-				params,
-				t,
-				1,
-				sessionproto.ModeMux,
-				probeSessionID,
-				candidateVersion,
-				okchan,
-				nil,
-				true,
-			)
-			compatible := waitForReady(ctx, okchan, muxProbeTimeout)
-			probeCancel()
-			probeWG.Wait()
-			if compatible {
+			hello, err := buildSessionHelloForVersion(candidateVersion, probeSessionID, 0)
+			if err != nil {
+				log.Printf("Compatibility probe: failed to build mux v%d session hello: %s", candidateVersion, err)
+				return false
+			}
+			serverHello, err := exchangeMuxSessionHelloOnActiveMainline(control, hello, candidateVersion)
+			if err == nil && serverHello.GetMuxSupported() {
 				log.Printf("Compatibility probe: mux v%d session hello acknowledged", candidateVersion)
+				return true
+			}
+			if err != nil {
+				log.Printf("Compatibility probe: mux v%d session hello was not acknowledged: %s", candidateVersion, err)
+				return false
+			}
+			if serverHello.GetError() != "" {
+				log.Printf("Compatibility probe: mux v%d rejected by server: %s", candidateVersion, serverHello.GetError())
 			} else {
 				log.Printf("Compatibility probe: mux v%d session hello was not acknowledged", candidateVersion)
 			}
-			return compatible
+			return false
 		}
 
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
@@ -1665,6 +1837,7 @@ func main() { //nolint:cyclop
 				muxProtocolNone,
 				okchan,
 				nil,
+				nil,
 				false,
 			)
 		case sessionproto.ModeMux:
@@ -1689,6 +1862,7 @@ func main() { //nolint:cyclop
 					sessionID,
 					candidateVersion,
 					okchan,
+					nil,
 					nil,
 					false,
 				)
@@ -1722,13 +1896,17 @@ func main() { //nolint:cyclop
 					muxProtocolNone,
 					okchan,
 					nil,
+					nil,
 					false,
 				)
 			}
 		case sessionproto.ModeAuto:
 			okchan := make(chan struct{})
 			probeResult := make(chan uint32, 1)
-			params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+			mainlineControl := make(chan *mainlineControlHandle, 1)
+			autoGetCreds, setAutoPoolStrategy := buildAutoGetCreds()
+			setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, 1)
+			params.getCreds = autoGetCreds
 			runtimeWG = startDtlsTurnWorkers(
 				runtimeCtx,
 				peer,
@@ -1742,6 +1920,7 @@ func main() { //nolint:cyclop
 				muxProtocolNone,
 				okchan,
 				probeResult,
+				mainlineControl,
 				true,
 			)
 			if !waitForReady(ctx, okchan, mainlineBootstrapTimeout) {
@@ -1751,6 +1930,7 @@ func main() { //nolint:cyclop
 			}
 
 			supportedVersion := waitForProbeVersion(ctx, probeResult, muxProbeTimeout)
+			activeMainlineControl := waitForMainlineControlHandle(ctx, mainlineControl, muxProbeTimeout)
 			candidateVersions := make([]uint32, 0, 3)
 			switch supportedVersion {
 			case muxProtocolV3:
@@ -1763,7 +1943,7 @@ func main() { //nolint:cyclop
 
 			selectedMuxVersion := uint32(0)
 			for _, candidateVersion := range candidateVersions {
-				if probeMuxCompatibility(candidateVersion) {
+				if probeMuxCompatibility(activeMainlineControl, candidateVersion) {
 					selectedMuxVersion = candidateVersion
 					break
 				}
@@ -1776,7 +1956,8 @@ func main() { //nolint:cyclop
 				log.Printf("Session mode: staying on mainline")
 
 				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-				params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+				setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, 1)
+				params.getCreds = autoGetCreds
 				effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
 				logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
 				okchan := make(chan struct{}, 1)
@@ -1793,13 +1974,15 @@ func main() { //nolint:cyclop
 					muxProtocolNone,
 					okchan,
 					nil,
+					nil,
 					false,
 				)
 			} else {
 				effectiveCount := effectiveStreamCount(sessionproto.ModeMux, selectedMuxVersion)
 				logLegacyMuxCompatibility(selectedMuxVersion, effectiveCount)
 				sessionID = resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
-				params.getCreds = buildGetCreds(sessionproto.ModeMux, selectedMuxVersion, effectiveCount)
+				setAutoPoolStrategy(sessionproto.ModeMux, selectedMuxVersion, effectiveCount)
+				params.getCreds = autoGetCreds
 				log.Printf("Session mode: mainline -> mux v%d, session ID: %s", selectedMuxVersion, hex.EncodeToString(sessionID))
 
 				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
@@ -1817,6 +2000,7 @@ func main() { //nolint:cyclop
 					selectedMuxVersion,
 					okchan,
 					nil,
+					nil,
 					false,
 				)
 				if !waitForReady(ctx, okchan, muxReadyTimeout) {
@@ -1825,7 +2009,8 @@ func main() { //nolint:cyclop
 					runtimeWG.Wait()
 
 					runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-					params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+					setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, 1)
+					params.getCreds = autoGetCreds
 					effectiveCount = effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
 					logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
 					okchan = make(chan struct{}, 1)
@@ -1841,6 +2026,7 @@ func main() { //nolint:cyclop
 						nil,
 						muxProtocolNone,
 						okchan,
+						nil,
 						nil,
 						false,
 					)

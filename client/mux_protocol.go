@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
@@ -27,6 +28,14 @@ const (
 	waitPollInterval         = 250 * time.Millisecond
 	controlHeartbeatInterval = 60 * time.Second
 )
+
+type mainlineControlHandle struct {
+	dtlsConn              net.Conn
+	writeMu               *sync.Mutex
+	probeResponses        <-chan []byte
+	sessionResponses      <-chan []byte
+	expectRawSessionHello *atomic.Bool
+}
 
 func buildProbeHelloForVersion(version uint32) ([]byte, error) {
 	switch version {
@@ -137,6 +146,47 @@ func exchangeMuxSessionHello(dtlsConn net.Conn, hello []byte, version uint32) (*
 		payload = sessionPayload
 	}
 	return sessionproto.ParseServerHelloMessage(payload)
+}
+
+func exchangeMuxSessionHelloOnActiveMainline(
+	control *mainlineControlHandle,
+	hello []byte,
+	version uint32,
+) (*sessionproto.ServerHello, error) {
+	if control == nil {
+		return nil, fmt.Errorf("active mainline control handle is unavailable")
+	}
+
+	packet := hello
+	expectRawResponse := version < muxProtocolV3
+	if expectRawResponse {
+		control.expectRawSessionHello.Store(true)
+		defer control.expectRawSessionHello.Store(false)
+	} else {
+		packet = sessionproto.BuildControlSessionRequest(hello)
+	}
+
+	control.writeMu.Lock()
+	defer control.writeMu.Unlock()
+
+	if err := control.dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, err
+	}
+	if _, err := control.dtlsConn.Write(packet); err != nil {
+		return nil, err
+	}
+	if err := control.dtlsConn.SetWriteDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case payload := <-control.sessionResponses:
+		return parseAndValidateServerHelloForVersion(payload, version)
+	case <-timer.C:
+		return nil, fmt.Errorf("timed out waiting for session response")
+	}
 }
 
 func negotiateMainlineFeatures(dtlsConn net.Conn, writeMu *sync.Mutex, controlResponses <-chan []byte) (uint32, bool) {
@@ -295,6 +345,36 @@ func waitForProbeVersion(ctx context.Context, probeResult <-chan uint32, timeout
 			}
 			if time.Now().After(deadline) {
 				return muxProtocolNone
+			}
+		}
+	}
+}
+
+func waitForMainlineControlHandle(
+	ctx context.Context,
+	controlHandle <-chan *mainlineControlHandle,
+	timeout time.Duration,
+) *mainlineControlHandle {
+	if controlHandle == nil {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(waitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case handle := <-controlHandle:
+			return handle
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if isCaptchaPending() {
+				deadline = time.Now().Add(timeout)
+				continue
+			}
+			if time.Now().After(deadline) {
+				return nil
 			}
 		}
 	}
