@@ -874,57 +874,47 @@ func startDtlsTurnWorkers(
 	firstProbeResult chan<- uint32,
 	firstMainlineControl chan<- *mainlineControlHandle,
 	probeOnly bool,
+	statusEnabled bool,
 ) *sync.WaitGroup {
 	wg := &sync.WaitGroup{}
-	connchan := make(chan net.PacketConn)
 	delayAdditionalWorkers := sessionMode == sessionproto.ModeMainline && !probeOnly && firstReady != nil
 
-	wg.Go(func() {
-		oneDtlsConnectionLoop(
+	startDtlsTurnWorker(
+		wg,
+		ctx,
+		peer,
+		listenConn,
+		inboundChan,
+		params,
+		t,
+		sessionMode,
+		sessionID,
+		protocolVersion,
+		0,
+		firstReady,
+		firstProbeResult,
+		firstMainlineControl,
+		probeOnly,
+		statusEnabled,
+	)
+
+	spawnAdditionalWorkers := func() {
+		startAdditionalDtlsTurnWorkers(
+			wg,
 			ctx,
 			peer,
 			listenConn,
 			inboundChan,
-			connchan,
-			firstReady,
-			firstProbeResult,
-			firstMainlineControl,
+			params,
+			t,
+			max(0, n-1),
+			1,
 			sessionMode,
 			sessionID,
 			protocolVersion,
-			0,
 			probeOnly,
+			statusEnabled,
 		)
-	})
-	wg.Go(func() {
-		oneTurnConnectionLoop(ctx, params, peer, connchan, t, 0, probeOnly)
-	})
-
-	spawnAdditionalWorkers := func() {
-		for i := 0; i < n-1; i++ {
-			connchan := make(chan net.PacketConn)
-			streamID := byte(i + 1)
-			wg.Go(func() {
-				oneDtlsConnectionLoop(
-					ctx,
-					peer,
-					listenConn,
-					inboundChan,
-					connchan,
-					nil,
-					nil,
-					nil,
-					sessionMode,
-					sessionID,
-					protocolVersion,
-					streamID,
-					probeOnly,
-				)
-			})
-			wg.Go(func() {
-				oneTurnConnectionLoop(ctx, params, peer, connchan, t, int(streamID), probeOnly)
-			})
-		}
 	}
 
 	if !delayAdditionalWorkers {
@@ -944,6 +934,87 @@ func startDtlsTurnWorkers(
 	return wg
 }
 
+func startAdditionalDtlsTurnWorkers(
+	wg *sync.WaitGroup,
+	ctx context.Context,
+	peer *net.UDPAddr,
+	listenConn net.PacketConn,
+	inboundChan <-chan *UDPPacket,
+	params *turnParams,
+	t <-chan time.Time,
+	count int,
+	firstStreamID byte,
+	sessionMode sessionproto.Mode,
+	sessionID []byte,
+	protocolVersion uint32,
+	probeOnly bool,
+	statusEnabled bool,
+) {
+	for i := 0; i < count; i++ {
+		streamID := byte(int(firstStreamID) + i)
+		startDtlsTurnWorker(
+			wg,
+			ctx,
+			peer,
+			listenConn,
+			inboundChan,
+			params,
+			t,
+			sessionMode,
+			sessionID,
+			protocolVersion,
+			streamID,
+			nil,
+			nil,
+			nil,
+			probeOnly,
+			statusEnabled,
+		)
+	}
+}
+
+func startDtlsTurnWorker(
+	wg *sync.WaitGroup,
+	ctx context.Context,
+	peer *net.UDPAddr,
+	listenConn net.PacketConn,
+	inboundChan <-chan *UDPPacket,
+	params *turnParams,
+	t <-chan time.Time,
+	sessionMode sessionproto.Mode,
+	sessionID []byte,
+	protocolVersion uint32,
+	streamID byte,
+	firstReady chan struct{},
+	firstProbeResult chan<- uint32,
+	firstMainlineControl chan<- *mainlineControlHandle,
+	probeOnly bool,
+	statusEnabled bool,
+) {
+	connchan := make(chan net.PacketConn)
+	wg.Go(func() {
+		oneDtlsConnectionLoop(
+			ctx,
+			peer,
+			listenConn,
+			inboundChan,
+			connchan,
+			firstReady,
+			firstProbeResult,
+			firstMainlineControl,
+			sessionMode,
+			sessionID,
+			protocolVersion,
+			streamID,
+			probeOnly,
+			statusEnabled,
+		)
+	})
+	wg.Go(func() {
+		oneTurnConnectionLoop(ctx, params, peer, connchan, t, int(streamID), probeOnly, statusEnabled)
+	})
+}
+
 func oneDtlsConnection(
 	ctx context.Context,
 	peer *net.UDPAddr,
@@ -959,6 +1030,7 @@ func oneDtlsConnection(
 	protocolVersion uint32,
 	streamID byte,
 	probeOnly bool,
+	statusEnabled bool,
 ) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error = nil
@@ -1040,7 +1112,7 @@ func oneDtlsConnection(
 	if controlHeartbeatSupported && streamID == 0 {
 		go startControlHeartbeatLoop(dtlsctx, dtlsConn, dtlsWriteMu)
 	}
-	if !probeOnly {
+	if !probeOnly && statusEnabled {
 		emitProxyStatus("dtls_ready")
 	}
 	if okchan != nil {
@@ -1190,6 +1262,7 @@ func oneTurnConnection(
 	streamID int,
 	c chan<- error,
 	probeOnly bool,
+	statusEnabled bool,
 ) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error = nil
@@ -1202,7 +1275,7 @@ func oneTurnConnection(
 		err = fmt.Errorf("failed to get TURN credentials: %s", err1)
 		return
 	}
-	if !probeOnly {
+	if !probeOnly && statusEnabled {
 		emitProxyStatus("auth_ready")
 	}
 	urlhost, urlport, err1 := net.SplitHostPort(url)
@@ -1315,7 +1388,7 @@ func oneTurnConnection(
 	// The relayConn's local address is actually the transport
 	// address assigned on the TURN server.
 	log.Printf("[STREAM %d] relayed-address=%s", streamID, relayConn.LocalAddr().String())
-	if !probeOnly {
+	if !probeOnly && statusEnabled {
 		emitProxyStatus("turn_ready")
 	}
 
@@ -1410,6 +1483,7 @@ func oneDtlsConnectionLoop(
 	protocolVersion uint32,
 	streamID byte,
 	probeOnly bool,
+	statusEnabled bool,
 ) {
 	for {
 		select {
@@ -1433,6 +1507,7 @@ func oneDtlsConnectionLoop(
 			protocolVersion,
 			streamID,
 			probeOnly,
+			statusEnabled,
 		)
 		if err := <-c; err != nil {
 			log.Printf("%s; reconnecting in %s", err, workerReconnectBackoff)
@@ -1453,6 +1528,7 @@ func oneTurnConnectionLoop(
 	t <-chan time.Time,
 	streamID int,
 	probeOnly bool,
+	statusEnabled bool,
 ) {
 	for {
 		select {
@@ -1462,7 +1538,7 @@ func oneTurnConnectionLoop(
 			select {
 			case <-t:
 				c := make(chan error)
-				go oneTurnConnection(ctx, turnParams, peer, conn2, streamID, c, probeOnly)
+				go oneTurnConnection(ctx, turnParams, peer, conn2, streamID, c, probeOnly, statusEnabled)
 				if err := <-c; err != nil {
 					if isFatalCaptchaFailure(err) {
 						log.Printf("[STREAM %d] Fatal captcha error, shutting down runtime: %s", streamID, err)
@@ -1749,7 +1825,7 @@ func main() { //nolint:cyclop
 		for i := 0; i < *n; i++ {
 			streamID := i
 			wg1.Go(func() {
-				oneTurnConnectionLoop(ctx, params, peer, listenConnChan, t, streamID, false)
+				oneTurnConnectionLoop(ctx, params, peer, listenConnChan, t, streamID, false, true)
 			})
 		}
 	} else {
@@ -1781,7 +1857,12 @@ func main() { //nolint:cyclop
 				}
 			}
 		}()
-		probeMuxCompatibility := func(control *mainlineControlHandle, candidateVersion uint32) bool {
+		type muxProbeSelection struct {
+			version            uint32
+			sessionID          []byte
+			heartbeatSupported bool
+		}
+		probeMuxCompatibility := func(control *mainlineControlHandle, candidateVersion uint32) *muxProbeSelection {
 			probeSessionID := resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
 			log.Printf(
 				"Compatibility probe: testing mux v%d session hello, session ID: %s",
@@ -1791,23 +1872,27 @@ func main() { //nolint:cyclop
 			hello, err := buildSessionHelloForVersion(candidateVersion, probeSessionID, 0)
 			if err != nil {
 				log.Printf("Compatibility probe: failed to build mux v%d session hello: %s", candidateVersion, err)
-				return false
+				return nil
 			}
 			serverHello, err := exchangeMuxSessionHelloOnActiveMainline(control, hello, candidateVersion)
 			if err == nil && serverHello.GetMuxSupported() {
 				log.Printf("Compatibility probe: mux v%d session hello acknowledged", candidateVersion)
-				return true
+				return &muxProbeSelection{
+					version:            candidateVersion,
+					sessionID:          append([]byte(nil), probeSessionID...),
+					heartbeatSupported: serverHello.GetControlHeartbeatSupported(),
+				}
 			}
 			if err != nil {
 				log.Printf("Compatibility probe: mux v%d session hello was not acknowledged: %s", candidateVersion, err)
-				return false
+				return nil
 			}
 			if serverHello.GetError() != "" {
 				log.Printf("Compatibility probe: mux v%d rejected by server: %s", candidateVersion, serverHello.GetError())
 			} else {
 				log.Printf("Compatibility probe: mux v%d session hello was not acknowledged", candidateVersion)
 			}
-			return false
+			return nil
 		}
 
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
@@ -1837,6 +1922,7 @@ func main() { //nolint:cyclop
 				nil,
 				nil,
 				false,
+				true,
 			)
 		case sessionproto.ModeMux:
 			upgraded := false
@@ -1863,6 +1949,7 @@ func main() { //nolint:cyclop
 					nil,
 					nil,
 					false,
+					true,
 				)
 				if waitForReady(ctx, okchan, muxReadyTimeout) {
 					upgraded = true
@@ -1896,6 +1983,7 @@ func main() { //nolint:cyclop
 					nil,
 					nil,
 					false,
+					true,
 				)
 			}
 		case sessionproto.ModeAuto:
@@ -1905,6 +1993,8 @@ func main() { //nolint:cyclop
 			autoGetCreds, setAutoPoolStrategy := buildAutoGetCreds()
 			setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, 1)
 			params.getCreds = autoGetCreds
+			// Probe through a real stream so auto->mainline can reuse it instead of
+			// leaving an extra TURN participant.
 			runtimeWG = startDtlsTurnWorkers(
 				runtimeCtx,
 				peer,
@@ -1919,7 +2009,8 @@ func main() { //nolint:cyclop
 				okchan,
 				probeResult,
 				mainlineControl,
-				true,
+				false,
+				false,
 			)
 			if !waitForReady(ctx, okchan, mainlineBootstrapTimeout) {
 				runtimeCancel()
@@ -1939,78 +2030,25 @@ func main() { //nolint:cyclop
 				candidateVersions = append(candidateVersions, muxProtocolV1)
 			}
 
-			selectedMuxVersion := uint32(0)
+			selectedMux := (*muxProbeSelection)(nil)
 			for _, candidateVersion := range candidateVersions {
-				if probeMuxCompatibility(activeMainlineControl, candidateVersion) {
-					selectedMuxVersion = candidateVersion
+				if selection := probeMuxCompatibility(activeMainlineControl, candidateVersion); selection != nil {
+					selectedMux = selection
 					break
 				}
 			}
 
-			runtimeCancel()
-			runtimeWG.Wait()
-
-			if selectedMuxVersion == 0 {
-				log.Printf("Session mode: staying on mainline")
-
-				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
+			if selectedMux == nil {
 				effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
 				setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, effectiveCount)
 				params.getCreds = autoGetCreds
 				logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
-				okchan := make(chan struct{}, 1)
-				runtimeWG = startDtlsTurnWorkers(
-					runtimeCtx,
-					peer,
-					listenConn,
-					inboundChan,
-					params,
-					t,
-					effectiveCount,
-					sessionproto.ModeMainline,
-					nil,
-					muxProtocolNone,
-					okchan,
-					nil,
-					nil,
-					false,
-				)
-			} else {
-				effectiveCount := effectiveStreamCount(sessionproto.ModeMux, selectedMuxVersion)
-				logLegacyMuxCompatibility(selectedMuxVersion, effectiveCount)
-				sessionID = resolveSessionID(sessionproto.ModeMux, *sessionIDFlag)
-				setAutoPoolStrategy(sessionproto.ModeMux, selectedMuxVersion, effectiveCount)
-				params.getCreds = autoGetCreds
-				log.Printf("Session mode: mainline -> mux v%d, session ID: %s", selectedMuxVersion, hex.EncodeToString(sessionID))
-
-				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-				okchan = make(chan struct{})
-				runtimeWG = startDtlsTurnWorkers(
-					runtimeCtx,
-					peer,
-					listenConn,
-					inboundChan,
-					params,
-					t,
-					effectiveCount,
-					sessionproto.ModeMux,
-					sessionID,
-					selectedMuxVersion,
-					okchan,
-					nil,
-					nil,
-					false,
-				)
-				if !waitForReady(ctx, okchan, muxReadyTimeout) {
-					log.Printf("Session mode: mux v%d failed after successful compatibility probe, staying on mainline", selectedMuxVersion)
+				if len(candidateVersions) > 0 {
+					log.Printf("Session mode: mux compatibility failed, restarting on mainline")
 					runtimeCancel()
 					runtimeWG.Wait()
 
 					runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-					effectiveCount = effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
-					setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, effectiveCount)
-					params.getCreds = autoGetCreds
-					logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
 					okchan = make(chan struct{}, 1)
 					runtimeWG = startDtlsTurnWorkers(
 						runtimeCtx,
@@ -2027,8 +2065,63 @@ func main() { //nolint:cyclop
 						nil,
 						nil,
 						false,
+						true,
 					)
+					break
 				}
+				log.Printf("Session mode: staying on mainline; reusing bootstrap stream 0")
+				emitProxyStatus("auth_ready")
+				emitProxyStatus("turn_ready")
+				emitProxyStatus("dtls_ready")
+				startAdditionalDtlsTurnWorkers(
+					runtimeWG,
+					runtimeCtx,
+					peer,
+					listenConn,
+					inboundChan,
+					params,
+					t,
+					max(0, effectiveCount-1),
+					1,
+					sessionproto.ModeMainline,
+					nil,
+					muxProtocolNone,
+					false,
+					true,
+				)
+			} else {
+				effectiveCount := effectiveStreamCount(sessionproto.ModeMux, selectedMux.version)
+				logLegacyMuxCompatibility(selectedMux.version, effectiveCount)
+				sessionID = selectedMux.sessionID
+				setAutoPoolStrategy(sessionproto.ModeMux, selectedMux.version, effectiveCount)
+				params.getCreds = autoGetCreds
+				log.Printf(
+					"Session mode: mainline -> mux v%d, session ID: %s; reusing bootstrap stream 0",
+					selectedMux.version,
+					hex.EncodeToString(sessionID),
+				)
+				if selectedMux.heartbeatSupported && activeMainlineControl != nil {
+					go startControlHeartbeatLoop(runtimeCtx, activeMainlineControl.dtlsConn, activeMainlineControl.writeMu)
+				}
+				emitProxyStatus("auth_ready")
+				emitProxyStatus("turn_ready")
+				emitProxyStatus("dtls_ready")
+				startAdditionalDtlsTurnWorkers(
+					runtimeWG,
+					runtimeCtx,
+					peer,
+					listenConn,
+					inboundChan,
+					params,
+					t,
+					max(0, effectiveCount-1),
+					1,
+					sessionproto.ModeMux,
+					sessionID,
+					selectedMux.version,
+					false,
+					true,
+				)
 			}
 		}
 
