@@ -1600,9 +1600,6 @@ func main() { //nolint:cyclop
 	}
 	configuredPoolSize := max(1, *n)
 	effectiveStreamCount := func(sessionMode sessionproto.Mode, protocolVersion uint32) int {
-		if sessionMode == sessionproto.ModeMainline {
-			return 1
-		}
 		if sessionMode == sessionproto.ModeMux && protocolVersion != muxProtocolNone && protocolVersion < muxProtocolV3 {
 			return 1
 		}
@@ -1628,8 +1625,8 @@ func main() { //nolint:cyclop
 	buildGetCreds := func(sessionMode sessionproto.Mode, protocolVersion uint32, effectiveCount int) getCredsFunc {
 		switch {
 		case sessionMode == sessionproto.ModeMainline:
-			log.Printf("TURN identity pool: fixed size 1 for mainline")
-			return poolCreds(baseGetCreds, 1)
+			log.Printf("TURN identity pool: fixed size %d for mainline", max(1, effectiveCount))
+			return poolCreds(baseGetCreds, max(1, effectiveCount))
 		case sessionMode == sessionproto.ModeMux && protocolVersion >= muxProtocolV3:
 			adaptivePool := normalizeAdaptivePoolConfig(
 				*adaptivePoolMinFlag,
@@ -1670,8 +1667,8 @@ func main() { //nolint:cyclop
 			switch {
 			case sessionMode == sessionproto.ModeMainline:
 				adaptiveEnabled.Store(false)
-				fixedPoolSize.Store(1)
-				log.Printf("TURN identity pool: fixed size 1 for mainline")
+				fixedPoolSize.Store(int32(max(1, effectiveCount)))
+				log.Printf("TURN identity pool: fixed size %d for mainline", max(1, effectiveCount))
 			case sessionMode == sessionproto.ModeMux && protocolVersion >= muxProtocolV3:
 				config := normalizeAdaptivePoolConfig(
 					*adaptivePoolMinFlag,
@@ -1718,7 +1715,8 @@ func main() { //nolint:cyclop
 		if requestedSessionMode == sessionproto.ModeMux {
 			log.Panicf("transport=tcp is not supported with session-mode=mux")
 		}
-		params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
+		effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+		params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, effectiveCount)
 		log.Printf("Transport mode: tcp")
 		runTCPMode(ctx, params, peer, *listen, *n)
 		return
@@ -1820,8 +1818,8 @@ func main() { //nolint:cyclop
 
 		switch requestedSessionMode {
 		case sessionproto.ModeMainline:
-			params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
 			effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+			params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, effectiveCount)
 			logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
 			okchan := make(chan struct{}, 1)
 			runtimeWG = startDtlsTurnWorkers(
@@ -1879,8 +1877,8 @@ func main() { //nolint:cyclop
 
 			if !upgraded {
 				log.Printf("Session mode: mux fallback -> mainline")
-				params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, 1)
 				effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+				params.getCreds = buildGetCreds(sessionproto.ModeMainline, muxProtocolNone, effectiveCount)
 				logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
 				okchan := make(chan struct{}, 1)
 				runtimeWG = startDtlsTurnWorkers(
@@ -1956,9 +1954,9 @@ func main() { //nolint:cyclop
 				log.Printf("Session mode: staying on mainline")
 
 				runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-				setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, 1)
-				params.getCreds = autoGetCreds
 				effectiveCount := effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+				setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, effectiveCount)
+				params.getCreds = autoGetCreds
 				logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
 				okchan := make(chan struct{}, 1)
 				runtimeWG = startDtlsTurnWorkers(
@@ -2009,9 +2007,9 @@ func main() { //nolint:cyclop
 					runtimeWG.Wait()
 
 					runtimeCtx, runtimeCancel = context.WithCancel(ctx)
-					setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, 1)
-					params.getCreds = autoGetCreds
 					effectiveCount = effectiveStreamCount(sessionproto.ModeMainline, muxProtocolNone)
+					setAutoPoolStrategy(sessionproto.ModeMainline, muxProtocolNone, effectiveCount)
+					params.getCreds = autoGetCreds
 					logLegacyMuxCompatibility(muxProtocolNone, effectiveCount)
 					okchan = make(chan struct{}, 1)
 					runtimeWG = startDtlsTurnWorkers(
