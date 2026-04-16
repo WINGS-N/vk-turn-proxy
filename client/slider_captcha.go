@@ -98,7 +98,6 @@ func (s *captchaNotRobotSession) baseValues() neturl.Values {
 
 func (s *captchaNotRobotSession) request(method string, values neturl.Values) (map[string]interface{}, error) {
 	reqURL := "https://api.vk.ru/method/" + method + "?v=5.131"
-
 	req, err := fhttp.NewRequestWithContext(s.ctx, "POST", reqURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, err
@@ -148,7 +147,6 @@ func (s *captchaNotRobotSession) requestComponentDone() error {
 			return fmt.Errorf("componentDone status: %s", status)
 		}
 	}
-
 	return nil
 }
 
@@ -161,7 +159,6 @@ func (s *captchaNotRobotSession) requestSliderContent(sliderSettings string) (*s
 	if sliderSettings != "" {
 		values.Set("captcha_settings", sliderSettings)
 	}
-
 	resp, err := s.request("captchaNotRobot.getContent", values)
 	if err != nil {
 		return nil, fmt.Errorf("getContent failed: %w", err)
@@ -169,12 +166,15 @@ func (s *captchaNotRobotSession) requestSliderContent(sliderSettings string) (*s
 	return parseSliderCaptchaContentResponse(resp)
 }
 
-func (s *captchaNotRobotSession) requestSliderCheck(activeSteps []int, candidateIndex int, candidateCount int) (*captchaCheckResult, error) {
+func (s *captchaNotRobotSession) requestSliderCheck(
+	activeSteps []int,
+	candidateIndex int,
+	candidateCount int,
+) (*captchaCheckResult, error) {
 	answer, err := encodeSliderAnswer(activeSteps)
 	if err != nil {
 		return nil, err
 	}
-
 	return s.requestCheck(generateSliderCursor(candidateIndex, candidateCount), answer)
 }
 
@@ -200,9 +200,8 @@ func (s *captchaNotRobotSession) requestCheck(cursor string, answer string) (*ca
 }
 
 func (s *captchaNotRobotSession) requestEndSession() {
-	log.Printf("[STREAM %d] [Captcha] Step 4/4: endSession", s.streamID)
 	if _, err := s.request("captchaNotRobot.endSession", s.baseValues()); err != nil {
-		log.Printf("[STREAM %d] [Captcha] Warning: endSession failed: %v", s.streamID, err)
+		log.Printf("[Captcha] Warning: endSession failed: %v", err)
 	}
 }
 
@@ -217,7 +216,6 @@ func callCaptchaNotRobotWithSliderPOC(
 ) (string, error) {
 	session := newCaptchaNotRobotSession(ctx, sessionToken, hash, streamID, client, profile)
 
-	log.Printf("[STREAM %d] [Captcha] Step 1/4: settings", streamID)
 	settingsResp, err := session.requestSettings()
 	if err != nil {
 		return "", err
@@ -225,15 +223,11 @@ func callCaptchaNotRobotWithSliderPOC(
 	settingsResp = mergeCaptchaSettings(settingsResp, initialSettings)
 
 	time.Sleep(200 * time.Millisecond)
-
-	log.Printf("[STREAM %d] [Captcha] Step 2/4: componentDone", streamID)
 	if err := session.requestComponentDone(); err != nil {
 		return "", err
 	}
 
 	time.Sleep(200 * time.Millisecond)
-
-	log.Printf("[STREAM %d] [Captcha] Step 3/4: check", streamID)
 	initialCheck, err := session.requestCheckboxCheck()
 	if err != nil {
 		return "", err
@@ -247,22 +241,12 @@ func callCaptchaNotRobotWithSliderPOC(
 	}
 
 	sliderSettings, hasSlider := settingsResp.SettingsByType[sliderCaptchaType]
-	log.Printf(
-		"[STREAM %d] [Captcha] Checkbox-style check returned status=%s (settings show_type=%q, check show_type=%q, available_types=%s)",
-		streamID,
-		initialCheck.Status,
-		settingsResp.ShowCaptchaType,
-		initialCheck.ShowCaptchaType,
-		describeCaptchaTypes(settingsResp.SettingsByType),
-	)
-
 	if !hasSlider {
-		log.Printf(
-			"[STREAM %d] [Captcha] Slider settings not found in settings response. Trying getContent without captcha_settings...",
-			streamID,
+		return "", fmt.Errorf(
+			"check status: %s (slider settings missing, show_type=%q)",
+			initialCheck.Status,
+			initialCheck.ShowCaptchaType,
 		)
-	} else {
-		log.Printf("[STREAM %d] [Captcha] Trying experimental slider solver...", streamID)
 	}
 
 	sliderContent, err := session.requestSliderContent(sliderSettings)
@@ -272,7 +256,6 @@ func callCaptchaNotRobotWithSliderPOC(
 			streamID,
 			err,
 		)
-		// Fallback: maybe it's just a checkbox that needs a human-like check
 		time.Sleep(300 * time.Millisecond)
 		finalCheck, err2 := session.requestCheckboxCheck()
 		if err2 == nil && finalCheck.Status == "OK" {
@@ -291,23 +274,13 @@ func callCaptchaNotRobotWithSliderPOC(
 		return "", err
 	}
 
-	log.Printf(
-		"[STREAM %d] [Captcha] Ranked %d slider positions locally; submitting top %d based on attempt budget %d",
-		streamID,
-		len(candidates),
-		minInt(sliderContent.Attempts, len(candidates)),
+	successToken, err := trySliderCaptchaCandidates(
+		candidates,
 		sliderContent.Attempts,
+		func(candidate sliderCandidate) (*captchaCheckResult, error) {
+			return session.requestSliderCheck(candidate.ActiveSteps, candidate.Index, len(candidates))
+		},
 	)
-
-	successToken, err := trySliderCaptchaCandidates(candidates, sliderContent.Attempts, func(candidate sliderCandidate) (*captchaCheckResult, error) {
-		log.Printf(
-			"[STREAM %d] [Captcha] Slider guess position=%d score=%d",
-			streamID,
-			candidate.Index,
-			candidate.Score,
-		)
-		return session.requestSliderCheck(candidate.ActiveSteps, candidate.Index, len(candidates))
-	})
 	if err != nil {
 		return "", err
 	}
@@ -323,44 +296,6 @@ func buildCaptchaDeviceJSON(profile Profile) string {
 	)
 }
 
-func parseCaptchaSettingsResponse(resp map[string]interface{}) (*captchaSettingsResponse, error) {
-	respObj, ok := resp["response"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid settings response: %v", resp)
-	}
-
-	settings := &captchaSettingsResponse{
-		SettingsByType: make(map[string]string),
-	}
-	settings.ShowCaptchaType, _ = respObj["show_captcha_type"].(string)
-
-	rawSettings, ok := expandCaptchaSettings(respObj["captcha_settings"])
-	if !ok {
-		return settings, nil
-	}
-
-	for _, rawItem := range rawSettings {
-		item, ok := rawItem.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		captchaType, _ := item["type"].(string)
-		if captchaType == "" {
-			continue
-		}
-
-		normalized, err := normalizeCaptchaSettings(item["settings"])
-		if err != nil {
-			return nil, fmt.Errorf("invalid captcha_settings for %s: %w", captchaType, err)
-		}
-
-		settings.SettingsByType[captchaType] = normalized
-	}
-
-	return settings, nil
-}
-
 func parseCaptchaBootstrapHTML(html string) (*captchaBootstrap, error) {
 	powInputRe := regexp.MustCompile(`const\s+powInput\s*=\s*"([^"]+)"`)
 	powInputMatch := powInputRe.FindStringSubmatch(html)
@@ -369,13 +304,13 @@ func parseCaptchaBootstrapHTML(html string) (*captchaBootstrap, error) {
 	}
 
 	difficulty := 2
-	for _, expr := range []*regexp.Regexp{
+	for _, expression := range []*regexp.Regexp{
 		regexp.MustCompile(`startsWith\('0'\.repeat\((\d+)\)\)`),
 		regexp.MustCompile(`const\s+difficulty\s*=\s*(\d+)`),
 	} {
-		if match := expr.FindStringSubmatch(html); len(match) >= 2 {
-			if parsed, err := strconv.Atoi(match[1]); err == nil {
-				difficulty = parsed
+		if match := expression.FindStringSubmatch(html); len(match) >= 2 {
+			if parsedDifficulty, err := strconv.Atoi(match[1]); err == nil {
+				difficulty = parsedDifficulty
 				break
 			}
 		}
@@ -410,12 +345,51 @@ func parseCaptchaSettingsFromHTML(html string) (*captchaSettingsResponse, error)
 		return nil, fmt.Errorf("parse window.init captcha data: %w", err)
 	}
 
-	return parseCaptchaSettingsResponse(map[string]interface{}{
-		"response": map[string]interface{}{
-			"show_captcha_type": initPayload.Data.ShowCaptchaType,
-			"captcha_settings":  initPayload.Data.CaptchaSettings,
+	return parseCaptchaSettingsResponse(
+		map[string]interface{}{
+			"response": map[string]interface{}{
+				"show_captcha_type": initPayload.Data.ShowCaptchaType,
+				"captcha_settings":  initPayload.Data.CaptchaSettings,
+			},
 		},
-	})
+	)
+}
+
+func parseCaptchaSettingsResponse(resp map[string]interface{}) (*captchaSettingsResponse, error) {
+	respObj, ok := resp["response"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid settings response: %v", resp)
+	}
+
+	settings := &captchaSettingsResponse{
+		SettingsByType: make(map[string]string),
+	}
+	settings.ShowCaptchaType, _ = respObj["show_captcha_type"].(string)
+
+	rawSettings, ok := expandCaptchaSettings(respObj["captcha_settings"])
+	if !ok {
+		return settings, nil
+	}
+
+	for _, rawItem := range rawSettings {
+		item, ok := rawItem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		captchaType, _ := item["type"].(string)
+		if captchaType == "" {
+			continue
+		}
+
+		normalized, err := normalizeCaptchaSettings(item["settings"])
+		if err != nil {
+			return nil, fmt.Errorf("invalid captcha_settings for %s: %w", captchaType, err)
+		}
+		settings.SettingsByType[captchaType] = normalized
+	}
+
+	return settings, nil
 }
 
 func mergeCaptchaSettings(primary *captchaSettingsResponse, fallback *captchaSettingsResponse) *captchaSettingsResponse {
@@ -517,7 +491,6 @@ func parseCaptchaCheckResult(resp map[string]interface{}) (*captchaCheckResult, 
 	if result.Status == "" {
 		return nil, fmt.Errorf("check status missing: %v", resp)
 	}
-
 	return result, nil
 }
 
@@ -636,7 +609,6 @@ func decodeSliderImage(rawImage string) (image.Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode slider image: %w", err)
 	}
-
 	return img, nil
 }
 
@@ -651,7 +623,6 @@ func encodeSliderAnswer(activeSteps []int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
@@ -664,7 +635,6 @@ func buildSliderActiveSteps(swaps []int, candidateIndex int) []int {
 	if end > len(swaps) {
 		end = len(swaps)
 	}
-
 	return append([]int(nil), swaps[:end]...)
 }
 
@@ -682,9 +652,9 @@ func buildSliderTileMapping(gridSize int, activeSteps []int) ([]int, error) {
 		mapping[i] = i
 	}
 
-	for idx := 0; idx < len(activeSteps); idx += 2 {
-		left := activeSteps[idx]
-		right := activeSteps[idx+1]
+	for index := 0; index < len(activeSteps); index += 2 {
+		left := activeSteps[index]
+		right := activeSteps[index+1]
 		if left < 0 || right < 0 || left >= tileCount || right >= tileCount {
 			return nil, fmt.Errorf("slider step out of range: %d,%d", left, right)
 		}
@@ -701,8 +671,8 @@ func rankSliderCandidates(img image.Image, gridSize int, swaps []int) ([]sliderC
 	}
 
 	candidates := make([]sliderCandidate, 0, candidateCount)
-	for idx := 1; idx <= candidateCount; idx++ {
-		activeSteps := buildSliderActiveSteps(swaps, idx)
+	for index := 1; index <= candidateCount; index++ {
+		activeSteps := buildSliderActiveSteps(swaps, index)
 		mapping, err := buildSliderTileMapping(gridSize, activeSteps)
 		if err != nil {
 			return nil, err
@@ -713,11 +683,14 @@ func rankSliderCandidates(img image.Image, gridSize int, swaps []int) ([]sliderC
 			return nil, err
 		}
 
-		candidates = append(candidates, sliderCandidate{
-			Index:       idx,
-			ActiveSteps: activeSteps,
-			Score:       score,
-		})
+		candidates = append(
+			candidates,
+			sliderCandidate{
+				Index:       index,
+				ActiveSteps: activeSteps,
+				Score:       score,
+			},
+		)
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -735,7 +708,6 @@ func scoreSliderCandidate(img image.Image, gridSize int, mapping []int) (int64, 
 	if err != nil {
 		return 0, err
 	}
-
 	return scoreRenderedSliderImage(rendered, gridSize), nil
 }
 
@@ -743,7 +715,6 @@ func renderSliderCandidate(img image.Image, gridSize int, mapping []int) (*image
 	if gridSize <= 0 {
 		return nil, fmt.Errorf("invalid grid size: %d", gridSize)
 	}
-
 	tileCount := gridSize * gridSize
 	if len(mapping) != tileCount {
 		return nil, fmt.Errorf("unexpected tile mapping length: %d", len(mapping))
@@ -829,7 +800,6 @@ func copyScaledTile(dst *image.RGBA, dstRect image.Rectangle, src image.Image, s
 func pixelDiff(left color.Color, right color.Color) int64 {
 	lr, lg, lb, _ := left.RGBA()
 	rr, rg, rb, _ := right.RGBA()
-
 	return absDiff(lr, rr) + absDiff(lg, rg) + absDiff(lb, rb)
 }
 
@@ -863,11 +833,14 @@ func buildSliderCursor(candidateIndex int, candidateCount int, startTime int64) 
 	for step := 0; step < 12; step++ {
 		x := startX + (endX-startX)*step/11
 		y := startY + ((step % 3) - 1)
-		points = append(points, cursorPoint{
-			X: x,
-			Y: y,
-			T: startTime + int64(step*18),
-		})
+		points = append(
+			points,
+			cursorPoint{
+				X: x,
+				Y: y,
+				T: startTime + int64(step*18),
+			},
+		)
 	}
 
 	data, err := json.Marshal(points)
@@ -891,12 +864,11 @@ func trySliderCaptchaCandidates(
 		return "", fmt.Errorf("slider has no attempts available")
 	}
 
-	for idx := 0; idx < limit; idx++ {
-		result, err := check(candidates[idx])
+	for index := 0; index < limit; index++ {
+		result, err := check(candidates[index])
 		if err != nil {
 			return "", err
 		}
-
 		switch result.Status {
 		case "OK":
 			if result.SuccessToken == "" {
@@ -918,17 +890,4 @@ func minInt(left int, right int) int {
 		return left
 	}
 	return right
-}
-
-func describeCaptchaTypes(settingsByType map[string]string) string {
-	if len(settingsByType) == 0 {
-		return "none"
-	}
-
-	types := make([]string, 0, len(settingsByType))
-	for captchaType := range settingsByType {
-		types = append(types, captchaType)
-	}
-	sort.Strings(types)
-	return strings.Join(types, ",")
 }

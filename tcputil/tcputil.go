@@ -8,8 +8,7 @@ import (
 	"github.com/xtaci/smux"
 )
 
-// DtlsPacketConn wraps a net.Conn (DTLS) as a net.PacketConn for KCP.
-// Each DTLS Read/Write preserves message boundaries (datagram semantics).
+// DtlsPacketConn wraps a DTLS net.Conn as a PacketConn for KCP.
 type DtlsPacketConn struct {
 	conn net.Conn
 }
@@ -18,13 +17,13 @@ func NewDtlsPacketConn(conn net.Conn) *DtlsPacketConn {
 	return &DtlsPacketConn{conn: conn}
 }
 
-func (d *DtlsPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
-	n, err := d.conn.Read(b)
-	return n, d.conn.RemoteAddr(), err
+func (d *DtlsPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+	readBytes, err := d.conn.Read(buffer)
+	return readBytes, d.conn.RemoteAddr(), err
 }
 
-func (d *DtlsPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
-	return d.conn.Write(b)
+func (d *DtlsPacketConn) WriteTo(buffer []byte, _ net.Addr) (int, error) {
+	return d.conn.Write(buffer)
 }
 
 func (d *DtlsPacketConn) Close() error {
@@ -35,69 +34,59 @@ func (d *DtlsPacketConn) LocalAddr() net.Addr {
 	return d.conn.LocalAddr()
 }
 
-func (d *DtlsPacketConn) SetDeadline(t time.Time) error {
-	return d.conn.SetDeadline(t)
+func (d *DtlsPacketConn) SetDeadline(deadline time.Time) error {
+	return d.conn.SetDeadline(deadline)
 }
 
-func (d *DtlsPacketConn) SetReadDeadline(t time.Time) error {
-	return d.conn.SetReadDeadline(t)
+func (d *DtlsPacketConn) SetReadDeadline(deadline time.Time) error {
+	return d.conn.SetReadDeadline(deadline)
 }
 
-func (d *DtlsPacketConn) SetWriteDeadline(t time.Time) error {
-	return d.conn.SetWriteDeadline(t)
+func (d *DtlsPacketConn) SetWriteDeadline(deadline time.Time) error {
+	return d.conn.SetWriteDeadline(deadline)
 }
 
-// NewKCPOverDTLS creates a KCP session over a DTLS connection.
-// isServer: true for server-side (listener), false for client-side (dialer).
 func NewKCPOverDTLS(dtlsConn net.Conn, isServer bool) (*kcp.UDPSession, error) {
-	pc := NewDtlsPacketConn(dtlsConn)
+	packetConn := NewDtlsPacketConn(dtlsConn)
 
-	block, err := kcp.NewNoneBlockCrypt(nil) // DTLS already encrypts
+	block, err := kcp.NewNoneBlockCrypt(nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var sess *kcp.UDPSession
-
+	var session *kcp.UDPSession
 	if isServer {
-		// Server: listen on the PacketConn and accept one session
-		var listener *kcp.Listener
-		listener, err = kcp.ServeConn(block, 0, 0, pc)
+		listener, err := kcp.ServeConn(block, 0, 0, packetConn)
 		if err != nil {
 			return nil, err
 		}
 		if err = listener.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
 			return nil, err
 		}
-		sess, err = listener.AcceptKCP()
+		session, err = listener.AcceptKCP()
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		// Client: dial through the PacketConn
-		sess, err = kcp.NewConn2(dtlsConn.RemoteAddr(), block, 0, 0, pc)
+		session, err = kcp.NewConn2(dtlsConn.RemoteAddr(), block, 0, 0, packetConn)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Tune KCP for TURN tunnel:
-	// - NoDelay mode for lower latency
-	// - Window sizes suitable for ~5Mbit/s
-	sess.SetNoDelay(1, 20, 2, 1) // nodelay, interval(ms), resend, nc
-	sess.SetWindowSize(256, 256)
-	sess.SetMtu(1200) // conservative MTU to fit inside DTLS+TURN
-	sess.SetACKNoDelay(true)
+	session.SetNoDelay(1, 20, 2, 1)
+	session.SetWindowSize(256, 256)
+	session.SetMtu(1200)
+	session.SetACKNoDelay(true)
 
-	return sess, nil
+	return session, nil
 }
 
-// DefaultSmuxConfig returns smux config tuned for TURN tunnel.
 func DefaultSmuxConfig() *smux.Config {
-	cfg := smux.DefaultConfig()
-	cfg.MaxReceiveBuffer = 4 * 1024 * 1024
-	cfg.MaxStreamBuffer = 1 * 1024 * 1024
-	cfg.KeepAliveInterval = 10 * time.Second
-	cfg.KeepAliveTimeout = 30 * time.Second
-	return cfg
+	config := smux.DefaultConfig()
+	config.MaxReceiveBuffer = 4 * 1024 * 1024
+	config.MaxStreamBuffer = 1 * 1024 * 1024
+	config.KeepAliveInterval = 10 * time.Second
+	config.KeepAliveTimeout = 30 * time.Second
+	return config
 }

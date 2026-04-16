@@ -2,6 +2,10 @@
 
 Проброс трафика WireGuard/Hysteria через TURN сервера VK звонков или ~~Яндекс телемоста~~. Пакеты шифруются DTLS 1.2, затем параллельными потоками через TCP или UDP отправляются на TURN сервер по протоколу STUN ChannelData. Оттуда по UDP отправляются на ваш сервер, где расшифровываются и передаются в WireGuard. Логин/пароль от TURN генерируются из ссылки на звонок.
 
+## Цель форка
+Данный форк преследует цели добавления функционала для работы с Android VpnService.protect(fd) через IPC
+Что позволяет исключить некоторые отдельные приложения из под VPN интерфейса
+
 Только для учебных целей!
 
 ## Похожие проекты
@@ -16,13 +20,11 @@
 - https://github.com/NedgNDG/vk-proxy-auto-installer - автоустановщик VK TURN Proxy (TUI)
 
 #### Android
-##### Мои любимые
-- https://github.com/samosvalishe/turn-proxy-android - клиент для андроида c Material 3 UI и автоапдейтами (Kotlin)
 - https://github.com/MYSOREZ/vk-turn-proxy-android - клиент для андроида
-- https://github.com/kiper292/wireguard-turn-android - клиент для андроида интегрированный в WireGuard
-##### Ещё
 - https://github.com/WINGS-N/WINGSV - клиент для андроида с One UI, WireGuard, раздачей VPN с root
+- https://github.com/kiper292/wireguard-turn-android - клиент для андроида интегрированный в WireGuard
 - https://github.com/oxsidee/vkpn - клиент для андроида (кроссплатформенный Flutter)
+- https://github.com/antongospod/turn-proxy-android - клиент для андроида c Material 3 UI и автоапдейтами (Kotlin)
 - https://github.com/amurcanov/proxy-turn-vk-android - клиент для андроида с WireGuard
 
 #### iOS
