@@ -1,0 +1,75 @@
+{{define "captcha_injected_snippet"}}
+{{template "shared_style" .}}
+<script>
+(function() {
+  function rewriteUrl(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return urlStr;
+    if (urlStr.indexOf('http://') === 0 || urlStr.indexOf('https://') === 0) {
+      return '{{.GenericPath}}?proxy_url=' + encodeURIComponent(urlStr);
+    }
+    return urlStr;
+  }
+
+  var origOpen = XMLHttpRequest.prototype.open;
+  var origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function() {
+    if (arguments[1] && typeof arguments[1] === 'string') {
+      this._origUrl = arguments[1];
+      arguments[1] = rewriteUrl(arguments[1]);
+    }
+    return origOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function() {
+    var xhr = this;
+    if (this._origUrl && this._origUrl.indexOf('captchaNotRobot.check') !== -1) {
+      xhr.addEventListener('load', function() {
+        try {
+          var data = JSON.parse(xhr.responseText);
+          if (data.response && data.response.success_token) {
+            fetch('{{.ResultPath}}', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+              body: 'token=' + encodeURIComponent(data.response.success_token)
+            }).then(function() {
+              window.location = '{{.CompletePath}}?status=success';
+            });
+          }
+        } catch (e) {}
+      });
+    }
+    return origSend.apply(this, arguments);
+  };
+
+  var origFetch = window.fetch;
+  if (origFetch) {
+    window.fetch = function() {
+      var url = arguments[0];
+      var isObj = (typeof url === 'object' && url && url.url);
+      var urlStr = isObj ? url.url : url;
+      var origUrlStr = urlStr;
+      if (typeof urlStr === 'string') {
+        urlStr = rewriteUrl(urlStr);
+        arguments[0] = urlStr;
+      }
+      var promise = origFetch.apply(this, arguments);
+      if (typeof origUrlStr === 'string' && origUrlStr.indexOf('captchaNotRobot.check') !== -1) {
+        promise.then(function(response) {
+          return response.clone().json();
+        }).then(function(data) {
+          if (data.response && data.response.success_token) {
+            fetch('{{.ResultPath}}', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+              body: 'token=' + encodeURIComponent(data.response.success_token)
+            }).then(function() {
+              window.location = '{{.CompletePath}}?status=success';
+            });
+          }
+        }).catch(function() {});
+      }
+      return promise;
+    };
+  }
+})();
+</script>
+{{end}}

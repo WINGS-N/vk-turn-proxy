@@ -2,6 +2,7 @@ package main
 
 import (
 	"math/rand"
+	"net/http"
 )
 
 type Profile struct {
@@ -79,4 +80,13 @@ var profile = []Profile{
 // getRandomProfile returns a paired User-Agent and Client Hints profile.
 func getRandomProfile() Profile {
 	return profile[rand.Intn(len(profile))]
+}
+
+func applyBrowserProfile(req *http.Request, profile Profile) {
+	req.Header.Set("User-Agent", profile.UserAgent)
+	req.Header.Set("sec-ch-ua", profile.SecChUa)
+	req.Header.Set("sec-ch-ua-mobile", profile.SecChUaMobile)
+	req.Header.Set("sec-ch-ua-platform", profile.SecChUaPlatform)
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("DNT", "1")
 }
