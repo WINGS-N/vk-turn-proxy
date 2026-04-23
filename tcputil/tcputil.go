@@ -74,9 +74,11 @@ func NewKCPOverDTLS(dtlsConn net.Conn, isServer bool) (*kcp.UDPSession, error) {
 		}
 	}
 
+	// Tune KCP for TURN tunnel: NoDelay для latency, окно 4096 для bandwidth, MTU 1280
+	// чтобы укладываться в DTLS+TURN ChannelData без фрагментации.
 	session.SetNoDelay(1, 10, 2, 1)
-	session.SetWindowSize(1024, 1024)
-	session.SetMtu(1400)
+	session.SetWindowSize(4096, 4096)
+	session.SetMtu(1280)
 	session.SetACKNoDelay(true)
 	session.SetWriteDelay(false)
 
