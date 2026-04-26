@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/pion/turn/v5"
 	"github.com/xtaci/smux"
 )
+
+var skipMainlineTCPNegotiation atomic.Bool
 
 type relayPacketConn struct {
 	relay net.PacketConn
@@ -319,9 +322,18 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	cleanupFns = append(cleanupFns, func() { _ = dtlsConn.Close() })
 	emitProxyStatus("dtls_ready")
 
-	if err = negotiateMainlineTCPTransport(dtlsConn); err != nil {
-		cleanup()
-		return nil, nil, err
+	if !skipMainlineTCPNegotiation.Load() {
+		if err = negotiateMainlineTCPTransport(dtlsConn); err != nil {
+			if !looksLikePlainTCPServerError(err) {
+				cleanup()
+				return nil, nil, err
+			}
+			log.Printf(
+				"Mainline TCP negotiation unsupported (plain TURN server detected), reusing the same DTLS session for KCP: %s",
+				err,
+			)
+			skipMainlineTCPNegotiation.Store(true)
+		}
 	}
 
 	kcpSession, err := tcputil.NewKCPOverDTLS(dtlsConn, false)
@@ -341,6 +353,19 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	emitProxyStatus("smux_ready")
 
 	return smuxSession, cleanup, nil
+}
+
+func looksLikePlainTCPServerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "deadline exceeded") ||
+		strings.Contains(msg, "cannot parse") ||
+		strings.Contains(msg, "invalid wire-format") ||
+		strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "connection reset")
 }
 
 func negotiateMainlineTCPTransport(dtlsConn net.Conn) error {
