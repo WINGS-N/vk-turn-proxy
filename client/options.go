@@ -23,6 +23,7 @@ type clientOptions struct {
 	udp                            bool
 	direct                         bool
 	manualCaptcha                  bool
+	captchaSolver                  string
 	protectSock                    string
 	protoFingerprint               string
 	sessionMode                    string
@@ -49,6 +50,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.BoolVar(&opts.udp, "udp", false, "connect to TURN with UDP")
 	fs.BoolVar(&opts.direct, "no-dtls", false, "connect without obfuscation. DO NOT USE")
 	fs.BoolVar(&opts.manualCaptcha, "manual-captcha", false, "skip automatic captcha solving and use manual captcha flow immediately")
+	fs.StringVar(&opts.captchaSolver, "captcha-solver", "v2", "auto captcha solver implementation: v1|v2 (v2 = improved, v1 = legacy fallback)")
 	fs.StringVar(&opts.protectSock, "protect-sock", "", "unix socket used for VpnService.protect fd bridge")
 	fs.StringVar(&opts.protoFingerprint, "proto-fp", "", "deprecated; ignored")
 	fs.StringVar(&opts.sessionMode, "session-mode", string(sessionproto.ModeMainline), "TURN session mode: mainline|mu|auto")
@@ -73,6 +75,10 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 		opts.vklink = strings.TrimSpace(opts.vklink)
 		opts.yalink = strings.TrimSpace(opts.yalink)
 		opts.peerAddr = strings.TrimSpace(opts.peerAddr)
+		opts.captchaSolver = strings.ToLower(strings.TrimSpace(opts.captchaSolver))
+		if opts.captchaSolver != "v1" && opts.captchaSolver != "v2" {
+			opts.captchaSolver = "v2"
+		}
 
 		if opts.peerAddr == "" {
 			return fmt.Errorf("-peer is required")

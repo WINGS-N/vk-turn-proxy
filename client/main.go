@@ -206,6 +206,7 @@ const captchaLockoutDuration = 60 * time.Second
 var (
 	activeLocalPeer        atomic.Value
 	manualCaptcha          bool
+	captchaSolverVersion   string
 	globalCaptchaLockout   atomic.Int64
 	connectedStreams       atomic.Int32
 	globalAppCancel        context.CancelFunc
@@ -423,7 +424,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 							)
 						}
 					} else {
-						successToken, solveErr = solveVkCaptcha(
+						successToken, solveErr = dispatchAutoVkCaptcha(
 							context.Background(),
 							captchaErr,
 							resolver,
@@ -1777,6 +1778,7 @@ func main() { //nolint:cyclop
 	}
 	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
 	manualCaptcha = opts.manualCaptcha
+	captchaSolverVersion = opts.captchaSolver
 	_ = strings.TrimSpace(opts.protoFingerprint)
 	emitProxyCaps()
 
