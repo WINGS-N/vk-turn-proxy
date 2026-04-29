@@ -3,6 +3,7 @@
 package main
 
 import (
+	"io"
 	"net"
 	"os"
 	"syscall"
@@ -57,6 +58,9 @@ func (l *ishListener) Accept() (net.Conn, error) {
 		}
 
 		nfd := int(r1)
+		_ = syscall.SetsockoptInt(nfd, syscall.IPPROTO_TCP, syscall.TCP_NODELAY, 1)
+		_ = syscall.SetsockoptInt(nfd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 256*1024)
+		_ = syscall.SetsockoptInt(nfd, syscall.SOL_SOCKET, syscall.SO_SNDBUF, 256*1024)
 
 		// We avoid Go's net.FileConn because it tries to register the fd with Go's epoll poller,
 		// which in iSH emulator consistency fails with EEXIST (file exists).
@@ -82,23 +86,34 @@ type ishConn struct {
 }
 
 func (c *ishConn) Read(b []byte) (n int, err error) {
-	n, err = syscall.Read(c.fd, b)
-	if err != nil {
-		if err == syscall.EAGAIN || err == syscall.EINTR {
-			return 0, nil
+	for {
+		n, err = syscall.Read(c.fd, b)
+		if err == syscall.EINTR {
+			continue
 		}
-		return n, err
+		if err != nil {
+			return n, err
+		}
+		if n == 0 {
+			return 0, os.ErrClosed
+		}
+		return n, nil
 	}
-	if n == 0 {
-		return 0, os.ErrClosed
-	}
-	return n, nil
 }
 
 func (c *ishConn) Write(b []byte) (n int, err error) {
-	n, err = syscall.Write(c.fd, b)
-	if err != nil {
-		return n, err
+	for n < len(b) {
+		written, writeErr := syscall.Write(c.fd, b[n:])
+		if writeErr == syscall.EINTR {
+			continue
+		}
+		if writeErr != nil {
+			return n, writeErr
+		}
+		if written == 0 {
+			return n, io.ErrShortWrite
+		}
+		n += written
 	}
 	return n, nil
 }

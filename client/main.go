@@ -671,11 +671,11 @@ var vkCredentialsList = []VKCredentials{
 }
 
 type TurnCredentials struct {
-	Username   string
-	Password   string
-	ServerAddr string
-	ExpiresAt  time.Time
-	Link       string
+	Username    string
+	Password    string
+	ServerAddrs []string
+	ExpiresAt   time.Time
+	Link        string
 }
 
 type StreamCredentialsCache struct {
@@ -783,14 +783,16 @@ func getVkCredsCached(ctx context.Context, link string, streamID int, dialer *dn
 	cacheID := getCacheID(streamID)
 
 	cache.mutex.RLock()
-	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) {
+	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) && len(cache.creds.ServerAddrs) > 0 {
 		expires := time.Until(cache.creds.ExpiresAt)
-		u, p, a := cache.creds.Username, cache.creds.Password, cache.creds.ServerAddr
+		u, p := cache.creds.Username, cache.creds.Password
+		// Round-robin selection based on streamID
+		addr := cache.creds.ServerAddrs[streamID%len(cache.creds.ServerAddrs)]
 		cache.mutex.RUnlock()
 		if isDebug {
-			log.Printf("[STREAM %d] [VK Auth] Using cached credentials (cache=%d, expires in %v)", streamID, cacheID, expires)
+			log.Printf("[STREAM %d] [VK Auth] Using cached credentials (cache=%d, expires in %v, server=%s)", streamID, cacheID, expires, addr)
 		}
-		return u, p, a, nil
+		return u, p, addr, nil
 	}
 	cache.mutex.RUnlock()
 
@@ -798,16 +800,18 @@ func getVkCredsCached(ctx context.Context, link string, streamID int, dialer *dn
 	defer cache.mutex.Unlock()
 
 	// Double-check inside lock
-	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) {
-		return cache.creds.Username, cache.creds.Password, cache.creds.ServerAddr, nil
+	if cache.creds.Link == link && time.Now().Before(cache.creds.ExpiresAt) && len(cache.creds.ServerAddrs) > 0 {
+		addr := cache.creds.ServerAddrs[streamID%len(cache.creds.ServerAddrs)]
+		return cache.creds.Username, cache.creds.Password, addr, nil
 	}
 
-	user, pass, addr, err := fetchVkCredsSerialized(ctx, link, streamID, dialer)
+	user, pass, addrs, err := fetchVkCredsSerialized(ctx, link, streamID, dialer)
 	if err != nil {
 		return "", "", "", err
 	}
 
-	cache.creds = TurnCredentials{Username: user, Password: pass, ServerAddr: addr, ExpiresAt: time.Now().Add(credentialLifetime - cacheSafetyMargin), Link: link}
+	cache.creds = TurnCredentials{Username: user, Password: pass, ServerAddrs: addrs, ExpiresAt: time.Now().Add(credentialLifetime - cacheSafetyMargin), Link: link}
+	addr := addrs[streamID%len(addrs)]
 	return user, pass, addr, nil
 }
 
@@ -816,7 +820,7 @@ var (
 	globalLastVkFetchTime time.Time
 )
 
-func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, string, error) {
+func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, []string, error) {
 	vkRequestMu.Lock()
 	defer vkRequestMu.Unlock()
 
@@ -829,7 +833,7 @@ func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dial
 		log.Printf("[STREAM %d] [VK Auth] Throttling: waiting %v to prevent rate limit...", streamID, wait.Truncate(time.Millisecond))
 		select {
 		case <-ctx.Done():
-			return "", "", "", ctx.Err()
+			return "", "", nil, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
@@ -841,10 +845,10 @@ func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dial
 	return fetchVkCreds(ctx, link, streamID, dialer)
 }
 
-func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, string, error) {
+func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, []string, error) {
 	// Check Global Lockout to prevent API bans
 	if time.Now().Unix() < globalCaptchaLockout.Load() {
-		return "", "", "", fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active")
+		return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active")
 	}
 
 	var lastErr error
@@ -853,11 +857,11 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdia
 	for _, creds := range vkCredentialsList {
 		log.Printf("[STREAM %d] [VK Auth] Trying credentials: client_id=%s", streamID, creds.ClientID)
 
-		user, pass, addr, err := getTokenChain(ctx, link, streamID, creds, dialer, jar)
+		user, pass, addrs, err := getTokenChain(ctx, link, streamID, creds, dialer, jar)
 
 		if err == nil {
 			log.Printf("[STREAM %d] [VK Auth] Success with client_id=%s", streamID, creds.ClientID)
-			return user, pass, addr, nil
+			return user, pass, addrs, nil
 		}
 
 		lastErr = err
@@ -865,7 +869,7 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdia
 
 		// Hard abort on captcha/fatal conditions instead of trying next creds
 		if strings.Contains(err.Error(), "CAPTCHA_WAIT_REQUIRED") || strings.Contains(err.Error(), "FATAL_CAPTCHA") {
-			return "", "", "", err
+			return "", "", nil, err
 		}
 
 		if strings.Contains(err.Error(), "error_code:29") || strings.Contains(err.Error(), "error_code: 29") || strings.Contains(err.Error(), "Rate limit") {
@@ -873,10 +877,10 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdia
 		}
 	}
 
-	return "", "", "", fmt.Errorf("all VK credentials failed: %w", lastErr)
+	return "", "", nil, fmt.Errorf("all VK credentials failed: %w", lastErr)
 }
 
-func getTokenChain(ctx context.Context, link string, streamID int, creds VKCredentials, dialer *dnsdialer.Dialer, jar tlsclient.CookieJar) (string, string, string, error) {
+func getTokenChain(ctx context.Context, link string, streamID int, creds VKCredentials, dialer *dnsdialer.Dialer, jar tlsclient.CookieJar) (string, string, []string, error) {
 	profile := Profile{
 		UserAgent:       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 		SecChUa:         `"Not(A:Brand";v="99", "Google Chrome";v="146", "Chromium";v="146"`,
@@ -891,7 +895,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		tlsclient.WithDialer(getCustomNetDialer()),
 	)
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to initialize tls_client: %w", err)
+		return "", "", nil, fmt.Errorf("failed to initialize tls_client: %w", err)
 	}
 
 	name := generateName()
@@ -948,15 +952,15 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	data := fmt.Sprintf("client_id=%s&token_type=messages&client_secret=%s&version=1&app_id=%s", creds.ClientID, creds.ClientSecret, creds.ClientID)
 	resp, err := doRequest(data, "https://login.vk.ru/?act=get_anonym_token")
 	if err != nil {
-		return "", "", "", err
+		return "", "", nil, err
 	}
 	dataMap, ok := resp["data"].(map[string]interface{})
 	if !ok {
-		return "", "", "", fmt.Errorf("unexpected anon token response: %v", resp)
+		return "", "", nil, fmt.Errorf("unexpected anon token response: %v", resp)
 	}
 	token1, ok := dataMap["access_token"].(string)
 	if !ok {
-		return "", "", "", fmt.Errorf("missing access_token in response: %v", resp)
+		return "", "", nil, fmt.Errorf("missing access_token in response: %v", resp)
 	}
 
 	vkDelayRandom(100, 150)
@@ -978,7 +982,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	for attempt := 0; ; attempt++ {
 		resp, err = doRequest(data, urlAddr)
 		if err != nil {
-			return "", "", "", err
+			return "", "", nil, err
 		}
 
 		if errObj, hasErr := resp["error"].(map[string]interface{}); hasErr {
@@ -993,10 +997,10 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 
 					if connectedStreams.Load() == 0 {
 						log.Printf("[STREAM %d] [FATAL] 0 connected streams and captcha solve modes exhausted.", streamID)
-						return "", "", "", fmt.Errorf("FATAL_CAPTCHA_FAILED_NO_STREAMS")
+						return "", "", nil, fmt.Errorf("FATAL_CAPTCHA_FAILED_NO_STREAMS")
 					}
 
-					return "", "", "", fmt.Errorf("CAPTCHA_WAIT_REQUIRED")
+					return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED")
 				}
 
 				var successToken string
@@ -1091,10 +1095,10 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 					// If we have 0 streams alive, this is fatal
 					if connectedStreams.Load() == 0 {
 						log.Printf("[STREAM %d] [FATAL] 0 connected streams and manual captcha failed/timed out.", streamID)
-						return "", "", "", fmt.Errorf("FATAL_CAPTCHA_FAILED_NO_STREAMS")
+						return "", "", nil, fmt.Errorf("FATAL_CAPTCHA_FAILED_NO_STREAMS")
 					}
 
-					return "", "", "", fmt.Errorf("CAPTCHA_WAIT_REQUIRED")
+					return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED")
 				}
 
 				if captchaErr.CaptchaAttempt == "0" || captchaErr.CaptchaAttempt == "" {
@@ -1110,16 +1114,16 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 				}
 				continue
 			}
-			return "", "", "", fmt.Errorf("VK API error: %v", errObj)
+			return "", "", nil, fmt.Errorf("VK API error: %v", errObj)
 		}
 
 		respMap, okLoop := resp["response"].(map[string]interface{})
 		if !okLoop {
-			return "", "", "", fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
+			return "", "", nil, fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
 		}
 		token2, okLoop = respMap["token"].(string)
 		if !okLoop {
-			return "", "", "", fmt.Errorf("missing token in response: %v", resp)
+			return "", "", nil, fmt.Errorf("missing token in response: %v", resp)
 		}
 		break
 	}
@@ -1131,11 +1135,11 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	data = fmt.Sprintf("session_data=%s&method=auth.anonymLogin&format=JSON&application_key=CGMMEJLGDIHBABABA", neturl.QueryEscape(sessionData))
 	resp, err = doRequest(data, "https://calls.okcdn.ru/fb.do")
 	if err != nil {
-		return "", "", "", err
+		return "", "", nil, err
 	}
 	token3, ok := resp["session_key"].(string)
 	if !ok {
-		return "", "", "", fmt.Errorf("missing session_key in response: %v", resp)
+		return "", "", nil, fmt.Errorf("missing session_key in response: %v", resp)
 	}
 
 	vkDelayRandom(100, 150)
@@ -1144,34 +1148,47 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	data = fmt.Sprintf("joinLink=%s&isVideo=false&protocolVersion=5&capabilities=2F7F&anonymToken=%s&method=vchat.joinConversationByLink&format=JSON&application_key=CGMMEJLGDIHBABABA&session_key=%s", link, token2, token3)
 	resp, err = doRequest(data, "https://calls.okcdn.ru/fb.do")
 	if err != nil {
-		return "", "", "", err
+		return "", "", nil, err
 	}
 
 	tsRaw, ok := resp["turn_server"].(map[string]interface{})
 	if !ok {
-		return "", "", "", fmt.Errorf("missing turn_server in response: %v", resp)
+		return "", "", nil, fmt.Errorf("missing turn_server in response: %v", resp)
 	}
 	user, ok := tsRaw["username"].(string)
 	if !ok {
-		return "", "", "", fmt.Errorf("missing username in turn_server")
+		return "", "", nil, fmt.Errorf("missing username in turn_server")
 	}
 	pass, ok := tsRaw["credential"].(string)
 	if !ok {
-		return "", "", "", fmt.Errorf("missing credential in turn_server")
+		return "", "", nil, fmt.Errorf("missing credential in turn_server")
 	}
 	urlsRaw, ok := tsRaw["urls"].([]interface{})
 	if !ok || len(urlsRaw) == 0 {
-		return "", "", "", fmt.Errorf("missing or empty urls in turn_server")
-	}
-	urlStr, ok := urlsRaw[0].(string)
-	if !ok {
-		return "", "", "", fmt.Errorf("turn server url is not a string")
+		return "", "", nil, fmt.Errorf("missing or empty urls in turn_server")
 	}
 
-	clean := strings.Split(urlStr, "?")[0]
-	address := strings.TrimPrefix(strings.TrimPrefix(clean, "turn:"), "turns:")
+	log.Printf("[STREAM %d] [VK Auth] TURN urls (%d total):", streamID, len(urlsRaw))
+	for i, u := range urlsRaw {
+		log.Printf("[STREAM %d] [VK Auth]   [%d] %v", streamID, i, u)
+	}
 
-	return user, pass, address, nil
+	var addresses []string
+	for _, u := range urlsRaw {
+		urlStr, ok := u.(string)
+		if !ok {
+			continue
+		}
+		clean := strings.Split(urlStr, "?")[0]
+		address := strings.TrimPrefix(strings.TrimPrefix(clean, "turn:"), "turns:")
+		addresses = append(addresses, address)
+	}
+
+	if len(addresses) == 0 {
+		return "", "", nil, fmt.Errorf("no valid TURN addresses found")
+	}
+
+	return user, pass, addresses, nil
 }
 
 // endregion
