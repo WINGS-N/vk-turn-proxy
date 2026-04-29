@@ -36,7 +36,7 @@ import (
 	"github.com/pion/turn/v5"
 )
 
-type getCredsFunc func(string) (string, string, string, error)
+type getCredsFunc func(workerID int) (string, string, string, error)
 
 type directNet struct{}
 
@@ -54,9 +54,10 @@ type UDPPacket struct {
 }
 
 const (
-	inboundPacketQueueSize = 8192
-	udpReadBufferBytes     = 4 << 20
-	udpWriteBufferBytes    = 4 << 20
+	inboundPacketQueueSize    = 8192
+	perWorkerInboundQueueSize = 128
+	udpReadBufferBytes        = 4 << 20
+	udpWriteBufferBytes       = 4 << 20
 )
 
 var packetPool = sync.Pool{
@@ -283,10 +284,10 @@ func vkDelayRandom(minMs, maxMs int) {
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
 
-func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, string, error) {
+func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, string, time.Duration, error) {
 	if remaining := captchaLockoutRemaining(); remaining > 0 {
 		emitCaptchaLockoutStatus(remaining)
-		return "", "", "", fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active for %s", remaining.Round(time.Second))
+		return "", "", "", 0, fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active for %s", remaining.Round(time.Second))
 	}
 
 	profile := getRandomProfile()
@@ -294,7 +295,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 	escapedName := neturl.QueryEscape(name)
 	client, err := resolver.newTLSHTTPClient(profile, 20*time.Second)
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to initialize tls client: %w", err)
+		return "", "", "", 0, fmt.Errorf("failed to initialize tls client: %w", err)
 	}
 	defer client.CloseIdleConnections()
 
@@ -353,16 +354,16 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	resp, err = doRequest(data, url)
 	if err != nil {
-		return "", "", "", fmt.Errorf("request error:%s", err)
+		return "", "", "", 0, fmt.Errorf("request error:%s", err)
 	}
 
 	dataMap, ok := resp["data"].(map[string]interface{})
 	if !ok {
-		return "", "", "", fmt.Errorf("unexpected anon token response: %v", resp)
+		return "", "", "", 0, fmt.Errorf("unexpected anon token response: %v", resp)
 	}
 	token1, ok := dataMap["access_token"].(string)
 	if !ok {
-		return "", "", "", fmt.Errorf("missing access_token in response: %v", resp)
+		return "", "", "", 0, fmt.Errorf("missing access_token in response: %v", resp)
 	}
 
 	vkDelayRandom(100, 150)
@@ -383,14 +384,14 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 	for attempt := 0; attempt <= maxCaptchaAttempts; attempt++ {
 		resp, err = doRequest(data, url)
 		if err != nil {
-			return "", "", "", fmt.Errorf("request error:%s", err)
+			return "", "", "", 0, fmt.Errorf("request error:%s", err)
 		}
 
 		if errObj, hasErr := resp["error"].(map[string]interface{}); hasErr {
 			errCode, _ := errObj["error_code"].(float64)
 			if errCode == 14 {
 				if attempt == maxCaptchaAttempts {
-					return "", "", "", wrapCaptchaFailure(fmt.Errorf("captcha failed after %d attempts", maxCaptchaAttempts), allowInteractiveFallback)
+					return "", "", "", 0, wrapCaptchaFailure(fmt.Errorf("captcha failed after %d attempts", maxCaptchaAttempts), allowInteractiveFallback)
 				}
 
 				captchaErr := parseVkCaptchaError(errObj)
@@ -450,7 +451,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						}
 					}
 					if solveErr != nil {
-						return "", "", "", wrapCaptchaFailure(fmt.Errorf("smart captcha solve error: %w", solveErr), allowInteractiveFallback)
+						return "", "", "", 0, wrapCaptchaFailure(fmt.Errorf("smart captcha solve error: %w", solveErr), allowInteractiveFallback)
 					}
 					storeCachedCaptchaToken(successToken)
 					captchaAttempt := captchaErr.CaptchaAttempt
@@ -481,7 +482,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 							profile.UserAgent,
 						)
 						if solveErr != nil {
-							return "", "", "", wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), false)
+							return "", "", "", 0, wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), false)
 						}
 						data = fmt.Sprintf(
 							"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_sid=%s&captcha_key=%s",
@@ -505,7 +506,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						profile.UserAgent,
 					)
 					if solveErr != nil {
-						return "", "", "", wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), true)
+						return "", "", "", 0, wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), true)
 					}
 					data = fmt.Sprintf(
 						"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_sid=%s&captcha_key=%s",
@@ -518,16 +519,16 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 				}
 				continue
 			}
-			return "", "", "", fmt.Errorf("VK API error: %v", errObj)
+			return "", "", "", 0, fmt.Errorf("VK API error: %v", errObj)
 		}
 
 		responseMap, ok := resp["response"].(map[string]interface{})
 		if !ok {
-			return "", "", "", fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
+			return "", "", "", 0, fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
 		}
 		token2, ok = responseMap["token"].(string)
 		if !ok {
-			return "", "", "", fmt.Errorf("missing token in response: %v", resp)
+			return "", "", "", 0, fmt.Errorf("missing token in response: %v", resp)
 		}
 		if usedAutoCaptcha {
 			log.Printf("VK smart captcha accepted by auth endpoint")
@@ -541,7 +542,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	resp, err = doRequest(data, url)
 	if err != nil {
-		return "", "", "", fmt.Errorf("request error:%s", err)
+		return "", "", "", 0, fmt.Errorf("request error:%s", err)
 	}
 
 	token3 := resp["session_key"].(string)
@@ -552,17 +553,25 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	resp, err = doRequest(data, url)
 	if err != nil {
-		return "", "", "", fmt.Errorf("request error:%s", err)
+		return "", "", "", 0, fmt.Errorf("request error:%s", err)
 	}
 
-	user := resp["turn_server"].(map[string]interface{})["username"].(string)
-	pass := resp["turn_server"].(map[string]interface{})["credential"].(string)
-	turn := resp["turn_server"].(map[string]interface{})["urls"].([]interface{})[0].(string)
+	turnServer := resp["turn_server"].(map[string]interface{})
+	user := turnServer["username"].(string)
+	pass := turnServer["credential"].(string)
+	turn := turnServer["urls"].([]interface{})[0].(string)
+
+	var lifetime time.Duration
+	if rawLifetime, ok := turnServer["lifetime"].(float64); ok && rawLifetime > 0 {
+		lifetime = time.Duration(rawLifetime) * time.Second
+	} else if rawTTL, ok := turnServer["ttl"].(float64); ok && rawTTL > 0 {
+		lifetime = time.Duration(rawTTL) * time.Second
+	}
 
 	clean := strings.Split(turn, "?")[0]
 	address := strings.TrimPrefix(strings.TrimPrefix(clean, "turn:"), "turns:")
 
-	return user, pass, address, nil
+	return user, pass, address, lifetime, nil
 }
 
 func getYandexCreds(link string, resolver *protectedResolver) (string, string, string, error) {
@@ -1115,6 +1124,12 @@ func oneDtlsConnection(
 	dtlsctx, dtlscancel := context.WithCancel(ctx)
 	defer dtlscancel()
 	workerInboundChan := inboundChan
+	if runtime != nil && runtime.DispatchesInbound() {
+		ownChan := make(chan *UDPPacket, perWorkerInboundQueueSize)
+		runtime.BindDispatchChannel(streamID, ownChan)
+		defer runtime.UnbindDispatchChannel(streamID)
+		workerInboundChan = ownChan
+	}
 	var conn1, conn2 net.PacketConn
 	conn1, conn2 = connutil.AsyncPacketPipe()
 	defer func() {
@@ -1374,12 +1389,13 @@ func (c *connectedUDPConn) WriteTo(p []byte, _ net.Addr) (int, error) {
 }
 
 type turnParams struct {
-	host     string
-	port     string
-	link     string
-	udp      bool
-	getCreds getCredsFunc
-	resolver *protectedResolver
+	host         string
+	port         string
+	link         string
+	udp          bool
+	getCreds     getCredsFunc
+	resolver     *protectedResolver
+	credsManager *groupedCredsManager
 }
 
 func oneTurnConnection(
@@ -1395,11 +1411,16 @@ func oneTurnConnection(
 ) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error
-	defer func() { c <- err }()
+	defer func() {
+		if err != nil && runtime != nil {
+			runtime.NoteSessionError(byte(streamID), err)
+		}
+		c <- err
+	}()
 	defer func() {
 		_ = conn2.Close()
 	}()
-	user, pass, url, err1 := turnParams.getCreds(turnParams.link)
+	user, pass, url, err1 := turnParams.getCreds(streamID)
 	if err1 != nil {
 		err = fmt.Errorf("failed to get TURN credentials: %s", err1)
 		return
@@ -1748,6 +1769,19 @@ func main() { //nolint:cyclop
 		os.Exit(0)
 	}
 
+	if opts.roomExchangeMode {
+		if err := runRoomExchangeMode(opts); err != nil {
+			log.Fatalf("room-exchange: %v", err)
+		}
+		return
+	}
+	if opts.wbStreamRoomID != "" {
+		if err := runWbStreamClient(opts); err != nil {
+			log.Fatalf("wb-stream client: %v", err)
+		}
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	globalAppCancel = cancel
 	defer cancel()
@@ -1779,6 +1813,7 @@ func main() { //nolint:cyclop
 	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
 	manualCaptcha = opts.manualCaptcha
 	captchaSolverVersion = opts.captchaSolver
+	setTcpFlavorOverride(opts.tcpFlavor)
 	_ = strings.TrimSpace(opts.protoFingerprint)
 	emitProxyCaps()
 
@@ -1797,29 +1832,90 @@ func main() { //nolint:cyclop
 	}
 
 	var link string
-	var baseGetCreds pooledGetCredsFunc
+	var unifiedGetCreds getCredsFunc
+	var vkLinkManager *groupedCredsManager
 	if opts.vklink != "" {
-		parts := strings.Split(opts.vklink, "join/")
-		link = parts[len(parts)-1]
+		rawEntries := strings.Split(opts.vklink, ",")
+		extracted := make([]string, 0, len(rawEntries))
+		for _, raw := range rawEntries {
+			trimmed := strings.TrimSpace(raw)
+			if trimmed == "" {
+				continue
+			}
+			parts := strings.Split(trimmed, "join/")
+			hash := parts[len(parts)-1]
+			if idx := strings.IndexAny(hash, "/?#"); idx != -1 {
+				hash = hash[:idx]
+			}
+			hash = normalizeJoinLink(hash)
+			if hash != "" {
+				extracted = append(extracted, hash)
+			}
+		}
+		if len(extracted) == 0 {
+			log.Panicf("invalid -vk-link: no usable entries parsed")
+		}
+		link = extracted[0]
+
+		secondaryHash := ""
+		if opts.vklinkSecondary != "" {
+			secParts := strings.Split(opts.vklinkSecondary, "join/")
+			h := secParts[len(secParts)-1]
+			if idx := strings.IndexAny(h, "/?#"); idx != -1 {
+				h = h[:idx]
+			}
+			secondaryHash = normalizeJoinLink(h)
+		}
 
 		if opts.n <= 0 {
 			if requestedTransport == sessionproto.TransportMode_TRANSPORT_MODE_TCP {
-				opts.n = 16
+				opts.n = 24
 			} else {
 				opts.n = 10
 			}
 		}
-		baseGetCreds = func(s string, allowInteractiveFallback bool) (string, string, string, error) {
-			return getVkCredsWithFallback(s, peerResolver, allowInteractiveFallback)
+
+		tracker, err := newLinkHealthTracker(extracted, secondaryHash)
+		if err != nil {
+			log.Panicf("link tracker init: %v", err)
 		}
+		credsGroupSize := max(1, opts.credsGroupSize)
+		numGroups := max(1, ceilDiv(opts.n, credsGroupSize))
+		vkFetch := func(fctx context.Context, hash string, allowInteractive bool) (turnCred, error) {
+			user, pass, addr, lifetime, err := getVkCredsWithFallback(hash, peerResolver, allowInteractive)
+			if err != nil {
+				return turnCred{}, err
+			}
+			return turnCred{user: user, pass: pass, addr: addr, lifetime: lifetime}, nil
+		}
+		vkLinkManager = newGroupedCredsManager(ctx, numGroups, credsGroupSize, tracker, vkFetch)
+		log.Printf(
+			"VK creds: %d primary link(s), secondary=%t, %d groups × %d workers (n=%d)",
+			len(extracted),
+			secondaryHash != "",
+			numGroups,
+			credsGroupSize,
+			opts.n,
+		)
+		unifiedGetCreds = vkLinkManager.GetCredsForWorker
 	} else {
 		parts := strings.Split(opts.yalink, "j/")
 		link = parts[len(parts)-1]
+		if idx := strings.IndexAny(link, "/?#"); idx != -1 {
+			link = link[:idx]
+		}
+		link = normalizeJoinLink(link)
 		if opts.n <= 0 {
 			opts.n = 1
 		}
-		baseGetCreds = func(s string, _ bool) (string, string, string, error) {
-			return getYandexCreds(s, peerResolver)
+		yandexBase := func(s string, _ bool) (string, string, string, time.Duration, error) {
+			user, pass, addr, err := getYandexCreds(s, peerResolver)
+			return user, pass, addr, 0, err
+		}
+		yandexPool := poolCreds(yandexBase, 1)
+		yandexLink := link
+		unifiedGetCreds = func(_ int) (string, string, string, error) {
+			return yandexPool(yandexLink)
 		}
 	}
 	configuredPoolSize := max(1, opts.n)
@@ -1829,88 +1925,23 @@ func main() { //nolint:cyclop
 		return configuredPoolSize
 	}
 	buildGetCreds := func(sessionMode sessionproto.Mode, protocolVersion uint32, effectiveCount int) getCredsFunc {
-		switch {
-		case sessionMode == sessionproto.ModeMainline:
-			log.Printf("TURN identity pool: fixed size %d for mainline", max(1, effectiveCount))
-			return poolCreds(baseGetCreds, max(1, effectiveCount))
-		case sessionMode == sessionproto.ModeMu && protocolVersion >= muProtocolV1:
-			adaptivePool := normalizeAdaptivePoolConfig(
-				opts.adaptivePoolMin,
-				opts.adaptivePoolMax,
-				opts.adaptivePoolStreamsPerIdentity,
-				effectiveCount,
-			)
-			log.Printf(
-				"TURN identity pool: adaptive for mu/v%d (min=%d max=%d streams_per_id=%d)",
-				protocolVersion,
-				adaptivePool.minSize,
-				adaptivePool.maxSize,
-				adaptivePool.streamsPerIdentity,
-			)
-			return poolCredsAdaptive(baseGetCreds, adaptivePool)
-		default:
-			log.Printf("TURN identity pool: fixed size %d", effectiveCount)
-			return poolCreds(baseGetCreds, effectiveCount)
-		}
+		_ = sessionMode
+		_ = protocolVersion
+		_ = effectiveCount
+		return unifiedGetCreds
 	}
 	buildAutoGetCreds := func() (getCredsFunc, func(sessionproto.Mode, uint32, int)) {
-		var fixedPoolSize atomic.Int32
-		var adaptiveEnabled atomic.Bool
-		var adaptiveConfig atomic.Value
-		adaptiveConfig.Store(normalizeAdaptivePoolConfig(1, 1, defaultAdaptivePoolStreamsPerIdentity, 1))
-
-		targetPoolSize := func() int {
-			if adaptiveEnabled.Load() {
-				config, ok := adaptiveConfig.Load().(adaptivePoolConfig)
-				if ok {
-					return config.targetPoolSize()
-				}
-			}
-			return max(1, int(fixedPoolSize.Load()))
-		}
-
-		setStrategy := func(sessionMode sessionproto.Mode, protocolVersion uint32, effectiveCount int) {
-			switch {
-			case sessionMode == sessionproto.ModeMainline:
-				adaptiveEnabled.Store(false)
-				fixedPoolSize.Store(int32(max(1, effectiveCount)))
-				log.Printf("TURN identity pool: fixed size %d for mainline", max(1, effectiveCount))
-			case sessionMode == sessionproto.ModeMu && protocolVersion >= muProtocolV1:
-				config := normalizeAdaptivePoolConfig(
-					opts.adaptivePoolMin,
-					opts.adaptivePoolMax,
-					opts.adaptivePoolStreamsPerIdentity,
-					effectiveCount,
-				)
-				adaptiveConfig.Store(config)
-				adaptiveEnabled.Store(true)
-				log.Printf(
-					"TURN identity pool: adaptive for mu/v%d (min=%d max=%d streams_per_id=%d)",
-					protocolVersion,
-					config.minSize,
-					config.maxSize,
-					config.streamsPerIdentity,
-				)
-			default:
-				adaptiveEnabled.Store(false)
-				fixedPoolSize.Store(int32(max(1, effectiveCount)))
-				log.Printf("TURN identity pool: fixed size %d", max(1, effectiveCount))
-			}
-		}
-
-		return poolCredsDynamic(baseGetCreds, targetPoolSize), setStrategy
+		setStrategy := func(_ sessionproto.Mode, _ uint32, _ int) {}
+		return unifiedGetCreds, setStrategy
 	}
-	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
-		link = link[:idx]
-	}
-	link = normalizeJoinLink(link)
 	params := &turnParams{
-		host:     opts.host,
-		port:     opts.port,
-		link:     link,
-		udp:      opts.udp,
-		getCreds: nil,
-		resolver: peerResolver,
+		host:         opts.host,
+		port:         opts.port,
+		link:         link,
+		udp:          opts.udp,
+		getCreds:     nil,
+		resolver:     peerResolver,
+		credsManager: vkLinkManager,
 	}
 	sessionID := []byte(nil)
 
@@ -1952,7 +1983,7 @@ func main() { //nolint:cyclop
 				}
 			}
 		}()
-		params.getCreds = poolCreds(baseGetCreds, configuredPoolSize)
+		params.getCreds = unifiedGetCreds
 		for i := 0; i < opts.n; i++ {
 			streamID := i
 			wg1.Go(func() {
@@ -2032,7 +2063,9 @@ func main() { //nolint:cyclop
 			sessionID []byte,
 			statusEnabled bool,
 		) *sessionRuntime {
-			return newSessionRuntime(runtimeCtx, sessionMode, protocolVersion, sessionID, statusEnabled, nil)
+			runtime := newSessionRuntime(runtimeCtx, sessionMode, protocolVersion, sessionID, statusEnabled, nil)
+			runtime.AttachCredsManager(vkLinkManager)
+			return runtime
 		}
 
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)

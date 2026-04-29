@@ -19,7 +19,26 @@ import (
 	"github.com/xtaci/smux"
 )
 
-var skipMainlineTCPNegotiation atomic.Bool
+var (
+	skipMainlineTCPNegotiation atomic.Bool
+	tcpFlavorOverride          atomic.Value // string: "auto"|"direct"|"legacy"
+)
+
+func setTcpFlavorOverride(value string) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value != "direct" && value != "legacy" {
+		value = "auto"
+	}
+	tcpFlavorOverride.Store(value)
+}
+
+func currentTcpFlavorOverride() string {
+	v, _ := tcpFlavorOverride.Load().(string)
+	if v == "" {
+		return "auto"
+	}
+	return v
+}
 
 type relayPacketConn struct {
 	relay net.PacketConn
@@ -178,8 +197,11 @@ func maintainTCPSession(ctx context.Context, turnConfig *turnParams, peer *net.U
 		default:
 		}
 
-		smuxSession, cleanup, err := createTCPSmuxSession(ctx, turnConfig, peer)
+		smuxSession, cleanup, err := createTCPSmuxSession(ctx, turnConfig, peer, sessionID)
 		if err != nil {
+			if turnConfig.credsManager != nil {
+				turnConfig.credsManager.ReportWorkerError(sessionID, err)
+			}
 			log.Printf("[tcp session %d] setup error: %s, retrying...", sessionID, err)
 			select {
 			case <-ctx.Done():
@@ -214,7 +236,7 @@ func maintainTCPSession(ctx context.Context, turnConfig *turnParams, peer *net.U
 	}
 }
 
-func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net.UDPAddr) (*smux.Session, func(), error) {
+func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net.UDPAddr, workerID int) (*smux.Session, func(), error) {
 	cleanupFns := make([]func(), 0, 8)
 	cleanupOnce := &sync.Once{}
 	cleanup := func() {
@@ -225,7 +247,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 		})
 	}
 
-	user, pass, rawURL, err := turnConfig.getCreds(turnConfig.link)
+	user, pass, rawURL, err := turnConfig.getCreds(workerID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get TURN creds: %w", err)
 	}
@@ -322,37 +344,54 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	cleanupFns = append(cleanupFns, func() { _ = dtlsConn.Close() })
 	emitProxyStatus("dtls_ready")
 
+	flavor := sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX
 	if !skipMainlineTCPNegotiation.Load() {
-		if err = negotiateMainlineTCPTransport(dtlsConn); err != nil {
+		negotiated, err := negotiateMainlineTCPTransport(dtlsConn)
+		if err != nil {
 			if !looksLikePlainTCPServerError(err) {
 				cleanup()
 				return nil, nil, err
 			}
 			log.Printf(
-				"Mainline TCP negotiation unsupported (plain TURN server detected), reusing the same DTLS session for KCP: %s",
+				"Mainline TCP negotiation unsupported (plain TURN server detected), reusing the same DTLS session for KCP+smux: %s",
 				err,
 			)
 			skipMainlineTCPNegotiation.Store(true)
+		} else {
+			flavor = negotiated
 		}
 	}
 
-	kcpSession, err := tcputil.NewKCPOverDTLS(dtlsConn, false)
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("KCP session: %w", err)
-	}
-	cleanupFns = append(cleanupFns, func() { _ = kcpSession.Close() })
-	emitProxyStatus("kcp_ready")
+	switch flavor {
+	case sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX:
+		smuxSession, err := smux.Client(dtlsConn, tcputil.DefaultSmuxConfig())
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("direct smux client: %w", err)
+		}
+		cleanupFns = append(cleanupFns, func() { _ = smuxSession.Close() })
+		emitProxyStatus("smux_ready")
+		log.Printf("TCP session ready (transport flavor: direct-smux)")
+		return smuxSession, cleanup, nil
+	default:
+		kcpSession, err := tcputil.NewKCPOverDTLS(dtlsConn, false)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("KCP session: %w", err)
+		}
+		cleanupFns = append(cleanupFns, func() { _ = kcpSession.Close() })
+		emitProxyStatus("kcp_ready")
 
-	smuxSession, err := smux.Client(kcpSession, tcputil.DefaultSmuxConfig())
-	if err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("smux client: %w", err)
+		smuxSession, err := smux.Client(kcpSession, tcputil.DefaultSmuxConfig())
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("smux client: %w", err)
+		}
+		cleanupFns = append(cleanupFns, func() { _ = smuxSession.Close() })
+		emitProxyStatus("smux_ready")
+		log.Printf("TCP session ready (transport flavor: legacy KCP+smux)")
+		return smuxSession, cleanup, nil
 	}
-	cleanupFns = append(cleanupFns, func() { _ = smuxSession.Close() })
-	emitProxyStatus("smux_ready")
-
-	return smuxSession, cleanup, nil
 }
 
 func looksLikePlainTCPServerError(err error) bool {
@@ -368,28 +407,55 @@ func looksLikePlainTCPServerError(err error) bool {
 		strings.Contains(msg, "connection reset")
 }
 
-func negotiateMainlineTCPTransport(dtlsConn net.Conn) error {
-	hello, err := sessionmuv1.BuildProbeHelloWithTransport(
+func negotiateMainlineTCPTransport(dtlsConn net.Conn) (sessionproto.TcpTransportFlavor, error) {
+	supportedFlavors := []sessionproto.TcpTransportFlavor{
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX,
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX,
+	}
+	preferred := preferredFlavorFromOverride(supportedFlavors)
+	hello, err := sessionmuv1.BuildProbeHelloWithTcpFlavors(
 		sessionproto.TransportMode_TRANSPORT_MODE_TCP,
 		[]sessionproto.TransportMode{sessionproto.TransportMode_TRANSPORT_MODE_TCP},
+		supportedFlavors,
+		preferred,
 	)
 	if err != nil {
-		return fmt.Errorf("build TCP probe hello: %w", err)
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED, fmt.Errorf("build TCP probe hello: %w", err)
 	}
 	serverHello, err := exchangeServerHello(dtlsConn, hello)
 	if err != nil {
-		return fmt.Errorf("mainline TCP negotiation failed: %w", err)
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED, fmt.Errorf("mainline TCP negotiation failed: %w", err)
 	}
 	if serverHello.GetVersion() != muProtocolV1 {
-		return fmt.Errorf("mainline TCP transport requires mu/v1, got v%d", serverHello.GetVersion())
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED, fmt.Errorf("mainline TCP transport requires mu/v1, got v%d", serverHello.GetVersion())
 	}
 	if serverHello.GetError() != "" {
-		return fmt.Errorf("server rejected TCP transport: %s", serverHello.GetError())
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED, fmt.Errorf("server rejected TCP transport: %s", serverHello.GetError())
 	}
 	if serverHello.GetSelectedTransport() != sessionproto.TransportMode_TRANSPORT_MODE_TCP {
-		return fmt.Errorf("server selected transport %s instead of TCP", serverHello.GetSelectedTransport())
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED, fmt.Errorf("server selected transport %s instead of TCP", serverHello.GetSelectedTransport())
 	}
-	return nil
+	flavor := serverHello.GetSelectedTcpFlavor()
+	if flavor == sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED {
+		flavor = sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX
+	}
+	if currentTcpFlavorOverride() == "legacy" {
+		flavor = sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX
+	}
+	return flavor, nil
+}
+
+func preferredFlavorFromOverride(supported []sessionproto.TcpTransportFlavor) sessionproto.TcpTransportFlavor {
+	switch currentTcpFlavorOverride() {
+	case "direct":
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX
+	case "legacy":
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX
+	}
+	if len(supported) > 0 {
+		return supported[0]
+	}
+	return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED
 }
 
 func pipeNetConns(ctx context.Context, first net.Conn, second net.Conn) {

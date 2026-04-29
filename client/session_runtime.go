@@ -27,6 +27,18 @@ type sessionRuntime struct {
 	leaderStreamID            byte
 	leaderStreamValid         bool
 	controlHeartbeatSupported atomic.Bool
+
+	dispatchMu     sync.Mutex
+	dispatchSlots  []dispatchSlot
+	dispatchRRIdx  int
+	dispatchActive bool
+
+	credsManager *groupedCredsManager
+}
+
+type dispatchSlot struct {
+	streamID byte
+	sendCh   chan *UDPPacket
 }
 
 func newSessionRuntime(
@@ -42,28 +54,108 @@ func newSessionRuntime(
 	_ = sessionID
 	_ = dispatcher
 	return &sessionRuntime{
-		mode:          mode,
-		statusEnabled: statusEnabled,
-		streams:       make(map[byte]*streamRuntime),
+		mode:           mode,
+		statusEnabled:  statusEnabled,
+		streams:        make(map[byte]*streamRuntime),
+		dispatchActive: true,
 	}
 }
 
 func (runtime *sessionRuntime) DispatchesInbound() bool {
-	return false
+	if runtime == nil {
+		return false
+	}
+	return runtime.dispatchActive
+}
+
+func (runtime *sessionRuntime) AttachCredsManager(mgr *groupedCredsManager) {
+	if runtime == nil {
+		return
+	}
+	runtime.credsManager = mgr
+}
+
+func (runtime *sessionRuntime) NoteSessionError(streamID byte, err error) {
+	if runtime == nil || err == nil {
+		return
+	}
+	if runtime.credsManager == nil {
+		return
+	}
+	runtime.credsManager.ReportWorkerError(int(streamID), err)
 }
 
 func (runtime *sessionRuntime) BindDispatchChannel(streamID byte, packets chan *UDPPacket) {
-	_ = streamID
-	_ = packets
+	if runtime == nil || packets == nil {
+		return
+	}
+	runtime.dispatchMu.Lock()
+	defer runtime.dispatchMu.Unlock()
+	for i := range runtime.dispatchSlots {
+		if runtime.dispatchSlots[i].streamID == streamID {
+			runtime.dispatchSlots[i].sendCh = packets
+			return
+		}
+	}
+	runtime.dispatchSlots = append(runtime.dispatchSlots, dispatchSlot{streamID: streamID, sendCh: packets})
 }
 
 func (runtime *sessionRuntime) UnbindDispatchChannel(streamID byte) {
-	_ = streamID
+	if runtime == nil {
+		return
+	}
+	runtime.dispatchMu.Lock()
+	defer runtime.dispatchMu.Unlock()
+	for i, slot := range runtime.dispatchSlots {
+		if slot.streamID == streamID {
+			runtime.dispatchSlots = append(runtime.dispatchSlots[:i], runtime.dispatchSlots[i+1:]...)
+			if len(runtime.dispatchSlots) == 0 {
+				runtime.dispatchRRIdx = 0
+			} else {
+				runtime.dispatchRRIdx %= len(runtime.dispatchSlots)
+			}
+			return
+		}
+	}
 }
 
 func (runtime *sessionRuntime) RunInboundDispatchLoop(ctx context.Context, inboundChan <-chan *UDPPacket) {
-	_ = ctx
-	_ = inboundChan
+	if runtime == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case pkt, ok := <-inboundChan:
+			if !ok {
+				return
+			}
+			if !runtime.dispatchPacket(pkt) {
+				packetPool.Put(pkt)
+			}
+		}
+	}
+}
+
+func (runtime *sessionRuntime) dispatchPacket(pkt *UDPPacket) bool {
+	runtime.dispatchMu.Lock()
+	defer runtime.dispatchMu.Unlock()
+	count := len(runtime.dispatchSlots)
+	if count == 0 {
+		return false
+	}
+	start := runtime.dispatchRRIdx % count
+	for i := 0; i < count; i++ {
+		idx := (start + i) % count
+		select {
+		case runtime.dispatchSlots[idx].sendCh <- pkt:
+			runtime.dispatchRRIdx = (idx + 1) % count
+			return true
+		default:
+		}
+	}
+	return false
 }
 
 func (runtime *sessionRuntime) SetProtocolVersion(protocolVersion uint32) {

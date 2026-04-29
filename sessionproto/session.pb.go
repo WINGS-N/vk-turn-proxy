@@ -24,9 +24,10 @@ const (
 type ClientHelloType int32
 
 const (
-	ClientHelloType_CLIENT_HELLO_TYPE_UNSPECIFIED ClientHelloType = 0
-	ClientHelloType_CLIENT_HELLO_TYPE_PROBE       ClientHelloType = 1
-	ClientHelloType_CLIENT_HELLO_TYPE_SESSION     ClientHelloType = 2
+	ClientHelloType_CLIENT_HELLO_TYPE_UNSPECIFIED   ClientHelloType = 0
+	ClientHelloType_CLIENT_HELLO_TYPE_PROBE         ClientHelloType = 1
+	ClientHelloType_CLIENT_HELLO_TYPE_SESSION       ClientHelloType = 2
+	ClientHelloType_CLIENT_HELLO_TYPE_ROOM_EXCHANGE ClientHelloType = 3
 )
 
 // Enum value maps for ClientHelloType.
@@ -35,11 +36,13 @@ var (
 		0: "CLIENT_HELLO_TYPE_UNSPECIFIED",
 		1: "CLIENT_HELLO_TYPE_PROBE",
 		2: "CLIENT_HELLO_TYPE_SESSION",
+		3: "CLIENT_HELLO_TYPE_ROOM_EXCHANGE",
 	}
 	ClientHelloType_value = map[string]int32{
-		"CLIENT_HELLO_TYPE_UNSPECIFIED": 0,
-		"CLIENT_HELLO_TYPE_PROBE":       1,
-		"CLIENT_HELLO_TYPE_SESSION":     2,
+		"CLIENT_HELLO_TYPE_UNSPECIFIED":   0,
+		"CLIENT_HELLO_TYPE_PROBE":         1,
+		"CLIENT_HELLO_TYPE_SESSION":       2,
+		"CLIENT_HELLO_TYPE_ROOM_EXCHANGE": 3,
 	}
 )
 
@@ -119,6 +122,101 @@ func (TransportMode) EnumDescriptor() ([]byte, []int) {
 	return file_proto_session_proto_rawDescGZIP(), []int{1}
 }
 
+type TcpTransportFlavor int32
+
+const (
+	TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED     TcpTransportFlavor = 0
+	TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX TcpTransportFlavor = 1
+	TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX     TcpTransportFlavor = 2
+)
+
+// Enum value maps for TcpTransportFlavor.
+var (
+	TcpTransportFlavor_name = map[int32]string{
+		0: "TCP_TRANSPORT_FLAVOR_UNSPECIFIED",
+		1: "TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX",
+		2: "TCP_TRANSPORT_FLAVOR_DIRECT_SMUX",
+	}
+	TcpTransportFlavor_value = map[string]int32{
+		"TCP_TRANSPORT_FLAVOR_UNSPECIFIED":     0,
+		"TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX": 1,
+		"TCP_TRANSPORT_FLAVOR_DIRECT_SMUX":     2,
+	}
+)
+
+func (x TcpTransportFlavor) Enum() *TcpTransportFlavor {
+	p := new(TcpTransportFlavor)
+	*p = x
+	return p
+}
+
+func (x TcpTransportFlavor) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TcpTransportFlavor) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_session_proto_enumTypes[2].Descriptor()
+}
+
+func (TcpTransportFlavor) Type() protoreflect.EnumType {
+	return &file_proto_session_proto_enumTypes[2]
+}
+
+func (x TcpTransportFlavor) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TcpTransportFlavor.Descriptor instead.
+func (TcpTransportFlavor) EnumDescriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{2}
+}
+
+type RoomProvider int32
+
+const (
+	RoomProvider_ROOM_PROVIDER_UNSPECIFIED RoomProvider = 0
+	RoomProvider_ROOM_PROVIDER_WB_STREAM   RoomProvider = 1
+)
+
+// Enum value maps for RoomProvider.
+var (
+	RoomProvider_name = map[int32]string{
+		0: "ROOM_PROVIDER_UNSPECIFIED",
+		1: "ROOM_PROVIDER_WB_STREAM",
+	}
+	RoomProvider_value = map[string]int32{
+		"ROOM_PROVIDER_UNSPECIFIED": 0,
+		"ROOM_PROVIDER_WB_STREAM":   1,
+	}
+)
+
+func (x RoomProvider) Enum() *RoomProvider {
+	p := new(RoomProvider)
+	*p = x
+	return p
+}
+
+func (x RoomProvider) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RoomProvider) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_session_proto_enumTypes[3].Descriptor()
+}
+
+func (RoomProvider) Type() protoreflect.EnumType {
+	return &file_proto_session_proto_enumTypes[3]
+}
+
+func (x RoomProvider) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RoomProvider.Descriptor instead.
+func (RoomProvider) EnumDescriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{3}
+}
+
 type ClientHello struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	Version             uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -127,6 +225,9 @@ type ClientHello struct {
 	StreamId            uint32                 `protobuf:"varint,4,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
 	RequestedTransport  TransportMode          `protobuf:"varint,5,opt,name=requested_transport,json=requestedTransport,proto3,enum=sessionproto.TransportMode" json:"requested_transport,omitempty"`
 	SupportedTransports []TransportMode        `protobuf:"varint,6,rep,packed,name=supported_transports,json=supportedTransports,proto3,enum=sessionproto.TransportMode" json:"supported_transports,omitempty"`
+	SupportedTcpFlavors []TcpTransportFlavor   `protobuf:"varint,7,rep,packed,name=supported_tcp_flavors,json=supportedTcpFlavors,proto3,enum=sessionproto.TcpTransportFlavor" json:"supported_tcp_flavors,omitempty"`
+	PreferredTcpFlavor  TcpTransportFlavor     `protobuf:"varint,8,opt,name=preferred_tcp_flavor,json=preferredTcpFlavor,proto3,enum=sessionproto.TcpTransportFlavor" json:"preferred_tcp_flavor,omitempty"`
+	RoomExchange        *RoomDataExchange      `protobuf:"bytes,9,opt,name=room_exchange,json=roomExchange,proto3" json:"room_exchange,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -203,6 +304,155 @@ func (x *ClientHello) GetSupportedTransports() []TransportMode {
 	return nil
 }
 
+func (x *ClientHello) GetSupportedTcpFlavors() []TcpTransportFlavor {
+	if x != nil {
+		return x.SupportedTcpFlavors
+	}
+	return nil
+}
+
+func (x *ClientHello) GetPreferredTcpFlavor() TcpTransportFlavor {
+	if x != nil {
+		return x.PreferredTcpFlavor
+	}
+	return TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED
+}
+
+func (x *ClientHello) GetRoomExchange() *RoomDataExchange {
+	if x != nil {
+		return x.RoomExchange
+	}
+	return nil
+}
+
+type RoomDataExchange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Provider      RoomProvider           `protobuf:"varint,1,opt,name=provider,proto3,enum=sessionproto.RoomProvider" json:"provider,omitempty"`
+	RoomId        string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	DisplayName   string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	E2EEnabled    bool                   `protobuf:"varint,4,opt,name=e2e_enabled,json=e2eEnabled,proto3" json:"e2e_enabled,omitempty"`
+	E2ESecret     []byte                 `protobuf:"bytes,5,opt,name=e2e_secret,json=e2eSecret,proto3" json:"e2e_secret,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RoomDataExchange) Reset() {
+	*x = RoomDataExchange{}
+	mi := &file_proto_session_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RoomDataExchange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RoomDataExchange) ProtoMessage() {}
+
+func (x *RoomDataExchange) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_session_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RoomDataExchange.ProtoReflect.Descriptor instead.
+func (*RoomDataExchange) Descriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *RoomDataExchange) GetProvider() RoomProvider {
+	if x != nil {
+		return x.Provider
+	}
+	return RoomProvider_ROOM_PROVIDER_UNSPECIFIED
+}
+
+func (x *RoomDataExchange) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *RoomDataExchange) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *RoomDataExchange) GetE2EEnabled() bool {
+	if x != nil {
+		return x.E2EEnabled
+	}
+	return false
+}
+
+func (x *RoomDataExchange) GetE2ESecret() []byte {
+	if x != nil {
+		return x.E2ESecret
+	}
+	return nil
+}
+
+type RoomDataAck struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RoomDataAck) Reset() {
+	*x = RoomDataAck{}
+	mi := &file_proto_session_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RoomDataAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RoomDataAck) ProtoMessage() {}
+
+func (x *RoomDataAck) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_session_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RoomDataAck.ProtoReflect.Descriptor instead.
+func (*RoomDataAck) Descriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *RoomDataAck) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *RoomDataAck) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type ServerHello struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
 	Version                   uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -211,13 +461,15 @@ type ServerHello struct {
 	ControlHeartbeatSupported bool                   `protobuf:"varint,4,opt,name=control_heartbeat_supported,json=controlHeartbeatSupported,proto3" json:"control_heartbeat_supported,omitempty"`
 	SelectedTransport         TransportMode          `protobuf:"varint,5,opt,name=selected_transport,json=selectedTransport,proto3,enum=sessionproto.TransportMode" json:"selected_transport,omitempty"`
 	SupportedTransports       []TransportMode        `protobuf:"varint,6,rep,packed,name=supported_transports,json=supportedTransports,proto3,enum=sessionproto.TransportMode" json:"supported_transports,omitempty"`
+	SupportedTcpFlavors       []TcpTransportFlavor   `protobuf:"varint,7,rep,packed,name=supported_tcp_flavors,json=supportedTcpFlavors,proto3,enum=sessionproto.TcpTransportFlavor" json:"supported_tcp_flavors,omitempty"`
+	SelectedTcpFlavor         TcpTransportFlavor     `protobuf:"varint,8,opt,name=selected_tcp_flavor,json=selectedTcpFlavor,proto3,enum=sessionproto.TcpTransportFlavor" json:"selected_tcp_flavor,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *ServerHello) Reset() {
 	*x = ServerHello{}
-	mi := &file_proto_session_proto_msgTypes[1]
+	mi := &file_proto_session_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -229,7 +481,7 @@ func (x *ServerHello) String() string {
 func (*ServerHello) ProtoMessage() {}
 
 func (x *ServerHello) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_session_proto_msgTypes[1]
+	mi := &file_proto_session_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -242,7 +494,7 @@ func (x *ServerHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerHello.ProtoReflect.Descriptor instead.
 func (*ServerHello) Descriptor() ([]byte, []int) {
-	return file_proto_session_proto_rawDescGZIP(), []int{1}
+	return file_proto_session_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ServerHello) GetVersion() uint32 {
@@ -287,6 +539,20 @@ func (x *ServerHello) GetSupportedTransports() []TransportMode {
 	return nil
 }
 
+func (x *ServerHello) GetSupportedTcpFlavors() []TcpTransportFlavor {
+	if x != nil {
+		return x.SupportedTcpFlavors
+	}
+	return nil
+}
+
+func (x *ServerHello) GetSelectedTcpFlavor() TcpTransportFlavor {
+	if x != nil {
+		return x.SelectedTcpFlavor
+	}
+	return TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED
+}
+
 type Heartbeat struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Version          uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -304,7 +570,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_proto_session_proto_msgTypes[2]
+	mi := &file_proto_session_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -316,7 +582,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_session_proto_msgTypes[2]
+	mi := &file_proto_session_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -329,7 +595,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_proto_session_proto_rawDescGZIP(), []int{2}
+	return file_proto_session_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Heartbeat) GetVersion() uint32 {
@@ -399,7 +665,7 @@ var File_proto_session_proto protoreflect.FileDescriptor
 
 const file_proto_session_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/session.proto\x12\fsessionproto\"\xb4\x02\n" +
+	"\x13proto/session.proto\x12\fsessionproto\"\xa3\x04\n" +
 	"\vClientHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x121\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1d.sessionproto.ClientHelloTypeR\x04type\x12\x1d\n" +
@@ -407,14 +673,30 @@ const file_proto_session_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\fR\tsessionId\x12\x1b\n" +
 	"\tstream_id\x18\x04 \x01(\rR\bstreamId\x12L\n" +
 	"\x13requested_transport\x18\x05 \x01(\x0e2\x1b.sessionproto.TransportModeR\x12requestedTransport\x12N\n" +
-	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\"\xbc\x02\n" +
+	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\x12T\n" +
+	"\x15supported_tcp_flavors\x18\a \x03(\x0e2 .sessionproto.TcpTransportFlavorR\x13supportedTcpFlavors\x12R\n" +
+	"\x14preferred_tcp_flavor\x18\b \x01(\x0e2 .sessionproto.TcpTransportFlavorR\x12preferredTcpFlavor\x12C\n" +
+	"\rroom_exchange\x18\t \x01(\v2\x1e.sessionproto.RoomDataExchangeR\froomExchange\"\xc6\x01\n" +
+	"\x10RoomDataExchange\x126\n" +
+	"\bprovider\x18\x01 \x01(\x0e2\x1a.sessionproto.RoomProviderR\bprovider\x12\x17\n" +
+	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12!\n" +
+	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12\x1f\n" +
+	"\ve2e_enabled\x18\x04 \x01(\bR\n" +
+	"e2eEnabled\x12\x1d\n" +
+	"\n" +
+	"e2e_secret\x18\x05 \x01(\fR\te2eSecret\"?\n" +
+	"\vRoomDataAck\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xe4\x03\n" +
 	"\vServerHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12!\n" +
 	"\fmu_supported\x18\x02 \x01(\bR\vmuSupported\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x12>\n" +
 	"\x1bcontrol_heartbeat_supported\x18\x04 \x01(\bR\x19controlHeartbeatSupported\x12J\n" +
 	"\x12selected_transport\x18\x05 \x01(\x0e2\x1b.sessionproto.TransportModeR\x11selectedTransport\x12N\n" +
-	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\"\xd2\x02\n" +
+	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\x12T\n" +
+	"\x15supported_tcp_flavors\x18\a \x03(\x0e2 .sessionproto.TcpTransportFlavorR\x13supportedTcpFlavors\x12P\n" +
+	"\x13selected_tcp_flavor\x18\b \x01(\x0e2 .sessionproto.TcpTransportFlavorR\x11selectedTcpFlavor\"\xd2\x02\n" +
 	"\tHeartbeat\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\"\n" +
 	"\rwall_clock_ms\x18\x02 \x01(\x03R\vwallClockMs\x12%\n" +
@@ -424,15 +706,23 @@ const file_proto_session_proto_rawDesc = "" +
 	"\fsession_mode\x18\x06 \x01(\tR\vsessionMode\x12!\n" +
 	"\fcontrol_path\x18\a \x01(\tR\vcontrolPath\x12\x1a\n" +
 	"\bprovider\x18\b \x01(\tR\bprovider\x129\n" +
-	"\ttransport\x18\t \x01(\x0e2\x1b.sessionproto.TransportModeR\ttransport*p\n" +
+	"\ttransport\x18\t \x01(\x0e2\x1b.sessionproto.TransportModeR\ttransport*\x95\x01\n" +
 	"\x0fClientHelloType\x12!\n" +
 	"\x1dCLIENT_HELLO_TYPE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17CLIENT_HELLO_TYPE_PROBE\x10\x01\x12\x1d\n" +
-	"\x19CLIENT_HELLO_TYPE_SESSION\x10\x02*d\n" +
+	"\x19CLIENT_HELLO_TYPE_SESSION\x10\x02\x12#\n" +
+	"\x1fCLIENT_HELLO_TYPE_ROOM_EXCHANGE\x10\x03*d\n" +
 	"\rTransportMode\x12\x1e\n" +
 	"\x1aTRANSPORT_MODE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TRANSPORT_MODE_DATAGRAM\x10\x01\x12\x16\n" +
-	"\x12TRANSPORT_MODE_TCP\x10\x02B=Z;github.com/cacggghp/vk-turn-proxy/sessionproto;sessionprotob\x06proto3"
+	"\x12TRANSPORT_MODE_TCP\x10\x02*\x8a\x01\n" +
+	"\x12TcpTransportFlavor\x12$\n" +
+	" TCP_TRANSPORT_FLAVOR_UNSPECIFIED\x10\x00\x12(\n" +
+	"$TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX\x10\x01\x12$\n" +
+	" TCP_TRANSPORT_FLAVOR_DIRECT_SMUX\x10\x02*J\n" +
+	"\fRoomProvider\x12\x1d\n" +
+	"\x19ROOM_PROVIDER_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17ROOM_PROVIDER_WB_STREAM\x10\x01B=Z;github.com/cacggghp/vk-turn-proxy/sessionproto;sessionprotob\x06proto3"
 
 var (
 	file_proto_session_proto_rawDescOnce sync.Once
@@ -446,27 +736,37 @@ func file_proto_session_proto_rawDescGZIP() []byte {
 	return file_proto_session_proto_rawDescData
 }
 
-var file_proto_session_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_proto_session_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_proto_session_proto_goTypes = []any{
-	(ClientHelloType)(0), // 0: sessionproto.ClientHelloType
-	(TransportMode)(0),   // 1: sessionproto.TransportMode
-	(*ClientHello)(nil),  // 2: sessionproto.ClientHello
-	(*ServerHello)(nil),  // 3: sessionproto.ServerHello
-	(*Heartbeat)(nil),    // 4: sessionproto.Heartbeat
+	(ClientHelloType)(0),     // 0: sessionproto.ClientHelloType
+	(TransportMode)(0),       // 1: sessionproto.TransportMode
+	(TcpTransportFlavor)(0),  // 2: sessionproto.TcpTransportFlavor
+	(RoomProvider)(0),        // 3: sessionproto.RoomProvider
+	(*ClientHello)(nil),      // 4: sessionproto.ClientHello
+	(*RoomDataExchange)(nil), // 5: sessionproto.RoomDataExchange
+	(*RoomDataAck)(nil),      // 6: sessionproto.RoomDataAck
+	(*ServerHello)(nil),      // 7: sessionproto.ServerHello
+	(*Heartbeat)(nil),        // 8: sessionproto.Heartbeat
 }
 var file_proto_session_proto_depIdxs = []int32{
-	0, // 0: sessionproto.ClientHello.type:type_name -> sessionproto.ClientHelloType
-	1, // 1: sessionproto.ClientHello.requested_transport:type_name -> sessionproto.TransportMode
-	1, // 2: sessionproto.ClientHello.supported_transports:type_name -> sessionproto.TransportMode
-	1, // 3: sessionproto.ServerHello.selected_transport:type_name -> sessionproto.TransportMode
-	1, // 4: sessionproto.ServerHello.supported_transports:type_name -> sessionproto.TransportMode
-	1, // 5: sessionproto.Heartbeat.transport:type_name -> sessionproto.TransportMode
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	0,  // 0: sessionproto.ClientHello.type:type_name -> sessionproto.ClientHelloType
+	1,  // 1: sessionproto.ClientHello.requested_transport:type_name -> sessionproto.TransportMode
+	1,  // 2: sessionproto.ClientHello.supported_transports:type_name -> sessionproto.TransportMode
+	2,  // 3: sessionproto.ClientHello.supported_tcp_flavors:type_name -> sessionproto.TcpTransportFlavor
+	2,  // 4: sessionproto.ClientHello.preferred_tcp_flavor:type_name -> sessionproto.TcpTransportFlavor
+	5,  // 5: sessionproto.ClientHello.room_exchange:type_name -> sessionproto.RoomDataExchange
+	3,  // 6: sessionproto.RoomDataExchange.provider:type_name -> sessionproto.RoomProvider
+	1,  // 7: sessionproto.ServerHello.selected_transport:type_name -> sessionproto.TransportMode
+	1,  // 8: sessionproto.ServerHello.supported_transports:type_name -> sessionproto.TransportMode
+	2,  // 9: sessionproto.ServerHello.supported_tcp_flavors:type_name -> sessionproto.TcpTransportFlavor
+	2,  // 10: sessionproto.ServerHello.selected_tcp_flavor:type_name -> sessionproto.TcpTransportFlavor
+	1,  // 11: sessionproto.Heartbeat.transport:type_name -> sessionproto.TransportMode
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_proto_session_proto_init() }
@@ -479,8 +779,8 @@ func file_proto_session_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_session_proto_rawDesc), len(file_proto_session_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   3,
+			NumEnums:      4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

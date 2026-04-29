@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -142,6 +143,34 @@ func firstSupportedTransport(supported []sessionproto.TransportMode) sessionprot
 		return sessionproto.TransportMode_TRANSPORT_MODE_UNSPECIFIED
 	}
 	return normalized[0]
+}
+
+func supportedTcpFlavorsForServer() []sessionproto.TcpTransportFlavor {
+	return []sessionproto.TcpTransportFlavor{
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX,
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX,
+	}
+}
+
+func selectTcpFlavorForHello(hello *sessionproto.ClientHello) (sessionproto.TcpTransportFlavor, []sessionproto.TcpTransportFlavor) {
+	supported := supportedTcpFlavorsForServer()
+	if hello == nil {
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX, supported
+	}
+	clientSupported := sessionproto.NormalizeSupportedTcpFlavors(hello.GetSupportedTcpFlavors())
+	if len(clientSupported) == 0 {
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX, supported
+	}
+	preferred := hello.GetPreferredTcpFlavor()
+	if preferred != sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED &&
+		sessionproto.HasSupportedTcpFlavor(clientSupported, preferred) &&
+		sessionproto.HasSupportedTcpFlavor(supported, preferred) {
+		return preferred, supported
+	}
+	if sessionproto.HasSupportedTcpFlavor(clientSupported, sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX) {
+		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX, supported
+	}
+	return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX, supported
 }
 
 func selectTransportForHello(mode sessionproto.Mode, backends transportBackends, hello *sessionproto.ClientHello) (sessionproto.TransportMode, []sessionproto.TransportMode, string) {
@@ -532,6 +561,41 @@ func writeMuxSessionHelloResponse(
 	return writeRawPacket(conn, payload)
 }
 
+type roomExchangeHandler func(*sessionproto.RoomDataExchange, net.Addr)
+
+var roomExchangeSink atomic.Pointer[roomExchangeHandler]
+
+// SetRoomExchangeSink registers a callback invoked for every received
+// CLIENT_HELLO_TYPE_ROOM_EXCHANGE. Pass nil to clear.
+func SetRoomExchangeSink(fn roomExchangeHandler) {
+	if fn == nil {
+		roomExchangeSink.Store(nil)
+		return
+	}
+	roomExchangeSink.Store(&fn)
+}
+
+func handleRoomExchange(conn net.Conn, hello *sessionproto.ClientHello) error {
+	exchange := hello.GetRoomExchange()
+	if exchange == nil {
+		log.Printf("room exchange from %s: missing payload", conn.RemoteAddr())
+		return fmt.Errorf("missing room exchange payload")
+	}
+	log.Printf(
+		"room exchange from %s: provider=%s room_id=%q display_name=%q e2e=%t e2e_secret_len=%d",
+		conn.RemoteAddr(),
+		exchange.GetProvider(),
+		exchange.GetRoomId(),
+		exchange.GetDisplayName(),
+		exchange.GetE2EEnabled(),
+		len(exchange.GetE2ESecret()),
+	)
+	if ptr := roomExchangeSink.Load(); ptr != nil {
+		(*ptr)(exchange, conn.RemoteAddr())
+	}
+	return nil
+}
+
 func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, connectAddr string, hello *sessionproto.ClientHello, wrappedSession bool) error {
 	sessionID := hex.EncodeToString(hello.GetSessionId())
 	streamID := byte(hello.GetStreamId())
@@ -739,16 +803,18 @@ func handleConnection(
 	for hello != nil && hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE {
 		selectedTransport, supportedTransports, errorText := selectTransportForHello(mode, backends, hello)
 		muSupported := allowsMu(mode) && errorText == ""
+		selectedTcpFlavor, supportedTcpFlavors := selectTcpFlavorForHello(hello)
 		log.Printf(
-			"protobuf direct probe from %s: version=%d requested_transport=%s selected_transport=%s mu_supported=%t error=%q",
+			"protobuf direct probe from %s: version=%d requested_transport=%s selected_transport=%s mu_supported=%t selected_tcp_flavor=%s error=%q",
 			conn.RemoteAddr(),
 			hello.GetVersion(),
 			requestedTransportForHello(hello),
 			selectedTransport,
 			muSupported,
+			selectedTcpFlavor,
 			errorText,
 		)
-		if err := writeServerHelloForVersion(
+		if err := writeServerHelloForVersionWithTcpFlavor(
 			conn,
 			hello.GetVersion(),
 			muSupported,
@@ -756,6 +822,8 @@ func handleConnection(
 			true,
 			selectedTransport,
 			supportedTransports,
+			supportedTcpFlavors,
+			selectedTcpFlavor,
 		); err != nil {
 			return err
 		}
@@ -763,8 +831,8 @@ func handleConnection(
 			return fmt.Errorf("%s", errorText)
 		}
 		if selectedTransport == sessionproto.TransportMode_TRANSPORT_MODE_TCP {
-			log.Printf("switching %s to tcp data path", conn.RemoteAddr())
-			return handleTCPConnection(ctx, dtlsConn, backends.tcpConnect)
+			log.Printf("switching %s to tcp data path (flavor=%s)", conn.RemoteAddr(), selectedTcpFlavor)
+			return handleTCPConnection(ctx, dtlsConn, backends.tcpConnect, selectedTcpFlavor)
 		}
 		hello, firstPacket, wrappedSession, err = readInitialHelloOrLegacy(conn, mode)
 		if err != nil {
@@ -779,6 +847,8 @@ func handleConnection(
 
 	if hello != nil {
 		switch hello.GetType() {
+		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_ROOM_EXCHANGE:
+			return handleRoomExchange(conn, hello)
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_SESSION:
 			if mode == sessionproto.ModeMainline {
 				selectedTransport, supportedTransports, _ := selectTransportForHello(mode, backends, hello)
@@ -852,6 +922,15 @@ func main() {
 	backends, err := resolveServerBackends(opts.connect, opts.udpConnect, opts.tcpConnect, opts.vlessMode)
 	if err != nil {
 		log.Panicf("invalid backend flags: %v", err)
+	}
+
+	wbStreamPool := newWbStreamSessionPool(backends.udpConnect)
+	defer wbStreamPool.Close()
+	SetRoomExchangeSink(wbStreamPool.HandleExchange)
+	if opts.wbStreamRoomID != "" {
+		if err := wbStreamPool.PreJoin(opts.wbStreamRoomID, opts.wbStreamDisplayName, opts.wbStreamE2ESecret); err != nil {
+			log.Fatalf("wb-stream pre-join: %v", err)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
