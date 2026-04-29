@@ -39,13 +39,39 @@ func writeServerHelloForVersion(
 	selectedTransport sessionproto.TransportMode,
 	supportedTransports []sessionproto.TransportMode,
 ) error {
-	payload, err := buildServerHelloForVersion(
+	return writeServerHelloForVersionWithTcpFlavor(
+		conn,
 		version,
 		muSupported,
 		errorText,
 		controlHeartbeatSupported,
 		selectedTransport,
 		supportedTransports,
+		nil,
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED,
+	)
+}
+
+func writeServerHelloForVersionWithTcpFlavor(
+	conn net.Conn,
+	version uint32,
+	muSupported bool,
+	errorText string,
+	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	supportedTcpFlavors []sessionproto.TcpTransportFlavor,
+	selectedTcpFlavor sessionproto.TcpTransportFlavor,
+) error {
+	payload, err := buildServerHelloForVersionWithTcpFlavor(
+		version,
+		muSupported,
+		errorText,
+		controlHeartbeatSupported,
+		selectedTransport,
+		supportedTransports,
+		supportedTcpFlavors,
+		selectedTcpFlavor,
 	)
 	if err != nil {
 		return err
@@ -67,14 +93,38 @@ func buildServerHelloForVersion(
 	selectedTransport sessionproto.TransportMode,
 	supportedTransports []sessionproto.TransportMode,
 ) ([]byte, error) {
+	return buildServerHelloForVersionWithTcpFlavor(
+		version,
+		muSupported,
+		errorText,
+		controlHeartbeatSupported,
+		selectedTransport,
+		supportedTransports,
+		nil,
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED,
+	)
+}
+
+func buildServerHelloForVersionWithTcpFlavor(
+	version uint32,
+	muSupported bool,
+	errorText string,
+	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	supportedTcpFlavors []sessionproto.TcpTransportFlavor,
+	selectedTcpFlavor sessionproto.TcpTransportFlavor,
+) ([]byte, error) {
 	switch version {
 	case sessionmuv1.ProtocolVersion:
-		return sessionmuv1.BuildServerHelloWithTransport(
+		return sessionmuv1.BuildServerHelloWithTcpFlavor(
 			muSupported,
 			errorText,
 			controlHeartbeatSupported,
 			selectedTransport,
 			supportedTransports,
+			supportedTcpFlavors,
+			selectedTcpFlavor,
 		)
 	default:
 		return nil, fmt.Errorf("unsupported protocol version: %d", version)

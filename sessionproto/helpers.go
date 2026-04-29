@@ -97,3 +97,28 @@ func HasSupportedTransport(transports []TransportMode, target TransportMode) boo
 	}
 	return false
 }
+
+func NormalizeSupportedTcpFlavors(flavors []TcpTransportFlavor) []TcpTransportFlavor {
+	normalized := make([]TcpTransportFlavor, 0, len(flavors))
+	seen := make(map[TcpTransportFlavor]struct{}, len(flavors))
+	for _, flavor := range flavors {
+		if flavor == TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED {
+			continue
+		}
+		if _, exists := seen[flavor]; exists {
+			continue
+		}
+		seen[flavor] = struct{}{}
+		normalized = append(normalized, flavor)
+	}
+	return normalized
+}
+
+func HasSupportedTcpFlavor(flavors []TcpTransportFlavor, target TcpTransportFlavor) bool {
+	for _, flavor := range NormalizeSupportedTcpFlavors(flavors) {
+		if flavor == target {
+			return true
+		}
+	}
+	return false
+}

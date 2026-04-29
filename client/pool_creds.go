@@ -9,12 +9,17 @@ import (
 )
 
 type turnCred struct {
-	user string
-	pass string
-	addr string
+	user            string
+	pass            string
+	addr            string
+	bornAt          time.Time
+	lifetime        time.Duration
+	isSecondaryLink bool
 }
 
-type pooledGetCredsFunc func(string, bool) (string, string, string, error)
+type pooledGetCredsFunc func(string, bool) (string, string, string, time.Duration, error)
+
+type pooledGetCredsResult func(link string) (string, string, string, error)
 
 type adaptivePoolConfig struct {
 	minSize            int
@@ -25,6 +30,8 @@ type adaptivePoolConfig struct {
 const (
 	backgroundPoolRetryCooldown           = 2 * time.Minute
 	defaultAdaptivePoolStreamsPerIdentity = 1
+	credsRefreshSlackDuration             = 2 * time.Minute
+	credsFallbackLifetime                 = 10 * time.Minute
 )
 
 func normalizeAdaptivePoolConfig(minSize, maxSize, streamsPerIdentity, configuredStreams int) adaptivePoolConfig {
@@ -73,23 +80,35 @@ func ceilDiv(value, divisor int) int {
 	return (value + divisor - 1) / divisor
 }
 
-func poolCreds(f pooledGetCredsFunc, poolSize int) getCredsFunc {
+func (cred turnCred) effectiveLifetime() time.Duration {
+	if cred.lifetime > 0 {
+		return cred.lifetime
+	}
+	return credsFallbackLifetime
+}
+
+func (cred turnCred) expired(now time.Time) bool {
+	lifetime := cred.effectiveLifetime()
+	deadline := cred.bornAt.Add(lifetime - credsRefreshSlackDuration)
+	return now.After(deadline)
+}
+
+func poolCreds(f pooledGetCredsFunc, poolSize int) pooledGetCredsResult {
 	fixedPoolSize := max(1, poolSize)
 	return poolCredsDynamic(f, func() int {
 		return fixedPoolSize
 	})
 }
 
-func poolCredsAdaptive(f pooledGetCredsFunc, config adaptivePoolConfig) getCredsFunc {
+func poolCredsAdaptive(f pooledGetCredsFunc, config adaptivePoolConfig) pooledGetCredsResult {
 	return poolCredsDynamic(f, config.targetPoolSize)
 }
 
-func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) getCredsFunc {
+func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGetCredsResult {
 	type poolState struct {
 		mu                    sync.Mutex
 		cond                  *sync.Cond
 		pool                  []turnCred
-		createdAt             time.Time
 		idx                   int
 		foregroundFillRunning bool
 		backgroundFillRunning bool
@@ -107,10 +126,27 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) getCredsF
 	}
 
 	expireIfNeededLocked := func() {
-		if !state.createdAt.IsZero() && time.Since(state.createdAt) > 10*time.Minute {
-			state.pool = nil
-			state.createdAt = time.Time{}
-			state.idx = 0
+		if len(state.pool) == 0 {
+			return
+		}
+		now := time.Now()
+		filtered := state.pool[:0]
+		removed := 0
+		for _, cred := range state.pool {
+			if cred.expired(now) {
+				removed++
+				continue
+			}
+			filtered = append(filtered, cred)
+		}
+		if removed > 0 {
+			state.pool = append([]turnCred(nil), filtered...)
+			if len(state.pool) == 0 {
+				state.idx = 0
+			} else {
+				state.idx %= len(state.pool)
+			}
+			log.Printf("TURN identity pool: expired %d stale entries (remaining: %d)", removed, len(state.pool))
 		}
 	}
 
@@ -134,7 +170,6 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) getCredsF
 			}
 		}
 		state.pool = append(state.pool, cred)
-		state.createdAt = time.Now()
 		return true
 	}
 
@@ -161,7 +196,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) getCredsF
 				state.mu.Unlock()
 			}()
 
-			user, pass, addr, err := f(link, false)
+			user, pass, addr, lifetime, err := f(link, false)
 			if err != nil {
 				state.mu.Lock()
 				state.backgroundRetryAfter = time.Now().Add(backgroundPoolRetryCooldown)
@@ -175,7 +210,13 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) getCredsF
 			}
 
 			state.mu.Lock()
-			added := appendIfNewLocked(turnCred{user: user, pass: pass, addr: addr})
+			added := appendIfNewLocked(turnCred{
+				user:     user,
+				pass:     pass,
+				addr:     addr,
+				bornAt:   time.Now(),
+				lifetime: lifetime,
+			})
 			currentSize := len(state.pool)
 			desiredSize := desiredPoolSize()
 			state.backgroundRetryAfter = time.Time{}
@@ -183,7 +224,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) getCredsF
 			state.mu.Unlock()
 
 			if added {
-				log.Printf("Registered background TURN identity %d/%d", currentSize, desiredSize)
+				log.Printf("Registered background TURN identity %d/%d (lifetime=%s)", currentSize, desiredSize, lifetime)
 			}
 		}()
 	}
@@ -227,12 +268,18 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) getCredsF
 			state.foregroundFillRunning = true
 			state.mu.Unlock()
 
-			user, pass, addr, err := f(link, true)
+			user, pass, addr, lifetime, err := f(link, true)
 
 			state.mu.Lock()
 			state.foregroundFillRunning = false
 			if err == nil {
-				_ = appendIfNewLocked(turnCred{user: user, pass: pass, addr: addr})
+				_ = appendIfNewLocked(turnCred{
+					user:     user,
+					pass:     pass,
+					addr:     addr,
+					bornAt:   time.Now(),
+					lifetime: lifetime,
+				})
 				currentSize := len(state.pool)
 				desiredSize = desiredPoolSize()
 				state.backgroundRetryAfter = time.Time{}
@@ -240,7 +287,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) getCredsF
 				state.cond.Broadcast()
 				state.idx++
 				state.mu.Unlock()
-				log.Printf("Registered primary TURN identity %d/%d", currentSize, desiredSize)
+				log.Printf("Registered primary TURN identity %d/%d (lifetime=%s)", currentSize, desiredSize, lifetime)
 				if currentSize < desiredSize {
 					startBackgroundFill(link)
 				}

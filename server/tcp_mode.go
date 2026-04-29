@@ -9,30 +9,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	"github.com/cacggghp/vk-turn-proxy/tcputil"
 	"github.com/xtaci/smux"
 )
 
-func handleTCPConnection(ctx context.Context, dtlsConn net.Conn, connectAddr string) error {
-	kcpSession, err := tcputil.NewKCPOverDTLS(dtlsConn, true)
+func handleTCPConnection(ctx context.Context, dtlsConn net.Conn, connectAddr string, flavor sessionproto.TcpTransportFlavor) error {
+	smuxSession, cleanup, err := openTCPSmuxServer(dtlsConn, flavor)
 	if err != nil {
-		return fmt.Errorf("KCP session error: %w", err)
+		return err
 	}
-	defer func() {
-		if closeErr := kcpSession.Close(); closeErr != nil {
-			log.Printf("failed to close KCP session: %v", closeErr)
-		}
-	}()
-
-	smuxSession, err := smux.Server(kcpSession, tcputil.DefaultSmuxConfig())
-	if err != nil {
-		return fmt.Errorf("smux server error: %w", err)
-	}
-	defer func() {
-		if closeErr := smuxSession.Close(); closeErr != nil {
-			log.Printf("failed to close smux session: %v", closeErr)
-		}
-	}()
+	defer cleanup()
 
 	var waitGroup sync.WaitGroup
 	for {
@@ -75,6 +62,40 @@ func handleTCPConnection(ctx context.Context, dtlsConn net.Conn, connectAddr str
 			pipeTCPConns(ctx, smuxStream, backendConn)
 		}(stream)
 	}
+}
+
+func openTCPSmuxServer(dtlsConn net.Conn, flavor sessionproto.TcpTransportFlavor) (*smux.Session, func(), error) {
+	if flavor == sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX {
+		smuxSession, err := smux.Server(dtlsConn, tcputil.DefaultSmuxConfig())
+		if err != nil {
+			return nil, nil, fmt.Errorf("direct smux server error: %w", err)
+		}
+		log.Printf("TCP server session ready (transport flavor: direct-smux)")
+		return smuxSession, func() {
+			if closeErr := smuxSession.Close(); closeErr != nil {
+				log.Printf("failed to close smux session: %v", closeErr)
+			}
+		}, nil
+	}
+
+	kcpSession, err := tcputil.NewKCPOverDTLS(dtlsConn, true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("KCP session error: %w", err)
+	}
+	smuxSession, err := smux.Server(kcpSession, tcputil.DefaultSmuxConfig())
+	if err != nil {
+		_ = kcpSession.Close()
+		return nil, nil, fmt.Errorf("smux server error: %w", err)
+	}
+	log.Printf("TCP server session ready (transport flavor: legacy KCP+smux)")
+	return smuxSession, func() {
+		if closeErr := smuxSession.Close(); closeErr != nil {
+			log.Printf("failed to close smux session: %v", closeErr)
+		}
+		if closeErr := kcpSession.Close(); closeErr != nil {
+			log.Printf("failed to close KCP session: %v", closeErr)
+		}
+	}, nil
 }
 
 func pipeTCPConns(ctx context.Context, first net.Conn, second net.Conn) {

@@ -38,8 +38,8 @@ var (
 
 	errCaptchaV2RateLimit = errors.New("captcha session rate limit reached")
 
-	captchaV2DebugCache   sync.Map // scriptURL -> string
-	captchaV2HeaderOrder  = []string{
+	captchaV2DebugCache  sync.Map // scriptURL -> string
+	captchaV2HeaderOrder = []string{
 		"host",
 		"content-length",
 		"sec-ch-ua-platform",

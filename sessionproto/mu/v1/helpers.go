@@ -16,6 +16,20 @@ func BuildProbeHello() ([]byte, error) {
 }
 
 func BuildProbeHelloWithTransport(requestedTransport sessionproto.TransportMode, supportedTransports []sessionproto.TransportMode) ([]byte, error) {
+	return BuildProbeHelloWithTcpFlavors(
+		requestedTransport,
+		supportedTransports,
+		nil,
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED,
+	)
+}
+
+func BuildProbeHelloWithTcpFlavors(
+	requestedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	supportedTcpFlavors []sessionproto.TcpTransportFlavor,
+	preferredTcpFlavor sessionproto.TcpTransportFlavor,
+) ([]byte, error) {
 	return sessionproto.MarshalClientHello(&sessionproto.ClientHello{
 		Version:            ProtocolVersion,
 		Type:               sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE,
@@ -23,6 +37,8 @@ func BuildProbeHelloWithTransport(requestedTransport sessionproto.TransportMode,
 		SupportedTransports: sessionproto.NormalizeSupportedTransports(
 			supportedTransports,
 		),
+		SupportedTcpFlavors: sessionproto.NormalizeSupportedTcpFlavors(supportedTcpFlavors),
+		PreferredTcpFlavor:  preferredTcpFlavor,
 	})
 }
 
@@ -60,6 +76,20 @@ func ValidateClientHello(hello *sessionproto.ClientHello) error {
 	return sessionproto.ValidateHelloShape(hello, ProtocolVersion)
 }
 
+// BuildRoomExchangeHello marshals a CLIENT_HELLO_TYPE_ROOM_EXCHANGE message
+// carrying a RoomDataExchange payload. Used for short-lived TURN-handshake
+// sessions where the client only conveys a room identifier and exits.
+func BuildRoomExchangeHello(exchange *sessionproto.RoomDataExchange) ([]byte, error) {
+	if exchange == nil {
+		return nil, fmt.Errorf("room exchange payload is required")
+	}
+	return sessionproto.MarshalClientHello(&sessionproto.ClientHello{
+		Version:      ProtocolVersion,
+		Type:         sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_ROOM_EXCHANGE,
+		RoomExchange: exchange,
+	})
+}
+
 func BuildServerHello(muSupported bool, errorText string, controlHeartbeatSupported bool) ([]byte, error) {
 	return BuildServerHelloWithTransport(
 		muSupported,
@@ -77,6 +107,26 @@ func BuildServerHelloWithTransport(
 	selectedTransport sessionproto.TransportMode,
 	supportedTransports []sessionproto.TransportMode,
 ) ([]byte, error) {
+	return BuildServerHelloWithTcpFlavor(
+		muSupported,
+		errorText,
+		controlHeartbeatSupported,
+		selectedTransport,
+		supportedTransports,
+		nil,
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED,
+	)
+}
+
+func BuildServerHelloWithTcpFlavor(
+	muSupported bool,
+	errorText string,
+	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	supportedTcpFlavors []sessionproto.TcpTransportFlavor,
+	selectedTcpFlavor sessionproto.TcpTransportFlavor,
+) ([]byte, error) {
 	return sessionproto.MarshalServerHello(&sessionproto.ServerHello{
 		Version:                   ProtocolVersion,
 		MuSupported:               muSupported,
@@ -86,5 +136,7 @@ func BuildServerHelloWithTransport(
 		SupportedTransports: sessionproto.NormalizeSupportedTransports(
 			supportedTransports,
 		),
+		SupportedTcpFlavors: sessionproto.NormalizeSupportedTcpFlavors(supportedTcpFlavors),
+		SelectedTcpFlavor:   selectedTcpFlavor,
 	})
 }

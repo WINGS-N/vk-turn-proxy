@@ -74,10 +74,11 @@ func NewKCPOverDTLS(dtlsConn net.Conn, isServer bool) (*kcp.UDPSession, error) {
 		}
 	}
 
-	session.SetNoDelay(1, 20, 2, 1)
-	session.SetWindowSize(256, 256)
-	session.SetMtu(1200)
+	session.SetNoDelay(1, 10, 2, 1)
+	session.SetWindowSize(1024, 1024)
+	session.SetMtu(1400)
 	session.SetACKNoDelay(true)
+	session.SetWriteDelay(false)
 
 	return session, nil
 }
