@@ -9,6 +9,7 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -119,6 +120,102 @@ type UDPPacket struct {
 
 var packetPool = sync.Pool{
 	New: func() any { return &UDPPacket{Data: make([]byte, 2048)} },
+}
+
+type throughputStats struct {
+	tx atomic.Uint64
+	rx atomic.Uint64
+}
+
+func (s *throughputStats) addTx(n int) {
+	if n > 0 {
+		s.tx.Add(uint64(n))
+	}
+}
+
+func (s *throughputStats) addRx(n int) {
+	if n > 0 {
+		s.rx.Add(uint64(n))
+	}
+}
+
+func (s *throughputStats) logEvery(ctx context.Context, label, txName, rxName string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	var prevTx, prevRx uint64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tx := s.tx.Load()
+			rx := s.rx.Load()
+			deltaTx := tx - prevTx
+			deltaRx := rx - prevRx
+			prevTx = tx
+			prevRx = rx
+
+			if deltaTx == 0 && deltaRx == 0 {
+				continue
+			}
+
+			log.Printf(
+				"%s throughput: %s=%s %s=%s total_%s=%s total_%s=%s",
+				label,
+				txName,
+				formatBitsPerSecond(deltaTx, 5*time.Second),
+				rxName,
+				formatBitsPerSecond(deltaRx, 5*time.Second),
+				txName,
+				formatByteCount(tx),
+				rxName,
+				formatByteCount(rx),
+			)
+		}
+	}
+}
+
+func formatBitsPerSecond(bytes uint64, interval time.Duration) string {
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	bps := float64(bytes*8) / interval.Seconds()
+	if bps >= 1_000_000 {
+		return fmt.Sprintf("%.2f Mbit/s", bps/1_000_000)
+	}
+	if bps >= 1_000 {
+		return fmt.Sprintf("%.1f kbit/s", bps/1_000)
+	}
+	return fmt.Sprintf("%.0f bit/s", bps)
+}
+
+func formatByteCount(bytes uint64) string {
+	if bytes >= 1024*1024 {
+		return fmt.Sprintf("%.2f MiB", float64(bytes)/(1024*1024))
+	}
+	if bytes >= 1024 {
+		return fmt.Sprintf("%.1f KiB", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%d B", bytes)
+}
+
+type countingConn struct {
+	net.Conn
+	stats *throughputStats
+}
+
+func (c *countingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.stats.addRx(n)
+	return n, err
+}
+
+func (c *countingConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	c.stats.addTx(n)
+	return n, err
 }
 
 func newDirectNet() transport.Net {
@@ -1754,6 +1851,9 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	turnctx, turncancel := context.WithCancel(ctx)
+	stats := &throughputStats{}
+	go stats.logEvery(turnctx, fmt.Sprintf("[STREAM %d] TURN", streamID), "to-turn", "from-turn")
+
 	context.AfterFunc(turnctx, func() {
 		if err := relayConn.SetDeadline(time.Now()); err != nil {
 			log.Printf("Failed to set relay deadline: %s", err)
@@ -1779,7 +1879,8 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 
 			internalPipeAddr.Store(addr1)
 
-			_, err1 = relayConn.WriteTo(buf[:n], peer)
+			written, err1 := relayConn.WriteTo(buf[:n], peer)
+			stats.addTx(written)
 			if err1 != nil {
 				return
 			}
@@ -1801,6 +1902,7 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 			}
 
 			if addr, ok := addr1.(net.Addr); ok {
+				stats.addRx(n)
 				if _, err := conn2.WriteTo(buf[:n], addr); err != nil {
 					return
 				}
@@ -1937,6 +2039,7 @@ func main() {
 	udp := flag.Bool("udp", false, "connect to TURN with UDP")
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
 	vlessMode := flag.Bool("vless", false, "VLESS mode: forward TCP connections (for VLESS) instead of UDP packets")
+	vlessBond := flag.Bool("vless-bond", false, "bond one VLESS TCP connection across all active smux sessions")
 	debugFlag := flag.Bool("debug", false, "enable debug logging")
 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip auto captcha solving, use manual mode immediately")
 	flag.Parse()
@@ -1996,7 +2099,7 @@ func main() {
 	}
 
 	if *vlessMode {
-		runVLESSMode(ctx, params, peer, *listen, *n)
+		runVLESSMode(ctx, params, peer, *listen, *n, *vlessBond)
 		return
 	}
 
@@ -2097,22 +2200,35 @@ func main() {
 }
 
 // sessionPool manages a pool of smux sessions for round-robin TCP distribution.
+type pooledSession struct {
+	id          int
+	sess        *smux.Session
+	active      atomic.Int32
+	opened      atomic.Uint64
+	closed      atomic.Uint64
+	toSession   atomic.Uint64
+	fromSession atomic.Uint64
+}
+
 type sessionPool struct {
-	mu       sync.RWMutex
-	sessions []*smux.Session
-	counter  atomic.Uint64
+	mu          sync.RWMutex
+	sessions    []*pooledSession
+	counter     atomic.Uint64
+	connCounter atomic.Uint64
 }
 
-func (p *sessionPool) add(s *smux.Session) {
+func (p *sessionPool) add(id int, s *smux.Session) *pooledSession {
+	ps := &pooledSession{id: id, sess: s}
 	p.mu.Lock()
-	p.sessions = append(p.sessions, s)
+	p.sessions = append(p.sessions, ps)
 	p.mu.Unlock()
+	return ps
 }
 
-func (p *sessionPool) remove(s *smux.Session) {
+func (p *sessionPool) remove(ps *pooledSession) {
 	p.mu.Lock()
 	for i, sess := range p.sessions {
-		if sess == s {
+		if sess == ps {
 			p.sessions = append(p.sessions[:i], p.sessions[i+1:]...)
 			break
 		}
@@ -2120,15 +2236,31 @@ func (p *sessionPool) remove(s *smux.Session) {
 	p.mu.Unlock()
 }
 
-func (p *sessionPool) pick() *smux.Session {
+func (p *sessionPool) pick() *pooledSession {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	n := len(p.sessions)
 	if n == 0 {
 		return nil
 	}
-	idx := p.counter.Add(1) % uint64(n)
+	idx := (p.counter.Add(1) - 1) % uint64(n)
 	return p.sessions[idx]
+}
+
+func (p *sessionPool) nextConnID() uint64 {
+	return p.connCounter.Add(1)
+}
+
+func (p *sessionPool) snapshot() []*pooledSession {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make([]*pooledSession, 0, len(p.sessions))
+	for _, ps := range p.sessions {
+		if !ps.sess.IsClosed() {
+			out = append(out, ps)
+		}
+	}
+	return out
 }
 
 func (p *sessionPool) count() int {
@@ -2137,8 +2269,313 @@ func (p *sessionPool) count() int {
 	return len(p.sessions)
 }
 
+const (
+	bondVersion = 1
+	bondMagic   = "VLB1"
+
+	bondFrameData byte = 1
+	bondFrameFIN  byte = 2
+
+	bondMaxChunk = 16 * 1024
+)
+
+type bondFrame struct {
+	typ  byte
+	seq  uint64
+	data []byte
+}
+
+type bondClientLane struct {
+	ps     *pooledSession
+	stream *smux.Stream
+	mu     sync.Mutex
+	dead   atomic.Bool
+}
+
+func writeBondHello(w io.Writer, connID uint64, laneIndex, laneCount uint16) error {
+	var hdr [17]byte
+	copy(hdr[0:4], bondMagic)
+	hdr[4] = bondVersion
+	binary.BigEndian.PutUint64(hdr[5:13], connID)
+	binary.BigEndian.PutUint16(hdr[13:15], laneIndex)
+	binary.BigEndian.PutUint16(hdr[15:17], laneCount)
+	_, err := w.Write(hdr[:])
+	return err
+}
+
+func writeBondFrame(w io.Writer, typ byte, seq uint64, data []byte) error {
+	var hdr [13]byte
+	hdr[0] = typ
+	binary.BigEndian.PutUint64(hdr[1:9], seq)
+	binary.BigEndian.PutUint32(hdr[9:13], uint32(len(data)))
+	if _, err := w.Write(hdr[:]); err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	_, err := w.Write(data)
+	return err
+}
+
+func readBondFrame(r io.Reader) (bondFrame, error) {
+	var hdr [13]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return bondFrame{}, err
+	}
+	size := binary.BigEndian.Uint32(hdr[9:13])
+	if size > 4*1024*1024 {
+		return bondFrame{}, fmt.Errorf("bond frame too large: %d", size)
+	}
+	f := bondFrame{
+		typ: hdr[0],
+		seq: binary.BigEndian.Uint64(hdr[1:9]),
+	}
+	if size > 0 {
+		f.data = make([]byte, size)
+		if _, err := io.ReadFull(r, f.data); err != nil {
+			return bondFrame{}, err
+		}
+	}
+	return f, nil
+}
+
+func closeWrite(conn net.Conn) {
+	type closeWriter interface {
+		CloseWrite() error
+	}
+	if cw, ok := conn.(closeWriter); ok {
+		if err := cw.CloseWrite(); err != nil && isDebug {
+			log.Printf("CloseWrite failed: %v", err)
+		}
+	}
+}
+
+func handleBondedTCP(ctx context.Context, tcpConn net.Conn, connID uint64, candidates []*pooledSession) {
+	defer func() { _ = tcpConn.Close() }()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	lanes := make([]*bondClientLane, 0, len(candidates))
+	laneIDs := make([]string, 0, len(candidates))
+	for i, ps := range candidates {
+		if ps.sess.IsClosed() {
+			continue
+		}
+		stream, err := ps.sess.OpenStream()
+		if err != nil {
+			log.Printf("[bond %d] session %d open stream error: %s", connID, ps.id, err)
+			continue
+		}
+		if err := writeBondHello(stream, connID, uint16(i), uint16(len(candidates))); err != nil {
+			log.Printf("[bond %d] session %d hello error: %s", connID, ps.id, err)
+			_ = stream.Close()
+			continue
+		}
+		ps.opened.Add(1)
+		ps.active.Add(1)
+		lanes = append(lanes, &bondClientLane{ps: ps, stream: stream})
+		laneIDs = append(laneIDs, strconv.Itoa(ps.id))
+	}
+
+	if len(lanes) == 0 {
+		log.Printf("[bond %d] no usable lanes, rejecting TCP from %s", connID, tcpConn.RemoteAddr())
+		return
+	}
+	context.AfterFunc(ctx, func() {
+		now := time.Now()
+		if err := tcpConn.SetDeadline(now); err != nil && isDebug {
+			log.Printf("[bond %d] local TCP deadline error: %v", connID, err)
+		}
+		for _, lane := range lanes {
+			if err := lane.stream.SetDeadline(now); err != nil && isDebug {
+				log.Printf("[bond %d] session %d stream deadline error: %v", connID, lane.ps.id, err)
+			}
+		}
+	})
+
+	log.Printf("[bond %d] TCP accept from=%s lanes=%d [%s]", connID, tcpConn.RemoteAddr(), len(lanes), strings.Join(laneIDs, ","))
+	defer func() {
+		for _, lane := range lanes {
+			_ = lane.stream.Close()
+			active := lane.ps.active.Add(-1)
+			closed := lane.ps.closed.Add(1)
+			log.Printf("[bond %d] lane session %d close active=%d closed=%d totals: to-session=%s from-session=%s",
+				connID, lane.ps.id, active, closed,
+				formatByteCount(lane.ps.toSession.Load()), formatByteCount(lane.ps.fromSession.Load()))
+		}
+	}()
+
+	recvCh := make(chan bondFrame, 1024)
+	var readWG sync.WaitGroup
+	for _, lane := range lanes {
+		readWG.Add(1)
+		go func(l *bondClientLane) {
+			defer readWG.Done()
+			for {
+				f, err := readBondFrame(l.stream)
+				if err != nil {
+					l.dead.Store(true)
+					select {
+					case <-ctx.Done():
+					default:
+						if err != io.EOF {
+							log.Printf("[bond %d] session %d read frame error: %v", connID, l.ps.id, err)
+						}
+					}
+					return
+				}
+				if f.typ == bondFrameData {
+					l.ps.fromSession.Add(uint64(len(f.data)))
+				}
+				select {
+				case recvCh <- f:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(lane)
+	}
+	go func() {
+		readWG.Wait()
+		close(recvCh)
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		copyTCPToBond(ctx, connID, tcpConn, lanes)
+	}()
+	go func() {
+		defer wg.Done()
+		copyBondToTCP(ctx, connID, tcpConn, recvCh)
+		cancel()
+	}()
+	wg.Wait()
+}
+
+func copyTCPToBond(ctx context.Context, connID uint64, tcpConn net.Conn, lanes []*bondClientLane) {
+	buf := make([]byte, bondMaxChunk)
+	var seq uint64
+	var laneIdx uint64
+	for {
+		n, err := tcpConn.Read(buf)
+		if n > 0 {
+			data := make([]byte, n)
+			copy(data, buf[:n])
+			lane, writeErr := writeBondFrameToNextLane(ctx, lanes, bondFrameData, seq, data, &laneIdx)
+			if writeErr != nil {
+				log.Printf("[bond %d] write data error: %v", connID, writeErr)
+				return
+			}
+			lane.ps.toSession.Add(uint64(n))
+			seq++
+		}
+		if err != nil {
+			if isDebug && err != io.EOF {
+				log.Printf("[bond %d] local TCP read finished with error: %v", connID, err)
+			}
+			for _, lane := range lanes {
+				if lane.dead.Load() {
+					continue
+				}
+				lane.mu.Lock()
+				writeErr := writeBondFrame(lane.stream, bondFrameFIN, seq, nil)
+				lane.mu.Unlock()
+				if writeErr != nil && ctx.Err() == nil {
+					log.Printf("[bond %d] session %d write FIN error: %v", connID, lane.ps.id, writeErr)
+				}
+			}
+			log.Printf("[bond %d] upload finished chunks=%d", connID, seq)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+	}
+}
+
+func writeBondFrameToNextLane(ctx context.Context, lanes []*bondClientLane, typ byte, seq uint64, data []byte, laneIdx *uint64) (*bondClientLane, error) {
+	for attempts := 0; attempts < len(lanes); attempts++ {
+		idx := *laneIdx % uint64(len(lanes))
+		*laneIdx++
+		lane := lanes[idx]
+		if lane.dead.Load() {
+			continue
+		}
+		lane.mu.Lock()
+		err := writeBondFrame(lane.stream, typ, seq, data)
+		lane.mu.Unlock()
+		if err == nil {
+			return lane, nil
+		}
+		lane.dead.Store(true)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return nil, fmt.Errorf("no live bond lanes")
+}
+
+func copyBondToTCP(ctx context.Context, connID uint64, tcpConn net.Conn, recvCh <-chan bondFrame) {
+	pending := make(map[uint64][]byte)
+	var expect uint64
+	var finSeq *uint64
+
+	for {
+		if finSeq != nil && expect == *finSeq {
+			closeWrite(tcpConn)
+			log.Printf("[bond %d] download finished chunks=%d", connID, expect)
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case f, ok := <-recvCh:
+			if !ok {
+				return
+			}
+			switch f.typ {
+			case bondFrameData:
+				pending[f.seq] = f.data
+			case bondFrameFIN:
+				v := f.seq
+				if finSeq == nil || v < *finSeq {
+					finSeq = &v
+				}
+			default:
+				log.Printf("[bond %d] unknown frame type %d", connID, f.typ)
+				return
+			}
+
+			for {
+				data, ok := pending[expect]
+				if !ok {
+					break
+				}
+				delete(pending, expect)
+				if len(data) > 0 {
+					if _, err := tcpConn.Write(data); err != nil {
+						log.Printf("[bond %d] local TCP write error: %v", connID, err)
+						return
+					}
+				}
+				expect++
+			}
+		}
+	}
+}
+
 // runVLESSMode implements TCP forwarding with round-robin across N TURN sessions.
-func runVLESSMode(ctx context.Context, tp *turnParams, peer *net.UDPAddr, listenAddr string, numSessions int) {
+func runVLESSMode(ctx context.Context, tp *turnParams, peer *net.UDPAddr, listenAddr string, numSessions int, bond bool) {
 	pool := &sessionPool{}
 
 	// Start N session maintainers with staggered startup
@@ -2182,7 +2619,11 @@ func runVLESSMode(ctx context.Context, tp *turnParams, peer *net.UDPAddr, listen
 	}
 
 	context.AfterFunc(ctx, func() { _ = wrappedListener.Close() })
-	log.Printf("VLESS mode: listening on %s (round-robin across %d sessions)", listenAddr, numSessions)
+	if bond {
+		log.Printf("VLESS bond mode: listening on %s (striping each TCP connection across active sessions)", listenAddr)
+	} else {
+		log.Printf("VLESS mode: listening on %s (round-robin across %d sessions)", listenAddr, numSessions)
+	}
 
 	var wgConn sync.WaitGroup
 	for {
@@ -2199,25 +2640,60 @@ func runVLESSMode(ctx context.Context, tp *turnParams, peer *net.UDPAddr, listen
 			continue
 		}
 
-		sess := pool.pick()
-		if sess == nil || sess.IsClosed() {
+		if bond {
+			connID := (uint64(time.Now().UnixNano()) << 16) ^ pool.nextConnID()
+			lanes := pool.snapshot()
+			if len(lanes) == 0 {
+				log.Printf("No active sessions, rejecting connection")
+				_ = tcpConn.Close()
+				continue
+			}
+
+			wgConn.Add(1)
+			go func(tc net.Conn, connID uint64, lanes []*pooledSession) {
+				defer wgConn.Done()
+				handleBondedTCP(ctx, tc, connID, lanes)
+			}(tcpConn, connID, lanes)
+			continue
+		}
+
+		ps := pool.pick()
+		if ps == nil || ps.sess.IsClosed() {
 			log.Printf("No active sessions, rejecting connection")
 			_ = tcpConn.Close()
 			continue
 		}
 
+		connID := pool.nextConnID()
+		opened := ps.opened.Add(1)
+		active := ps.active.Add(1)
+		log.Printf("[session %d] TCP accept #%d from=%s active=%d opened=%d pool=%d",
+			ps.id, connID, tcpConn.RemoteAddr(), active, opened, pool.count())
+
 		wgConn.Add(1)
-		go func(tc net.Conn, s *smux.Session) {
+		go func(tc net.Conn, ps *pooledSession, connID uint64) {
 			defer wgConn.Done()
 			defer func() { _ = tc.Close() }()
-			stream, err := s.OpenStream()
+			defer func() {
+				active := ps.active.Add(-1)
+				closed := ps.closed.Add(1)
+				log.Printf("[session %d] TCP close #%d active=%d closed=%d totals: to-session=%s from-session=%s",
+					ps.id, connID, active, closed,
+					formatByteCount(ps.toSession.Load()), formatByteCount(ps.fromSession.Load()))
+			}()
+
+			stream, err := ps.sess.OpenStream()
 			if err != nil {
-				log.Printf("smux open stream error: %s", err)
+				log.Printf("[session %d] smux open stream error for TCP #%d: %s", ps.id, connID, err)
 				return
 			}
 			defer func() { _ = stream.Close() }()
-			pipe(ctx, tc, stream)
-		}(tcpConn, sess)
+			fromSession, toSession := pipe(ctx, tc, stream)
+			ps.fromSession.Add(uint64(fromSession))
+			ps.toSession.Add(uint64(toSession))
+			log.Printf("[session %d] TCP done #%d local<-session=%s local->session=%s",
+				ps.id, connID, formatByteCount(uint64(fromSession)), formatByteCount(uint64(toSession)))
+		}(tcpConn, ps, connID)
 	}
 }
 
@@ -2241,20 +2717,20 @@ func maintainVLESSSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr
 			continue
 		}
 
-		pool.add(smuxSess)
+		ps := pool.add(id, smuxSess)
 		log.Printf("[session %d] connected (active: %d)", id, pool.count())
 
 		for !smuxSess.IsClosed() {
 			select {
 			case <-ctx.Done():
-				pool.remove(smuxSess)
+				pool.remove(ps)
 				cleanup()
 				return
 			case <-time.After(1 * time.Second):
 			}
 		}
 
-		pool.remove(smuxSess)
+		pool.remove(ps)
 		cleanup()
 		log.Printf("[session %d] disconnected (active: %d), reconnecting...", id, pool.count())
 
@@ -2384,7 +2860,12 @@ func createSmuxSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr, i
 	log.Printf("DTLS connection established")
 
 	// 5. Create KCP session over DTLS
-	kcpSess, err := tcputil.NewKCPOverDTLS(dtlsConn, false)
+	statsCtx, statsCancel := context.WithCancel(ctx)
+	cleanupFns = append(cleanupFns, statsCancel)
+	stats := &throughputStats{}
+	go stats.logEvery(statsCtx, fmt.Sprintf("[session %d] VLESS", id), "to-turn", "from-turn")
+
+	kcpSess, err := tcputil.NewKCPOverDTLS(&countingConn{Conn: dtlsConn, stats: stats}, false)
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("KCP session: %w", err)
@@ -2425,7 +2906,8 @@ func (r *relayPacketConn) SetReadDeadline(t time.Time) error  { return r.relay.S
 func (r *relayPacketConn) SetWriteDeadline(t time.Time) error { return r.relay.SetWriteDeadline(t) }
 
 // pipe copies data bidirectionally between two connections.
-func pipe(ctx context.Context, c1, c2 net.Conn) {
+// It returns bytes copied as c1<-c2 and c2<-c1.
+func pipe(ctx context.Context, c1, c2 net.Conn) (int64, int64) {
 	ctx2, cancel := context.WithCancel(ctx)
 	context.AfterFunc(ctx2, func() {
 		if err := c1.SetDeadline(time.Now()); err != nil {
@@ -2437,11 +2919,15 @@ func pipe(ctx context.Context, c1, c2 net.Conn) {
 	})
 
 	var wg sync.WaitGroup
+	var c1FromC2 int64
+	var c2FromC1 int64
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		defer cancel()
-		if _, err := io.Copy(c1, c2); err != nil {
+		n, err := io.Copy(c1, c2)
+		c1FromC2 = n
+		if err != nil {
 			if isDebug {
 				log.Printf("pipe: c1<-c2 copy error: %v", err)
 			}
@@ -2450,7 +2936,9 @@ func pipe(ctx context.Context, c1, c2 net.Conn) {
 	go func() {
 		defer wg.Done()
 		defer cancel()
-		if _, err := io.Copy(c2, c1); err != nil {
+		n, err := io.Copy(c2, c1)
+		c2FromC1 = n
+		if err != nil {
 			if isDebug {
 				log.Printf("pipe: c2<-c1 copy error: %v", err)
 			}
@@ -2467,4 +2955,5 @@ func pipe(ctx context.Context, c1, c2 net.Conn) {
 			log.Printf("pipe: failed to reset deadline c2: %v", err)
 		}
 	}
+	return c1FromC2, c2FromC1
 }
