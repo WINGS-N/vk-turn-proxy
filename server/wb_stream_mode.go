@@ -12,6 +12,7 @@ import (
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
+	"github.com/cacggghp/vk-turn-proxy/internal/namegen"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	"github.com/cacggghp/vk-turn-proxy/wbstream"
 )
@@ -24,7 +25,8 @@ import (
 // e2e_secret from the protobuf payload and asks the pool to join that room.
 // No pre-configuration required.
 type wbStreamSessionPool struct {
-	connectAddr string
+	connectAddr       string
+	serverDisplayName string
 
 	mu      sync.Mutex
 	rooms   map[string]*wbStreamSessionEntry
@@ -52,15 +54,21 @@ func newWbStreamSessionPool(connectAddr string) *wbStreamSessionPool {
 	}
 }
 
+// SetServerDisplayName configures a fixed name the pool uses when joining a
+// LiveKit room as the server-side participant. Empty value falls back to a
+// random VK-style name generated per room (see joinLocked).
+func (p *wbStreamSessionPool) SetServerDisplayName(name string) {
+	p.serverDisplayName = name
+}
+
 // PreJoin attaches the pool to an explicit room (for ops where the operator
 // configures `-wb-stream-room-id` up-front instead of letting clients deliver
 // it through CLIENT_HELLO_TYPE_ROOM_EXCHANGE).
-func (p *wbStreamSessionPool) PreJoin(roomID, displayName, e2eSecretB64 string) error {
+func (p *wbStreamSessionPool) PreJoin(roomID, e2eSecretB64 string) error {
 	exchange := &sessionproto.RoomDataExchange{
-		Provider:    sessionproto.RoomProvider_ROOM_PROVIDER_WB_STREAM,
-		RoomId:      roomID,
-		DisplayName: displayName,
-		E2EEnabled:  e2eSecretB64 != "",
+		Provider:   sessionproto.RoomProvider_ROOM_PROVIDER_WB_STREAM,
+		RoomId:     roomID,
+		E2EEnabled: e2eSecretB64 != "",
 	}
 	if e2eSecretB64 != "" {
 		decoded, err := base64.StdEncoding.DecodeString(e2eSecretB64)
@@ -103,9 +111,9 @@ func (p *wbStreamSessionPool) HandleExchange(exchange *sessionproto.RoomDataExch
 
 func (p *wbStreamSessionPool) joinLocked(exchange *sessionproto.RoomDataExchange) error {
 	roomID := exchange.GetRoomId()
-	displayName := exchange.GetDisplayName()
+	displayName := p.serverDisplayName
 	if displayName == "" {
-		displayName = "vk-turn-proxy-server"
+		displayName = namegen.Generate()
 	}
 
 	var e2eKey []byte

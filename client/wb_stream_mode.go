@@ -197,21 +197,25 @@ func runRoomExchangeMode(opts clientOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	log.Printf("room-exchange: resolving peer %q", opts.peerAddr)
 	addr, err := net.ResolveUDPAddr("udp", opts.peerAddr)
 	if err != nil {
 		return fmt.Errorf("resolve peer: %w", err)
 	}
+	log.Printf("room-exchange: peer resolved to %s", addr)
 	udp, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		return fmt.Errorf("listen udp: %w", err)
 	}
 	defer func() { _ = udp.Close() }()
+	log.Printf("room-exchange: local socket %s, starting DTLS handshake", udp.LocalAddr())
 
 	dtlsConn, err := dialRoomExchangeDTLS(ctx, udp, addr)
 	if err != nil {
 		return fmt.Errorf("dtls handshake: %w", err)
 	}
 	defer func() { _ = dtlsConn.Close() }()
+	log.Printf("room-exchange: DTLS handshake complete with %s", addr)
 
 	exchange := &sessionproto.RoomDataExchange{
 		Provider:    sessionproto.RoomProvider_ROOM_PROVIDER_WB_STREAM,
@@ -231,11 +235,18 @@ func runRoomExchangeMode(opts clientOptions) error {
 	if err != nil {
 		return fmt.Errorf("build hello: %w", err)
 	}
-	if _, err := dtlsConn.Write(payload); err != nil {
+	written, err := dtlsConn.Write(payload)
+	if err != nil {
 		return fmt.Errorf("write hello: %w", err)
 	}
-	log.Printf("room-exchange delivered to %s (room=%s, name=%q, e2e=%t)",
-		opts.peerAddr, opts.roomExchangeRoomID, opts.roomExchangeDisplayName, opts.roomExchangeE2EEnabled)
+	log.Printf("room-exchange: wrote %d/%d bytes to %s (room=%s, name=%q, e2e=%t)",
+		written, len(payload), opts.peerAddr,
+		opts.roomExchangeRoomID, opts.roomExchangeDisplayName, opts.roomExchangeE2EEnabled)
+	// Hold the DTLS session open briefly so the server has time to consume the
+	// payload before we tear down the connection. Without this, fast process
+	// exit can race with the server's DTLS read and drop the application data.
+	time.Sleep(500 * time.Millisecond)
+	log.Printf("room-exchange: closing connection")
 	return nil
 }
 

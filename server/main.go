@@ -925,10 +925,11 @@ func main() {
 	}
 
 	wbStreamPool := newWbStreamSessionPool(backends.udpConnect)
+	wbStreamPool.SetServerDisplayName(opts.wbStreamDisplayName)
 	defer wbStreamPool.Close()
 	SetRoomExchangeSink(wbStreamPool.HandleExchange)
 	if opts.wbStreamRoomID != "" {
-		if err := wbStreamPool.PreJoin(opts.wbStreamRoomID, opts.wbStreamDisplayName, opts.wbStreamE2ESecret); err != nil {
+		if err := wbStreamPool.PreJoin(opts.wbStreamRoomID, opts.wbStreamE2ESecret); err != nil {
 			log.Fatalf("wb-stream pre-join: %v", err)
 		}
 	}
