@@ -106,6 +106,14 @@ func ValidateHelloShape(hello *ClientHello, expectedVersion uint32) error {
 			return fmt.Errorf("stream ID out of range: %d", hello.GetStreamId())
 		}
 		return nil
+	case ClientHelloType_CLIENT_HELLO_TYPE_ROOM_EXCHANGE:
+		if len(hello.GetSessionId()) != 0 || hello.GetStreamId() != 0 {
+			return fmt.Errorf("room-exchange hello must not contain session data")
+		}
+		if hello.GetRoomExchange() == nil {
+			return fmt.Errorf("room-exchange hello is missing payload")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported client hello type: %s", hello.GetType())
 	}
