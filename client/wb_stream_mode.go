@@ -87,6 +87,7 @@ func runWbStreamClient(opts clientOptions) error {
 	emitProxyStatus("ok")
 
 	go clientBridge.pumpFromLocal(ctx)
+	go clientBridge.emitLivenessHeartbeats(ctx)
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
@@ -170,6 +171,31 @@ func (c *wbStreamClientBridge) handleFrame(frame *wbstream.MuxFrame, _ lksdk.Dat
 	}
 	if _, err := c.udp.WriteToUDP(frame.Payload, addr); err != nil {
 		log.Printf("wb-stream client udp write: %v", err)
+	}
+}
+
+// emitLivenessHeartbeats periodically prints PROXY_STATUS:dtls_alive while the
+// LiveKit room is exchanging frames, so ProxyTunnelService.ensureNonXrayTunnelLiveness
+// keeps lastProxyDtlsActivityAtElapsedMs fresh and does not schedule a reconnect
+// while LiveKit is mid-recovery. We gate emission on bridge counters: if neither
+// inbound nor outbound traffic moved between ticks, we stay silent so that a real
+// extended outage still trips the watchdog after VK_TURN_DTLS_ACTIVITY_FRESH_MS.
+func (c *wbStreamClientBridge) emitLivenessHeartbeats(ctx context.Context) {
+	const tickInterval = 30 * time.Second
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+	var prevTotal uint64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			total := c.inboundCount.Load() + c.outboundCount.Load()
+			if total > prevTotal {
+				prevTotal = total
+				emitProxyStatus("dtls_alive")
+			}
+		}
 	}
 }
 
