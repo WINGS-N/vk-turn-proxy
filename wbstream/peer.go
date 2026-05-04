@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
+
+	"github.com/cacggghp/vk-turn-proxy/internal/topicpool"
 )
 
 // PeerConfig configures a wbstream peer.
@@ -16,7 +18,7 @@ type PeerConfig struct {
 	WSSURL      string
 	DisplayName string
 	RoomID      string // empty/"any" — create a new room
-	E2EKey      []byte // optional 32-byte chacha20-poly1305 key
+	E2EKey      []byte // optional 32-byte AES-256 key
 	SendQueue   int    // capacity of the outbound send buffer (default 4096)
 }
 
@@ -145,7 +147,7 @@ func (p *Peer) processSendQueue() {
 			}
 			if err := p.room.LocalParticipant.PublishDataPacket(
 				lksdk.UserData(payload),
-				lksdk.WithDataPublishTopic("vk-turn-proxy/wbstream"),
+				lksdk.WithDataPublishTopic(topicpool.Pick()),
 				lksdk.WithDataPublishReliable(true),
 			); err != nil {
 				log.Printf("wbstream publish error: %v", err)
