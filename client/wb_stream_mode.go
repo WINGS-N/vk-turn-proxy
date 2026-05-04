@@ -21,6 +21,7 @@ import (
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
+	"github.com/cacggghp/vk-turn-proxy/internal/namegen"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	sessionmuv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/mu/v1"
 	"github.com/cacggghp/vk-turn-proxy/wbstream"
@@ -52,8 +53,12 @@ func runWbStreamClient(opts clientOptions) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	displayName := opts.wbStreamDisplayName
+	if displayName == "" {
+		displayName = namegen.Generate()
+	}
 	peer, err := wbstream.New(wbstream.PeerConfig{
-		DisplayName: opts.wbStreamDisplayName,
+		DisplayName: displayName,
 		RoomID:      opts.wbStreamRoomID,
 		E2EKey:      e2eKey,
 	})
