@@ -1,8 +1,6 @@
 package wbstream
 
 import (
-	"encoding/binary"
-	"errors"
 	"fmt"
 )
 
@@ -13,10 +11,12 @@ const SessionIDLen = 16
 
 const (
 	// muxFrameVersion is bumped if the wire format changes incompatibly.
-	muxFrameVersion uint8 = 1
+	muxFrameVersion uint8 = 2
 
-	// MuxHeaderSize covers version + session id + stream id + payload length.
-	MuxHeaderSize = 1 + SessionIDLen + 1 + 4
+	// MuxHeaderSize covers version + session id + stream id.
+	// Payload length is implicit from len(raw)-MuxHeaderSize because LiveKit
+	// DataPackets are length-delimited at the SCTP layer.
+	MuxHeaderSize = 1 + SessionIDLen + 1
 )
 
 // MuxFrame describes one logical packet exchanged between two wbstream peers.
@@ -32,7 +32,6 @@ func (f *MuxFrame) Encode() []byte {
 	out[0] = muxFrameVersion
 	copy(out[1:1+SessionIDLen], f.SessionID[:])
 	out[1+SessionIDLen] = f.StreamID
-	binary.BigEndian.PutUint32(out[2+SessionIDLen:], uint32(len(f.Payload)))
 	copy(out[MuxHeaderSize:], f.Payload)
 	return out
 }
@@ -47,10 +46,6 @@ func DecodeMuxFrame(raw []byte) (*MuxFrame, error) {
 	}
 	frame := &MuxFrame{StreamID: raw[1+SessionIDLen]}
 	copy(frame.SessionID[:], raw[1:1+SessionIDLen])
-	payloadLen := binary.BigEndian.Uint32(raw[2+SessionIDLen:])
-	if uint32(len(raw)-MuxHeaderSize) < payloadLen {
-		return nil, errors.New("mux frame payload truncated")
-	}
-	frame.Payload = append([]byte(nil), raw[MuxHeaderSize:MuxHeaderSize+payloadLen]...)
+	frame.Payload = append([]byte(nil), raw[MuxHeaderSize:]...)
 	return frame, nil
 }
