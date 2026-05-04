@@ -1,37 +1,39 @@
 package wbstream
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"errors"
 	"fmt"
-
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// E2E is an optional chacha20-poly1305 wrapper applied on top of LiveKit
-// DataPacket payloads. The same key must be configured on both peers (typically
-// shipped through the wingsv:// import link as a base64 secret).
+// E2EKeySize is the expected size of the E2E key (AES-256).
+const E2EKeySize = 32
+
+// E2E is an optional AES-256-GCM wrapper applied on top of LiveKit DataPacket
+// payloads. The same key must be configured on both peers (typically shipped
+// through the wingsv:// import link as a base64 secret).
 type E2E struct {
-	aead interface {
-		NonceSize() int
-		Overhead() int
-		Seal(dst, nonce, plaintext, additionalData []byte) []byte
-		Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error)
-	}
+	aead cipher.AEAD
 }
 
-// NewE2E returns an E2E wrapper. key must be 32 bytes (chacha20-poly1305 key size).
+// NewE2E returns an E2E wrapper. key must be 32 bytes (AES-256 key size).
 // Pass nil/empty key to obtain a no-op wrapper.
 func NewE2E(key []byte) (*E2E, error) {
 	if len(key) == 0 {
 		return nil, nil
 	}
-	if len(key) != chacha20poly1305.KeySize {
-		return nil, fmt.Errorf("e2e key must be %d bytes, got %d", chacha20poly1305.KeySize, len(key))
+	if len(key) != E2EKeySize {
+		return nil, fmt.Errorf("e2e key must be %d bytes, got %d", E2EKeySize, len(key))
 	}
-	aead, err := chacha20poly1305.New(key)
+	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("chacha20poly1305: %w", err)
+		return nil, fmt.Errorf("aes: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("aes-gcm: %w", err)
 	}
 	return &E2E{aead: aead}, nil
 }
@@ -63,7 +65,7 @@ func (e *E2E) Open(ciphertext []byte) ([]byte, error) {
 	body := ciphertext[e.aead.NonceSize():]
 	plaintext, err := e.aead.Open(nil, nonce, body, nil)
 	if err != nil {
-		return nil, fmt.Errorf("chacha20poly1305 open: %w", err)
+		return nil, fmt.Errorf("aes-gcm open: %w", err)
 	}
 	return plaintext, nil
 }
