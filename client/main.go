@@ -1775,7 +1775,7 @@ func main() { //nolint:cyclop
 		}
 		return
 	}
-	if opts.wbStreamRoomID != "" {
+	if opts.wbStreamRoomID != "" || opts.wbStreamRoomIDs != "" {
 		if err := runWbStreamClient(opts); err != nil {
 			log.Fatalf("wb-stream client: %v", err)
 		}

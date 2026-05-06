@@ -35,12 +35,15 @@ type clientOptions struct {
 	adaptivePoolMax                int
 	adaptivePoolStreamsPerIdentity int
 
-	wbStreamRoomID      string
-	wbStreamDisplayName string
-	wbStreamE2ESecret   string
+	wbStreamRoomID             string
+	wbStreamRoomIDs            string
+	wbStreamDisplayName        string
+	wbStreamE2ESecret          string
+	wbStreamMultiIdentityCount int
 
 	roomExchangeMode        bool
 	roomExchangeRoomID      string
+	roomExchangeRoomIDs     string
 	roomExchangeDisplayName string
 	roomExchangeE2EEnabled  bool
 	roomExchangeE2ESecret   string
@@ -75,10 +78,13 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.IntVar(&opts.adaptivePoolMax, "adaptive-pool-max", 0, "maximum TURN identity pool size for mu/v1 (default: stream count)")
 	fs.IntVar(&opts.adaptivePoolStreamsPerIdentity, "adaptive-pool-streams-per-id", defaultAdaptivePoolStreamsPerIdentity, "target concurrent streams per TURN identity for mu/v1")
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", `LiveKit room ID; "any" creates a fresh one. When set, runs WB Stream tunnel mode.`)
+	fs.StringVar(&opts.wbStreamRoomIDs, "wb-stream-room-ids", "", `comma-separated LiveKit room IDs ("any" entries create fresh rooms); takes precedence over -wb-stream-room-id, opens N rooms in parallel and round-robins outbound frames`)
 	fs.StringVar(&opts.wbStreamDisplayName, "wb-stream-display-name", "", "display name for the LiveKit room when -wb-stream-room-id is set (empty = random VK-style name per session)")
 	fs.StringVar(&opts.wbStreamE2ESecret, "wb-stream-e2e-secret", "", "optional base64-encoded 32-byte AES-256 key for E2E over DataPacket")
+	fs.IntVar(&opts.wbStreamMultiIdentityCount, "wb-stream-multi-identity-count", 1, "number of LiveKit identities to join the same room with (1-16; round-robin send across identities for higher upload throughput)")
 	fs.BoolVar(&opts.roomExchangeMode, "room-exchange-mode", false, "send a single CLIENT_HELLO_TYPE_ROOM_EXCHANGE to -peer over DTLS and exit (used to deliver wb-stream room metadata via VK TURN handshake)")
 	fs.StringVar(&opts.roomExchangeRoomID, "room-exchange-room-id", "", "WB Stream room ID delivered through CLIENT_HELLO_TYPE_ROOM_EXCHANGE")
+	fs.StringVar(&opts.roomExchangeRoomIDs, "room-exchange-room-ids", "", "comma-separated WB Stream room IDs for multi-room exchange (takes precedence over -room-exchange-room-id)")
 	fs.StringVar(&opts.roomExchangeDisplayName, "room-exchange-display-name", "", "display name delivered alongside the room id in the room-exchange handshake")
 	fs.BoolVar(&opts.roomExchangeE2EEnabled, "room-exchange-e2e-enabled", false, "advertise that wb-stream traffic will be E2E-encrypted")
 	fs.StringVar(&opts.roomExchangeE2ESecret, "room-exchange-e2e-secret", "", "optional base64-encoded E2E secret to share with the server")
@@ -113,9 +119,11 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 		}
 
 		opts.wbStreamRoomID = strings.TrimSpace(opts.wbStreamRoomID)
+		opts.wbStreamRoomIDs = strings.TrimSpace(opts.wbStreamRoomIDs)
 		opts.wbStreamDisplayName = strings.TrimSpace(opts.wbStreamDisplayName)
 		opts.wbStreamE2ESecret = strings.TrimSpace(opts.wbStreamE2ESecret)
 		opts.roomExchangeRoomID = strings.TrimSpace(opts.roomExchangeRoomID)
+		opts.roomExchangeRoomIDs = strings.TrimSpace(opts.roomExchangeRoomIDs)
 		opts.roomExchangeDisplayName = strings.TrimSpace(opts.roomExchangeDisplayName)
 		opts.roomExchangeE2ESecret = strings.TrimSpace(opts.roomExchangeE2ESecret)
 
@@ -123,12 +131,12 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 			if opts.peerAddr == "" {
 				return fmt.Errorf("-peer is required for -room-exchange-mode")
 			}
-			if opts.roomExchangeRoomID == "" {
-				return fmt.Errorf("-room-exchange-room-id is required for -room-exchange-mode")
+			if opts.roomExchangeRoomID == "" && opts.roomExchangeRoomIDs == "" {
+				return fmt.Errorf("-room-exchange-room-id or -room-exchange-room-ids is required for -room-exchange-mode")
 			}
 			return nil
 		}
-		if opts.wbStreamRoomID != "" {
+		if opts.wbStreamRoomID != "" || opts.wbStreamRoomIDs != "" {
 			return nil
 		}
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -47,8 +48,8 @@ func runWbStreamClient(opts clientOptions) error {
 	}
 	if bridge != nil {
 		defer func() { _ = bridge.Close() }()
-		installProtectedNetDefaults(bridge)
 	}
+	installProtectedNetDefaults(bridge)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -57,13 +58,29 @@ func runWbStreamClient(opts clientOptions) error {
 	if displayName == "" {
 		displayName = namegen.Generate()
 	}
-	peer, err := wbstream.New(wbstream.PeerConfig{
+	identityCount := opts.wbStreamMultiIdentityCount
+	if identityCount <= 0 {
+		identityCount = 1
+	}
+	cfg := wbstream.PeerConfig{
 		DisplayName: displayName,
-		RoomID:      opts.wbStreamRoomID,
 		E2EKey:      e2eKey,
-	})
-	if err != nil {
-		return fmt.Errorf("init wbstream peer: %w", err)
+	}
+	var peer wbStreamPeerHandle
+	if opts.wbStreamRoomIDs != "" {
+		rooms := splitAndTrim(opts.wbStreamRoomIDs)
+		multiRoom, err := wbstream.NewMultiRoom(cfg, rooms)
+		if err != nil {
+			return fmt.Errorf("init wbstream multi-room peer: %w", err)
+		}
+		peer = multiRoom
+	} else {
+		cfg.RoomID = opts.wbStreamRoomID
+		multi, err := wbstream.NewMulti(cfg, identityCount)
+		if err != nil {
+			return fmt.Errorf("init wbstream peer: %w", err)
+		}
+		peer = multi
 	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", opts.listen)
@@ -82,7 +99,7 @@ func runWbStreamClient(opts clientOptions) error {
 	if err := peer.Connect(ctx); err != nil {
 		return fmt.Errorf("connect livekit: %w", err)
 	}
-	log.Printf("wb-stream client listening on %s, room=%s", opts.listen, peer.RoomID())
+	log.Printf("wb-stream client listening on %s, rooms=%v", opts.listen, peerRoomIDs(peer))
 	// Status markers consumed by ProxyTunnelService.waitForProxyWarmup. wb-stream
 	// has no TURN/DTLS phase; treat the moment the LiveKit room is connected and
 	// the local UDP listener is up as both auth_ready and dtls_ready. emitProxyStatus
@@ -103,8 +120,19 @@ func runWbStreamClient(opts clientOptions) error {
 	return peer.Close()
 }
 
+// wbStreamPeerHandle is the minimal surface the client driver needs from a
+// wbstream peer wrapper, satisfied by both *wbstream.MultiPeer (multi-identity
+// in one room) and *wbstream.MultiRoomPeer (one identity per room across N
+// rooms).
+type wbStreamPeerHandle interface {
+	Connect(ctx context.Context) error
+	SetFrameHandler(handler func(*wbstream.MuxFrame, lksdk.DataReceiveParams))
+	Send(frame *wbstream.MuxFrame) error
+	Close() error
+}
+
 type wbStreamClientBridge struct {
-	peer *wbstream.Peer
+	peer wbStreamPeerHandle
 	udp  *net.UDPConn
 
 	sessionID [wbstream.SessionIDLen]byte
@@ -118,7 +146,7 @@ type wbStreamClientBridge struct {
 	inboundCount  atomic.Uint64
 }
 
-func newWbStreamClientBridge(peer *wbstream.Peer, udp *net.UDPConn) *wbStreamClientBridge {
+func newWbStreamClientBridge(peer wbStreamPeerHandle, udp *net.UDPConn) *wbStreamClientBridge {
 	bridge := &wbStreamClientBridge{
 		peer:    peer,
 		udp:     udp,
@@ -228,8 +256,18 @@ func runRoomExchangeMode(opts clientOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	bridge, err := newProtectBridge(opts.protectSock)
+	if err != nil {
+		return fmt.Errorf("init protect bridge: %w", err)
+	}
+	if bridge != nil {
+		defer func() { _ = bridge.Close() }()
+	}
+	installProtectedNetDefaults(bridge)
+	resolver := newProtectedResolver(bridge, nil)
+
 	log.Printf("room-exchange: resolving peer %q", opts.peerAddr)
-	addr, err := net.ResolveUDPAddr("udp", opts.peerAddr)
+	addr, err := resolver.ResolveUDPAddrPreferIPv4(ctx, opts.peerAddr)
 	if err != nil {
 		return fmt.Errorf("resolve peer: %w", err)
 	}
@@ -254,6 +292,12 @@ func runRoomExchangeMode(opts clientOptions) error {
 		DisplayName: opts.roomExchangeDisplayName,
 		E2EEnabled:  opts.roomExchangeE2EEnabled,
 	}
+	if opts.roomExchangeRoomIDs != "" {
+		exchange.RoomIds = splitAndTrim(opts.roomExchangeRoomIDs)
+		if exchange.RoomId == "" && len(exchange.RoomIds) > 0 {
+			exchange.RoomId = exchange.RoomIds[0]
+		}
+	}
 	if opts.roomExchangeE2ESecret != "" {
 		decoded, err := base64.StdEncoding.DecodeString(opts.roomExchangeE2ESecret)
 		if err != nil {
@@ -270,9 +314,9 @@ func runRoomExchangeMode(opts clientOptions) error {
 	if err != nil {
 		return fmt.Errorf("write hello: %w", err)
 	}
-	log.Printf("room-exchange: wrote %d/%d bytes to %s (room=%s, name=%q, e2e=%t)",
+	log.Printf("room-exchange: wrote %d/%d bytes to %s (rooms=%v primary=%q, name=%q, e2e=%t)",
 		written, len(payload), opts.peerAddr,
-		opts.roomExchangeRoomID, opts.roomExchangeDisplayName, opts.roomExchangeE2EEnabled)
+		exchange.RoomIds, exchange.RoomId, opts.roomExchangeDisplayName, opts.roomExchangeE2EEnabled)
 	// Hold the DTLS session open briefly so the server has time to consume the
 	// payload before we tear down the connection. Without this, fast process
 	// exit can race with the server's DTLS read and drop the application data.
@@ -341,4 +385,26 @@ func dialRoomExchangeDTLS(ctx context.Context, conn net.PacketConn, peer *net.UD
 		return nil, err
 	}
 	return dtlsConn, nil
+}
+
+func splitAndTrim(csv string) []string {
+	parts := strings.Split(csv, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func peerRoomIDs(p wbStreamPeerHandle) []string {
+	if mr, ok := p.(*wbstream.MultiRoomPeer); ok {
+		return mr.RoomIDs()
+	}
+	if m, ok := p.(*wbstream.MultiPeer); ok {
+		return []string{m.RoomID()}
+	}
+	return nil
 }
