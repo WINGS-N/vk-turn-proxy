@@ -41,6 +41,8 @@ type clientOptions struct {
 	wbStreamE2ESecret          string
 	wbStreamMultiIdentityCount int
 
+	dnsMode string
+
 	roomExchangeMode        bool
 	roomExchangeRoomID      string
 	roomExchangeRoomIDs     string
@@ -82,6 +84,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.wbStreamDisplayName, "wb-stream-display-name", "", "display name for the LiveKit room when -wb-stream-room-id is set (empty = random VK-style name per session)")
 	fs.StringVar(&opts.wbStreamE2ESecret, "wb-stream-e2e-secret", "", "optional base64-encoded 32-byte AES-256 key for E2E over DataPacket")
 	fs.IntVar(&opts.wbStreamMultiIdentityCount, "wb-stream-multi-identity-count", 1, "number of LiveKit identities to join the same room with (1-16; round-robin send across identities for higher upload throughput)")
+	fs.StringVar(&opts.dnsMode, "dns", "auto", "DNS resolution mode: auto|udp|doh (auto = probe UDP/53, sticky-fallback to DoH on total failure)")
 	fs.BoolVar(&opts.roomExchangeMode, "room-exchange-mode", false, "send a single CLIENT_HELLO_TYPE_ROOM_EXCHANGE to -peer over DTLS and exit (used to deliver wb-stream room metadata via VK TURN handshake)")
 	fs.StringVar(&opts.roomExchangeRoomID, "room-exchange-room-id", "", "WB Stream room ID delivered through CLIENT_HELLO_TYPE_ROOM_EXCHANGE")
 	fs.StringVar(&opts.roomExchangeRoomIDs, "room-exchange-room-ids", "", "comma-separated WB Stream room IDs for multi-room exchange (takes precedence over -room-exchange-room-id)")
@@ -122,6 +125,12 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 		opts.wbStreamRoomIDs = strings.TrimSpace(opts.wbStreamRoomIDs)
 		opts.wbStreamDisplayName = strings.TrimSpace(opts.wbStreamDisplayName)
 		opts.wbStreamE2ESecret = strings.TrimSpace(opts.wbStreamE2ESecret)
+		opts.dnsMode = strings.ToLower(strings.TrimSpace(opts.dnsMode))
+		switch opts.dnsMode {
+		case DNSModeUDP, DNSModeDoH, DNSModeAuto:
+		default:
+			opts.dnsMode = DNSModeAuto
+		}
 		opts.roomExchangeRoomID = strings.TrimSpace(opts.roomExchangeRoomID)
 		opts.roomExchangeRoomIDs = strings.TrimSpace(opts.roomExchangeRoomIDs)
 		opts.roomExchangeDisplayName = strings.TrimSpace(opts.roomExchangeDisplayName)

@@ -36,6 +36,62 @@ import (
 	"github.com/pion/turn/v5"
 )
 
+// dnsModeGlobal is set in main() from the -dns flag and consumed by the
+// resolver helpers below. Default mirrors the CLI default: auto-probe UDP/53
+// then sticky-fallback to DoH on total failure.
+var dnsModeGlobal atomic.Pointer[string]
+
+// dohResolverSingleton lazily constructs the process-wide DoH resolver. The
+// resolver itself is goroutine-safe; bootstrap transport is reused.
+var (
+	dohResolverOnce sync.Once
+	dohResolverInst *DohResolver
+)
+
+func setDnsMode(mode string) {
+	switch mode {
+	case DNSModeUDP, DNSModeDoH, DNSModeAuto:
+	default:
+		mode = DNSModeAuto
+	}
+	dnsModeGlobal.Store(&mode)
+}
+
+func dnsMode() string {
+	if p := dnsModeGlobal.Load(); p != nil {
+		return *p
+	}
+	return DNSModeAuto
+}
+
+func dnsModeIs(mode string) bool { return dnsMode() == mode }
+
+// dohAutoLatched mirrors the autoDial sticky-flag for protectedResolver.
+var dohAutoLatched atomic.Bool
+
+func latchToDoH() { dohAutoLatched.Store(true) }
+
+// shouldUseDoH returns true when callers should try DoH first for hostname
+// resolution: explicit DoH mode, or auto mode after a UDP failure latched.
+func shouldUseDoH() bool {
+	switch dnsMode() {
+	case DNSModeDoH:
+		return true
+	case DNSModeAuto:
+		return dohAutoLatched.Load()
+	}
+	return false
+}
+
+// sharedDohResolver returns the process-wide DoH resolver, initialised on
+// first call. Bridge is reused if supplied on the first call.
+func sharedDohResolver(bridge *protectBridge) *DohResolver {
+	dohResolverOnce.Do(func() {
+		dohResolverInst = NewDohResolver(nil, bridge)
+	})
+	return dohResolverInst
+}
+
 type getCredsFunc func(workerID int) (string, string, string, error)
 
 type directNet struct{}
@@ -1768,6 +1824,8 @@ func main() { //nolint:cyclop
 	if exitCode == 0 {
 		os.Exit(0)
 	}
+	setDnsMode(opts.dnsMode)
+	log.Printf("[DNS] mode=%s", dnsMode())
 
 	if opts.roomExchangeMode {
 		if err := runRoomExchangeMode(opts); err != nil {

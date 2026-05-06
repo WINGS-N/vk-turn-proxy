@@ -23,6 +23,7 @@ var defaultResolverAddrs = []string{
 type protectedResolver struct {
 	resolverAddrs []string
 	protectBridge *protectBridge
+	doh           *DohResolver
 }
 
 func newProtectedResolver(protect *protectBridge, resolverAddrs []string) *protectedResolver {
@@ -33,6 +34,7 @@ func newProtectedResolver(protect *protectBridge, resolverAddrs []string) *prote
 	return &protectedResolver{
 		resolverAddrs: addrs,
 		protectBridge: protect,
+		doh:           sharedDohResolver(protect),
 	}
 }
 
@@ -77,6 +79,17 @@ func (r *protectedResolver) LookupIPAddr(ctx context.Context, host string) ([]ne
 		return []net.IPAddr{{IP: ip}}, nil
 	}
 
+	if shouldUseDoH() && r.doh != nil {
+		ips, err := r.doh.LookupIPAddr(ctx, host)
+		if err == nil && len(ips) > 0 {
+			out := make([]net.IPAddr, 0, len(ips))
+			for _, ip := range ips {
+				out = append(out, net.IPAddr{IP: ip})
+			}
+			return out, nil
+		}
+	}
+
 	var lastErr error
 	for _, resolverAddr := range r.resolverAddrs {
 		resolver := &net.Resolver{
@@ -91,6 +104,22 @@ func (r *protectedResolver) LookupIPAddr(ctx context.Context, host string) ([]ne
 		}
 		lastErr = err
 	}
+
+	// UDP path failed: in auto mode, latch to DoH for the rest of the process
+	// and retry once. This recovers the case where UDP/53 worked at startup
+	// but got blocked after a network switch (Wi-Fi → mobile-with-whitelist).
+	if dnsModeIs(DNSModeAuto) && r.doh != nil {
+		latchToDoH()
+		ips, err := r.doh.LookupIPAddr(ctx, host)
+		if err == nil && len(ips) > 0 {
+			out := make([]net.IPAddr, 0, len(ips))
+			for _, ip := range ips {
+				out = append(out, net.IPAddr{IP: ip})
+			}
+			return out, nil
+		}
+	}
+
 	if lastErr == nil {
 		lastErr = fmt.Errorf("dns lookup failed for %s", host)
 	}
