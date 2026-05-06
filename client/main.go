@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -68,6 +69,7 @@ var (
 	isDebug              bool
 	manualCaptcha        bool
 	autoCaptchaSliderPOC bool
+	captchaSolverVersion string
 )
 
 type captchaSolveMode int
@@ -546,6 +548,18 @@ func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID in
 		log.Printf("[STREAM %d] [Captcha] Using saved real browser profile", streamID)
 		savedProfile = sp
 		profile = sp.Profile // Use saved headers/UA
+	}
+
+	if !useSliderPOC && !strings.EqualFold(captchaSolverVersion, "v1") {
+		successToken, v2Err := solveVkCaptchaV2(ctx, captchaErr, streamID, client, profile, savedProfile)
+		if v2Err == nil {
+			log.Printf("[STREAM %d] [Captcha] v2 solver succeeded", streamID)
+			return successToken, nil
+		}
+		if errors.Is(v2Err, errCaptchaV2RateLimit) {
+			return "", v2Err
+		}
+		log.Printf("[STREAM %d] [Captcha] v2 solver failed, falling back to legacy solver: %v", streamID, v2Err)
 	}
 
 	bootstrap, err := fetchCaptchaBootstrap(ctx, captchaErr.RedirectURI, client, profile)
@@ -2042,6 +2056,7 @@ func main() {
 	vlessBond := flag.Bool("vless-bond", false, "bond one VLESS TCP connection across all active smux sessions")
 	debugFlag := flag.Bool("debug", false, "enable debug logging")
 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip auto captcha solving, use manual mode immediately")
+	captchaSolverFlag := flag.String("captcha-solver", "v2", "auto captcha solver implementation: v1|v2")
 	flag.Parse()
 	if *peerAddr == "" {
 		log.Panicf("Need peer address!")
@@ -2056,6 +2071,10 @@ func main() {
 
 	isDebug = *debugFlag
 	manualCaptcha = *manualCaptchaFlag
+	captchaSolverVersion = strings.ToLower(strings.TrimSpace(*captchaSolverFlag))
+	if captchaSolverVersion != "v1" && captchaSolverVersion != "v2" {
+		captchaSolverVersion = "v2"
+	}
 	autoCaptchaSliderPOC = !manualCaptcha
 
 	var link string
