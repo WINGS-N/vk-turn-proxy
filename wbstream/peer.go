@@ -37,6 +37,14 @@ type Peer struct {
 	closed    atomic.Bool
 	done      chan struct{}
 	wg        sync.WaitGroup
+
+	correspondentsMu  sync.RWMutex
+	correspondents    []string
+	correspondentsSet map[string]struct{}
+	rrSendIdx         atomic.Uint64
+
+	siblingsMu sync.RWMutex
+	siblings   map[string]struct{}
 }
 
 // New creates a peer but does not yet connect to LiveKit.
@@ -55,10 +63,12 @@ func New(cfg PeerConfig) (*Peer, error) {
 	}
 	cfg.WSSURL = wssURL
 	return &Peer{
-		cfg:       cfg,
-		e2e:       e2e,
-		sendQueue: make(chan []byte, queue),
-		done:      make(chan struct{}),
+		cfg:               cfg,
+		e2e:               e2e,
+		sendQueue:         make(chan []byte, queue),
+		done:              make(chan struct{}),
+		correspondentsSet: map[string]struct{}{},
+		siblings:          map[string]struct{}{},
 	}, nil
 }
 
@@ -88,6 +98,11 @@ func (p *Peer) Connect(ctx context.Context) error {
 		OnDisconnected: func() {
 			log.Printf("wbstream room disconnected (room=%s)", p.roomID)
 		},
+		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) {
+			if rp != nil {
+				p.removeCorrespondent(rp.Identity())
+			}
+		},
 	}
 	room, err := lksdk.ConnectToRoomWithToken(p.cfg.WSSURL, token, cb, lksdk.WithAutoSubscribe(true))
 	if err != nil {
@@ -105,6 +120,45 @@ func (p *Peer) Connect(ctx context.Context) error {
 // caller passed empty/"any" and the SFU minted a fresh one).
 func (p *Peer) RoomID() string {
 	return p.roomID
+}
+
+// LocalIdentity returns the LiveKit identity assigned to this peer's own
+// LocalParticipant. Empty until Connect succeeds.
+func (p *Peer) LocalIdentity() string {
+	if p.room == nil || p.room.LocalParticipant == nil {
+		return ""
+	}
+	return p.room.LocalParticipant.Identity()
+}
+
+// SetSiblings registers identities whose frames must be ignored even though
+// they share the same room. Used by MultiPeer to suppress the cold-start
+// broadcast loop where a sibling client identity would receive its peer's
+// outbound MuxFrame and mistakenly inject it back into the local UDP bridge.
+func (p *Peer) SetSiblings(identities []string) {
+	p.siblingsMu.Lock()
+	defer p.siblingsMu.Unlock()
+	p.siblings = make(map[string]struct{}, len(identities))
+	own := ""
+	if p.room != nil && p.room.LocalParticipant != nil {
+		own = p.room.LocalParticipant.Identity()
+	}
+	for _, id := range identities {
+		if id == "" || id == own {
+			continue
+		}
+		p.siblings[id] = struct{}{}
+	}
+}
+
+func (p *Peer) isSibling(identity string) bool {
+	if identity == "" {
+		return false
+	}
+	p.siblingsMu.RLock()
+	_, ok := p.siblings[identity]
+	p.siblingsMu.RUnlock()
+	return ok
 }
 
 // Send enqueues a MuxFrame for transmission. Returns ErrSendQueueFull when
@@ -145,10 +199,16 @@ func (p *Peer) processSendQueue() {
 			if p.room == nil || p.room.LocalParticipant == nil {
 				continue
 			}
-			if err := p.room.LocalParticipant.PublishDataPacket(
-				lksdk.UserData(payload),
+			opts := []lksdk.DataPublishOption{
 				lksdk.WithDataPublishTopic(topicpool.Pick()),
 				lksdk.WithDataPublishReliable(true),
+			}
+			if dst := p.pickCorrespondent(); len(dst) > 0 {
+				opts = append(opts, lksdk.WithDataPublishDestination(dst))
+			}
+			if err := p.room.LocalParticipant.PublishDataPacket(
+				lksdk.UserData(payload),
+				opts...,
 			); err != nil {
 				log.Printf("wbstream publish error: %v", err)
 			}
@@ -156,8 +216,58 @@ func (p *Peer) processSendQueue() {
 	}
 }
 
+// markCorrespondent registers a remote identity that has spoken to us. Only
+// these identities are eligible as send destinations; siblings in the same
+// room (e.g., the other N-1 client identities of a multi-identity client) get
+// added on join via the participant callback but never become correspondents
+// because they don't send to us.
+func (p *Peer) markCorrespondent(identity string) {
+	if identity == "" {
+		return
+	}
+	p.correspondentsMu.Lock()
+	if _, ok := p.correspondentsSet[identity]; !ok {
+		p.correspondentsSet[identity] = struct{}{}
+		p.correspondents = append(p.correspondents, identity)
+	}
+	p.correspondentsMu.Unlock()
+}
+
+func (p *Peer) removeCorrespondent(identity string) {
+	if identity == "" {
+		return
+	}
+	p.correspondentsMu.Lock()
+	if _, ok := p.correspondentsSet[identity]; ok {
+		delete(p.correspondentsSet, identity)
+		for i, existing := range p.correspondents {
+			if existing == identity {
+				p.correspondents = append(p.correspondents[:i], p.correspondents[i+1:]...)
+				break
+			}
+		}
+	}
+	p.correspondentsMu.Unlock()
+}
+
+// pickCorrespondent returns a single-element identity list for directional
+// addressing or nil to fall back to broadcast (used during cold-start before
+// the first inbound frame from any correspondent).
+func (p *Peer) pickCorrespondent() []string {
+	p.correspondentsMu.RLock()
+	defer p.correspondentsMu.RUnlock()
+	if len(p.correspondents) == 0 {
+		return nil
+	}
+	idx := int(p.rrSendIdx.Add(1)-1) % len(p.correspondents)
+	return []string{p.correspondents[idx]}
+}
+
 func (p *Peer) handleData(payload []byte, params lksdk.DataReceiveParams) {
 	if p.closed.Load() {
+		return
+	}
+	if p.isSibling(params.SenderIdentity) {
 		return
 	}
 	body := payload
@@ -174,6 +284,7 @@ func (p *Peer) handleData(payload []byte, params lksdk.DataReceiveParams) {
 		log.Printf("wbstream decode mux: %v", err)
 		return
 	}
+	p.markCorrespondent(params.SenderIdentity)
 	if handler := p.onFrame; handler != nil {
 		handler(frame, params)
 	}
