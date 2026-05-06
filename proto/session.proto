@@ -46,6 +46,7 @@ message RoomDataExchange {
   string display_name = 3;
   bool e2e_enabled = 4;
   bytes e2e_secret = 5;
+  repeated string room_ids = 6;
 }
 
 message RoomDataAck {

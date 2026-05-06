@@ -81,31 +81,48 @@ func (p *wbStreamSessionPool) PreJoin(roomID, e2eSecretB64 string) error {
 }
 
 // HandleExchange is the SetRoomExchangeSink-compatible callback. It is
-// idempotent — second invocation for the same room_id keeps the existing
-// peer and only logs.
+// idempotent — repeat invocations for the same room_id keep the existing
+// peer and only log. When RoomIds is non-empty it joins every listed room
+// (sharing the same E2EKey/displayName); RoomId is used as a fallback so
+// older clients continue to deliver a single room.
 func (p *wbStreamSessionPool) HandleExchange(exchange *sessionproto.RoomDataExchange, addr net.Addr) {
 	if exchange == nil || exchange.GetProvider() != sessionproto.RoomProvider_ROOM_PROVIDER_WB_STREAM {
 		return
 	}
-	roomID := exchange.GetRoomId()
-	if roomID == "" {
+	rooms := exchange.GetRoomIds()
+	if len(rooms) == 0 && exchange.GetRoomId() != "" {
+		rooms = []string{exchange.GetRoomId()}
+	}
+	if len(rooms) == 0 {
 		return
 	}
 
-	p.mu.Lock()
-	if p.closed {
+	for _, roomID := range rooms {
+		if roomID == "" {
+			continue
+		}
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return
+		}
+		if _, ok := p.rooms[roomID]; ok {
+			p.mu.Unlock()
+			log.Printf("wb-stream pool: room=%s already joined (peer=%s)", roomID, addr)
+			continue
+		}
 		p.mu.Unlock()
-		return
-	}
-	if _, ok := p.rooms[roomID]; ok {
-		p.mu.Unlock()
-		log.Printf("wb-stream pool: room=%s already joined (peer=%s)", roomID, addr)
-		return
-	}
-	p.mu.Unlock()
 
-	if err := p.joinLocked(exchange); err != nil {
-		log.Printf("wb-stream pool: join room=%s failed: %v", roomID, err)
+		perRoom := &sessionproto.RoomDataExchange{
+			Provider:    exchange.GetProvider(),
+			RoomId:      roomID,
+			DisplayName: exchange.GetDisplayName(),
+			E2EEnabled:  exchange.GetE2EEnabled(),
+			E2ESecret:   exchange.GetE2ESecret(),
+		}
+		if err := p.joinLocked(perRoom); err != nil {
+			log.Printf("wb-stream pool: join room=%s failed: %v", roomID, err)
+		}
 	}
 }
 

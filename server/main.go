@@ -929,8 +929,14 @@ func main() {
 	defer wbStreamPool.Close()
 	SetRoomExchangeSink(wbStreamPool.HandleExchange)
 	if opts.wbStreamRoomID != "" {
-		if err := wbStreamPool.PreJoin(opts.wbStreamRoomID, opts.wbStreamE2ESecret); err != nil {
-			log.Fatalf("wb-stream pre-join: %v", err)
+		for _, roomID := range strings.Split(opts.wbStreamRoomID, ",") {
+			trimmed := strings.TrimSpace(roomID)
+			if trimmed == "" {
+				continue
+			}
+			if err := wbStreamPool.PreJoin(trimmed, opts.wbStreamE2ESecret); err != nil {
+				log.Fatalf("wb-stream pre-join %q: %v", trimmed, err)
+			}
 		}
 	}
 

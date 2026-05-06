@@ -332,6 +332,7 @@ type RoomDataExchange struct {
 	DisplayName   string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	E2EEnabled    bool                   `protobuf:"varint,4,opt,name=e2e_enabled,json=e2eEnabled,proto3" json:"e2e_enabled,omitempty"`
 	E2ESecret     []byte                 `protobuf:"bytes,5,opt,name=e2e_secret,json=e2eSecret,proto3" json:"e2e_secret,omitempty"`
+	RoomIds       []string               `protobuf:"bytes,6,rep,name=room_ids,json=roomIds,proto3" json:"room_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -397,6 +398,13 @@ func (x *RoomDataExchange) GetE2EEnabled() bool {
 func (x *RoomDataExchange) GetE2ESecret() []byte {
 	if x != nil {
 		return x.E2ESecret
+	}
+	return nil
+}
+
+func (x *RoomDataExchange) GetRoomIds() []string {
+	if x != nil {
+		return x.RoomIds
 	}
 	return nil
 }
@@ -676,7 +684,7 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\x12T\n" +
 	"\x15supported_tcp_flavors\x18\a \x03(\x0e2 .sessionproto.TcpTransportFlavorR\x13supportedTcpFlavors\x12R\n" +
 	"\x14preferred_tcp_flavor\x18\b \x01(\x0e2 .sessionproto.TcpTransportFlavorR\x12preferredTcpFlavor\x12C\n" +
-	"\rroom_exchange\x18\t \x01(\v2\x1e.sessionproto.RoomDataExchangeR\froomExchange\"\xc6\x01\n" +
+	"\rroom_exchange\x18\t \x01(\v2\x1e.sessionproto.RoomDataExchangeR\froomExchange\"\xe1\x01\n" +
 	"\x10RoomDataExchange\x126\n" +
 	"\bprovider\x18\x01 \x01(\x0e2\x1a.sessionproto.RoomProviderR\bprovider\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12!\n" +
@@ -684,7 +692,8 @@ const file_proto_session_proto_rawDesc = "" +
 	"\ve2e_enabled\x18\x04 \x01(\bR\n" +
 	"e2eEnabled\x12\x1d\n" +
 	"\n" +
-	"e2e_secret\x18\x05 \x01(\fR\te2eSecret\"?\n" +
+	"e2e_secret\x18\x05 \x01(\fR\te2eSecret\x12\x19\n" +
+	"\broom_ids\x18\x06 \x03(\tR\aroomIds\"?\n" +
 	"\vRoomDataAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"\xe4\x03\n" +
