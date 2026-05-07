@@ -801,8 +801,9 @@ const (
 	cacheSafetyMargin  = 60 * time.Second
 	maxCacheErrors     = 3
 	errorWindow        = 10 * time.Second
-	streamsPerCache    = 10
 )
+
+var streamsPerCache = 10
 
 func getCacheID(streamID int) int {
 	return streamID / streamsPerCache
@@ -1742,6 +1743,7 @@ type turnParams struct {
 	port     string
 	link     string
 	udp      bool
+	wrapKey  []byte
 	getCreds getCredsFunc
 }
 
@@ -1875,6 +1877,7 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 		// Do not set conn2 deadline (conn2 can sometimes be listenConn if direct mode is used)
 	})
 	var internalPipeAddr atomic.Value
+	useWrap := len(turnParams.wrapKey) == wrapKeyLen
 
 	go func() {
 		defer turncancel()
@@ -1893,7 +1896,17 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 
 			internalPipeAddr.Store(addr1)
 
-			written, err1 := relayConn.WriteTo(buf[:n], peer)
+			out := buf[:n]
+			if useWrap {
+				wrapped, wrapErr := wrapPacket(turnParams.wrapKey, out)
+				if wrapErr != nil {
+					log.Printf("[STREAM %d] WRAP failed: %v", streamID, wrapErr)
+					return
+				}
+				out = wrapped
+			}
+
+			written, err1 := relayConn.WriteTo(out, peer)
 			stats.addTx(written)
 			if err1 != nil {
 				return
@@ -1904,7 +1917,12 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	go func() {
 		defer wg.Done()
 		defer turncancel()
-		buf := make([]byte, 1600)
+		readBufLen := 1600
+		if useWrap {
+			readBufLen += wrapNonceLen
+		}
+		buf := make([]byte, readBufLen)
+		plain := make([]byte, 1600)
 		for {
 			n, _, err1 := relayConn.ReadFrom(buf)
 			if err1 != nil {
@@ -1916,8 +1934,17 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 			}
 
 			if addr, ok := addr1.(net.Addr); ok {
-				stats.addRx(n)
-				if _, err := conn2.WriteTo(buf[:n], addr); err != nil {
+				payload := buf[:n]
+				if useWrap {
+					m, wrapErr := unwrapPacket(turnParams.wrapKey, payload, plain)
+					if wrapErr != nil {
+						log.Printf("[STREAM %d] UNWRAP failed: %v (n=%d)", streamID, wrapErr, n)
+						continue
+					}
+					payload = plain[:m]
+				}
+				stats.addRx(len(payload))
+				if _, err := conn2.WriteTo(payload, addr); err != nil {
 					return
 				}
 			}
@@ -2054,10 +2081,22 @@ func main() {
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
 	vlessMode := flag.Bool("vless", false, "VLESS mode: forward TCP connections (for VLESS) instead of UDP packets")
 	vlessBond := flag.Bool("vless-bond", false, "bond one VLESS TCP connection across all active smux sessions")
+	wrapMode := flag.Bool("wrap", false, "WRAP mode: ChaCha20-XOR obfuscate DTLS packets before they reach TURN ChannelData")
+	wrapKeyHex := flag.String("wrap-key", "", "32-byte hex-encoded shared key for -wrap (64 hex chars)")
+	genWrapKey := flag.Bool("gen-wrap-key", false, "print a fresh 64-character hex key for -wrap-key and exit")
+	streamsPerCredFlag := flag.Int("streams-per-cred", streamsPerCache, "number of TURN streams sharing one VK credential cache")
 	debugFlag := flag.Bool("debug", false, "enable debug logging")
 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip auto captcha solving, use manual mode immediately")
 	captchaSolverFlag := flag.String("captcha-solver", "v2", "auto captcha solver implementation: v1|v2")
 	flag.Parse()
+	if *genWrapKey {
+		key, err := genWrapKeyHex()
+		if err != nil {
+			log.Panicf("%v", err)
+		}
+		fmt.Println(key)
+		return
+	}
 	if *peerAddr == "" {
 		log.Panicf("Need peer address!")
 	}
@@ -2068,6 +2107,20 @@ func main() {
 	if (*vklink == "") == (*yalink == "") {
 		log.Panicf("Need either vk-link or yandex-link!")
 	}
+	if *wrapMode && *direct {
+		log.Panicf("-wrap requires DTLS; remove -no-dtls")
+	}
+	wrapKey, err := decodeWrapKey(*wrapMode, *wrapKeyHex)
+	if err != nil {
+		log.Panicf("%v", err)
+	}
+	if *wrapMode {
+		log.Printf("WRAP mode enabled: peer server must use matching -wrap-key")
+	}
+	if *streamsPerCredFlag <= 0 {
+		log.Panicf("-streams-per-cred must be positive")
+	}
+	streamsPerCache = *streamsPerCredFlag
 
 	isDebug = *debugFlag
 	manualCaptcha = *manualCaptchaFlag
@@ -2114,6 +2167,7 @@ func main() {
 		port:     *port,
 		link:     link,
 		udp:      *udp,
+		wrapKey:  wrapKey,
 		getCreds: getCreds,
 	}
 
@@ -2856,7 +2910,7 @@ func createSmuxSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr, i
 		cleanup()
 		return nil, nil, fmt.Errorf("generate cert: %w", err)
 	}
-	dtlsPC := &relayPacketConn{relay: relayConn, peer: peer}
+	dtlsPC := &relayPacketConn{relay: relayConn, peer: peer, wrapKey: tp.wrapKey}
 	dtlsConn, err := dtls.ClientWithOptions(dtlsPC, peer,
 		dtls.WithCertificates(certificate),
 		dtls.WithInsecureSkipVerify(true),
@@ -2906,16 +2960,39 @@ func createSmuxSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr, i
 
 // relayPacketConn wraps a TURN relay PacketConn to direct all writes to the peer.
 type relayPacketConn struct {
-	relay net.PacketConn
-	peer  net.Addr
+	relay   net.PacketConn
+	peer    net.Addr
+	wrapKey []byte
 }
 
 func (r *relayPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
-	return r.relay.ReadFrom(b)
+	if len(r.wrapKey) != wrapKeyLen {
+		return r.relay.ReadFrom(b)
+	}
+	buf := make([]byte, len(b)+wrapNonceLen)
+	n, addr, err := r.relay.ReadFrom(buf)
+	if err != nil {
+		return 0, addr, err
+	}
+	m, err := unwrapPacket(r.wrapKey, buf[:n], b)
+	if err != nil {
+		return 0, addr, err
+	}
+	return m, addr, nil
 }
 
 func (r *relayPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
-	return r.relay.WriteTo(b, r.peer)
+	if len(r.wrapKey) != wrapKeyLen {
+		return r.relay.WriteTo(b, r.peer)
+	}
+	out, err := wrapPacket(r.wrapKey, b)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = r.relay.WriteTo(out, r.peer); err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 func (r *relayPacketConn) Close() error                       { return r.relay.Close() }

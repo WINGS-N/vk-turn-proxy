@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -26,7 +28,19 @@ func main() {
 	connect := flag.String("connect", "", "connect to ip:port")
 	vlessMode := flag.Bool("vless", false, "VLESS mode: forward TCP connections (for VLESS) instead of UDP packets")
 	vlessBond := flag.Bool("vless-bond", false, "bond one VLESS TCP connection across all active smux sessions")
+	wrapMode := flag.Bool("wrap", false, "WRAP mode: ChaCha20-XOR obfuscate DTLS packets before they reach TURN ChannelData")
+	wrapKeyHex := flag.String("wrap-key", "", "32-byte hex-encoded shared key for -wrap (64 hex chars)")
+	genWrapKey := flag.Bool("gen-wrap-key", false, "print a fresh 64-character hex key for -wrap-key and exit")
 	flag.Parse()
+
+	if *genWrapKey {
+		key := make([]byte, wrapKeyLen)
+		if _, err := rand.Read(key); err != nil {
+			log.Panicf("gen-wrap-key: rand.Read: %v", err)
+		}
+		fmt.Println(hex.EncodeToString(key))
+		return
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -47,7 +61,20 @@ func main() {
 	if len(*connect) == 0 {
 		log.Panicf("server address is required")
 	}
-	log.Printf("Starting server listen=%s connect=%s vless=%t vless-bond=%t bond-autodetect=true", *listen, *connect, *vlessMode, *vlessBond)
+	var wrapKey []byte
+	if *wrapMode {
+		if *wrapKeyHex == "" {
+			log.Panicf("-wrap requires -wrap-key")
+		}
+		wrapKey, err = hex.DecodeString(*wrapKeyHex)
+		if err != nil {
+			log.Panicf("-wrap-key invalid hex: %v", err)
+		}
+		if len(wrapKey) != wrapKeyLen {
+			log.Panicf("-wrap-key must decode to %d bytes (got %d)", wrapKeyLen, len(wrapKey))
+		}
+	}
+	log.Printf("Starting server listen=%s connect=%s vless=%t vless-bond=%t wrap=%t bond-autodetect=true", *listen, *connect, *vlessMode, *vlessBond, *wrapMode)
 	// Generate a certificate and private key to secure the connection
 	certificate, genErr := selfsign.GenerateSelfSigned()
 	if genErr != nil {
@@ -58,15 +85,23 @@ func main() {
 	// Everything below is the pion-DTLS API! Thanks for using it ❤️.
 	//
 
-	// Connect to a DTLS server
-	listener, err := dtls.ListenWithOptions(
-		"udp",
-		addr,
+	dtlsOpts := []dtls.ServerOption{
 		dtls.WithCertificates(certificate),
 		dtls.WithExtendedMasterSecret(dtls.RequireExtendedMasterSecret),
 		dtls.WithCipherSuites(dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256),
 		dtls.WithConnectionIDGenerator(dtls.RandomCIDGenerator(8)),
-	)
+	}
+	var listener net.Listener
+	if *wrapMode {
+		log.Printf("WRAP mode enabled: listener only accepts clients with matching -wrap-key")
+		wrapListener, werr := listenWrapped(addr, wrapKey)
+		if werr != nil {
+			panic(werr)
+		}
+		listener, err = dtls.NewListenerWithOptions(wrapListener, dtlsOpts...)
+	} else {
+		listener, err = dtls.ListenWithOptions("udp", addr, dtlsOpts...)
+	}
 	if err != nil {
 		panic(err)
 	}
