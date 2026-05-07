@@ -224,6 +224,8 @@ docker run --rm -p 56000:56000/udp \
 | `VLESS_BOND` | `false` | включает `-vless-bond` |
 | `WRAP_MODE` | `false` | включает `-wrap` |
 | `WRAP_KEY` | пусто | ключ для `-wrap-key` |
+| `VK_TURN_KCP_PROFILE` | `balanced` | профиль KCP (`fast`, `balanced`, `slow`) |
+| `VK_TURN_KCP_MTU` | `1200` | переопределить MTU для KCP |
 
 Сборка образа вручную:
 
@@ -272,6 +274,23 @@ docker build -t vk-turn-proxy .
 ```
 
 `-wrap` нельзя использовать вместе с `-no-dtls`.
+
+## Настройка KCP (VLESS)
+
+В режиме `-vless` для передачи данных поверх DTLS используется KCP. Его можно настроить через переменные окружения (работает и для клиента, и для сервера):
+
+| Переменная | Профили / Значения | Описание |
+| --- | --- | --- |
+| `VK_TURN_KCP_PROFILE` | `fast`, `balanced`, `slow` | Предустановленные режимы работы KCP. |
+| `VK_TURN_KCP_MTU` | например, `1200` | Максимальный размер пакета. |
+
+**Профили:**
+- `fast` (или `legacy`): Минимальные задержки, активная переотправка, MTU 1280.
+- `balanced` (или `cc`): Оптимальный баланс для большинства сетей, MTU 1200.
+- `slow` (или `conservative`): Для очень нестабильных каналов, MTU 1150.
+
+Для более тонкой настройки доступны переменные: `VK_TURN_KCP_NODELAY`, `VK_TURN_KCP_INTERVAL`, `VK_TURN_KCP_RESEND`, `VK_TURN_KCP_NC`, `VK_TURN_KCP_SNDWND`, `VK_TURN_KCP_RCVWND`, `VK_TURN_KCP_ACK_NODELAY`.
+
 
 ## Яндекс Телемост
 
