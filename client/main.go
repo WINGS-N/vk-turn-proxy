@@ -72,6 +72,45 @@ var (
 	captchaSolverVersion string
 )
 
+// udpDNSServersPtr holds the active UDP/53 resolver list. Default is built-in
+// public resolvers; can be overridden via -dns-servers flag (e.g. carrier
+// resolvers from Android LinkProperties.dnsServers).
+var udpDNSServersPtr atomic.Pointer[[]string]
+
+func init() {
+	def := []string{
+		"77.88.8.8:53", "77.88.8.1:53",
+		"8.8.8.8:53", "8.8.4.4:53",
+		"1.1.1.1:53", "1.0.0.1:53",
+	}
+	udpDNSServersPtr.Store(&def)
+}
+
+func udpDNSServers() []string { return *udpDNSServersPtr.Load() }
+
+// setUDPDNSServers replaces the default UDP/53 server list. Each entry may be
+// "ip" or "ip:port" — bare IPs get :53 appended.
+func setUDPDNSServers(servers []string) {
+	if len(servers) == 0 {
+		return
+	}
+	normalized := make([]string, 0, len(servers))
+	for _, s := range servers {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(s); err != nil {
+			s = net.JoinHostPort(s, "53")
+		}
+		normalized = append(normalized, s)
+	}
+	if len(normalized) == 0 {
+		return
+	}
+	udpDNSServersPtr.Store(&normalized)
+}
+
 func debugf(format string, v ...any) {
 	if isDebug {
 		log.Printf(format, v...)
@@ -408,9 +447,8 @@ func getCustomNetDialer() net.Dialer {
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				var d net.Dialer
-				dnsServers := []string{"77.88.8.8:53", "77.88.8.1:53", "8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"}
 				var lastErr error
-				for _, dns := range dnsServers {
+				for _, dns := range udpDNSServers() {
 					conn, err := d.DialContext(ctx, "udp", dns)
 					if err == nil {
 						return conn, nil
@@ -2044,13 +2082,11 @@ func setupGlobalResolver() {
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	dnsServers := []string{"77.88.8.8:53", "77.88.8.1:53", "8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"}
-
 	net.DefaultResolver = &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			var lastErr error
-			for _, dns := range dnsServers {
+			for _, dns := range udpDNSServers() {
 				conn, err := dialer.DialContext(ctx, "udp", dns)
 				if err == nil {
 					return conn, nil
@@ -2063,7 +2099,6 @@ func setupGlobalResolver() {
 }
 
 func main() {
-	setupGlobalResolver()
 	ctx, cancel := context.WithCancel(context.Background())
 	globalAppCancel = cancel
 	defer cancel()
@@ -2098,7 +2133,15 @@ func main() {
 	debugFlag := flag.Bool("debug", false, "enable debug logging")
 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip auto captcha solving, use manual mode immediately")
 	captchaSolverFlag := flag.String("captcha-solver", "v2", "auto captcha solver implementation: v1|v2")
+	dnsServersFlag := flag.String("dns-servers", "", "comma-separated UDP/53 DNS servers to use instead of built-in defaults (e.g. carrier resolvers from Android LinkProperties). Format: ip[:port][,ip[:port]...].")
 	flag.Parse()
+
+	if *dnsServersFlag != "" {
+		servers := strings.Split(*dnsServersFlag, ",")
+		setUDPDNSServers(servers)
+		log.Printf("[DNS] using custom UDP servers: %v", udpDNSServers())
+	}
+	setupGlobalResolver()
 	if *genWrapKey {
 		key, err := genWrapKeyHex()
 		if err != nil {
@@ -2147,7 +2190,7 @@ func main() {
 		link = parts[len(parts)-1]
 
 		dialer := dnsdialer.New(
-			dnsdialer.WithResolvers("77.88.8.8:53", "77.88.8.1:53", "8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"),
+			dnsdialer.WithResolvers(udpDNSServers()...),
 			dnsdialer.WithStrategy(dnsdialer.Fallback{}),
 			dnsdialer.WithCache(100, 10*time.Hour, 10*time.Hour),
 		)
