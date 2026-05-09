@@ -1824,6 +1824,7 @@ func main() { //nolint:cyclop
 	if exitCode == 0 {
 		os.Exit(0)
 	}
+	applyUserDns(opts.userDns)
 	setDnsMode(opts.dnsMode)
 	log.Printf("[DNS] mode=%s", dnsMode())
 

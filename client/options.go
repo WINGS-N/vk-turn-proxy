@@ -42,6 +42,7 @@ type clientOptions struct {
 	wbStreamMultiIdentityCount int
 
 	dnsMode string
+	userDns string
 
 	roomExchangeMode        bool
 	roomExchangeRoomID      string
@@ -85,6 +86,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.wbStreamE2ESecret, "wb-stream-e2e-secret", "", "optional base64-encoded 32-byte AES-256 key for E2E over DataPacket")
 	fs.IntVar(&opts.wbStreamMultiIdentityCount, "wb-stream-multi-identity-count", 1, "number of LiveKit identities to join the same room with (1-16; round-robin send across identities for higher upload throughput)")
 	fs.StringVar(&opts.dnsMode, "dns", "auto", "DNS resolution mode: auto|udp|doh (auto = probe UDP/53, sticky-fallback to DoH on total failure)")
+	fs.StringVar(&opts.userDns, "user-dns", "", "comma/newline-separated user DNS resolvers prepended to the built-in list. Formats: https://host/dns-query (DoH), udp://ip[:port] or bare ip[:port] (plain UDP/53)")
 	fs.BoolVar(&opts.roomExchangeMode, "room-exchange-mode", false, "send a single CLIENT_HELLO_TYPE_ROOM_EXCHANGE to -peer over DTLS and exit (used to deliver wb-stream room metadata via VK TURN handshake)")
 	fs.StringVar(&opts.roomExchangeRoomID, "room-exchange-room-id", "", "WB Stream room ID delivered through CLIENT_HELLO_TYPE_ROOM_EXCHANGE")
 	fs.StringVar(&opts.roomExchangeRoomIDs, "room-exchange-room-ids", "", "comma-separated WB Stream room IDs for multi-room exchange (takes precedence over -room-exchange-room-id)")
