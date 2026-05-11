@@ -7,10 +7,19 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
 	"github.com/cacggghp/vk-turn-proxy/internal/topicpool"
+)
+
+// reconnectInitialDelay is the first backoff step after a room kick before we
+// try to rejoin. Exponential doubling caps at reconnectMaxDelay; cycle restarts
+// on every successful Connect so a single drop does not poison future tries.
+const (
+	reconnectInitialDelay = 2 * time.Second
+	reconnectMaxDelay     = 60 * time.Second
 )
 
 // PeerConfig configures a wbstream peer.
@@ -26,6 +35,7 @@ type PeerConfig struct {
 // with other participants in the same room.
 type Peer struct {
 	cfg       PeerConfig
+	roomMu    sync.RWMutex
 	room      *lksdk.Room
 	e2e       *E2E
 	roomID    string
@@ -45,6 +55,10 @@ type Peer struct {
 
 	siblingsMu sync.RWMutex
 	siblings   map[string]struct{}
+
+	reconnectCtx    context.Context
+	reconnectCancel context.CancelFunc
+	reconnecting    atomic.Bool
 }
 
 // New creates a peer but does not yet connect to LiveKit.
@@ -84,6 +98,26 @@ func (p *Peer) Connect(ctx context.Context) error {
 		return errors.New("peer closed")
 	}
 
+	// Reconnect goroutine inherits a peer-scoped context cancelled by Close().
+	// Capturing the caller's ctx here means a transient parent cancel does not
+	// kill the reconnect loop forever.
+	if p.reconnectCtx == nil {
+		p.reconnectCtx, p.reconnectCancel = context.WithCancel(context.Background())
+	}
+
+	if err := p.joinRoom(ctx, true); err != nil {
+		return err
+	}
+
+	p.wg.Add(1)
+	go p.processSendQueue()
+	return nil
+}
+
+// joinRoom acquires a token and connects to LiveKit. Used by both Connect()
+// (initial join) and the reconnect goroutine. When freshSendQueue is true the
+// caller is responsible for spawning processSendQueue.
+func (p *Peer) joinRoom(ctx context.Context, initial bool) error {
 	roomID, token, err := AcquireRoomToken(ctx, p.cfg.DisplayName, p.cfg.RoomID)
 	if err != nil {
 		return fmt.Errorf("acquire room token: %w", err)
@@ -97,6 +131,7 @@ func (p *Peer) Connect(ctx context.Context) error {
 		},
 		OnDisconnected: func() {
 			log.Printf("wbstream room disconnected (room=%s)", p.roomID)
+			p.scheduleReconnect()
 		},
 		OnParticipantDisconnected: func(rp *lksdk.RemoteParticipant) {
 			if rp != nil {
@@ -108,12 +143,61 @@ func (p *Peer) Connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("connect livekit: %w", err)
 	}
+	p.roomMu.Lock()
+	prev := p.room
 	p.room = room
-
-	p.wg.Add(1)
-	go p.processSendQueue()
-	log.Printf("wbstream peer joined room=%s as %q", p.roomID, p.cfg.DisplayName)
+	p.roomMu.Unlock()
+	if !initial && prev != nil {
+		// Safety: an OnDisconnected handler may fire even after we already
+		// observed the disconnect through the callback. Drop the stale handle.
+		prev.Disconnect()
+	}
+	verb := "joined"
+	if !initial {
+		verb = "rejoined"
+	}
+	log.Printf("wbstream peer %s room=%s as %q", verb, p.roomID, p.cfg.DisplayName)
 	return nil
+}
+
+// scheduleReconnect kicks off a background goroutine that re-joins the room
+// after a kick / network drop. Multiple disconnect callbacks coalesce into a
+// single reconnect attempt via the reconnecting flag.
+func (p *Peer) scheduleReconnect() {
+	if p.closed.Load() {
+		return
+	}
+	if !p.reconnecting.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer p.reconnecting.Store(false)
+		delay := reconnectInitialDelay
+		for {
+			if p.closed.Load() {
+				return
+			}
+			select {
+			case <-p.reconnectCtx.Done():
+				return
+			case <-time.After(delay):
+			}
+			if p.closed.Load() {
+				return
+			}
+			attemptCtx, cancel := context.WithTimeout(p.reconnectCtx, 30*time.Second)
+			err := p.joinRoom(attemptCtx, false)
+			cancel()
+			if err == nil {
+				return
+			}
+			log.Printf("wbstream reconnect failed (room=%s): %v", p.cfg.RoomID, err)
+			delay *= 2
+			if delay > reconnectMaxDelay {
+				delay = reconnectMaxDelay
+			}
+		}
+	}()
 }
 
 // RoomID returns the actual room identifier the peer joined (useful when the
@@ -125,10 +209,13 @@ func (p *Peer) RoomID() string {
 // LocalIdentity returns the LiveKit identity assigned to this peer's own
 // LocalParticipant. Empty until Connect succeeds.
 func (p *Peer) LocalIdentity() string {
-	if p.room == nil || p.room.LocalParticipant == nil {
+	p.roomMu.RLock()
+	room := p.room
+	p.roomMu.RUnlock()
+	if room == nil || room.LocalParticipant == nil {
 		return ""
 	}
-	return p.room.LocalParticipant.Identity()
+	return room.LocalParticipant.Identity()
 }
 
 // SetSiblings registers identities whose frames must be ignored even though
@@ -140,8 +227,11 @@ func (p *Peer) SetSiblings(identities []string) {
 	defer p.siblingsMu.Unlock()
 	p.siblings = make(map[string]struct{}, len(identities))
 	own := ""
-	if p.room != nil && p.room.LocalParticipant != nil {
-		own = p.room.LocalParticipant.Identity()
+	p.roomMu.RLock()
+	room := p.room
+	p.roomMu.RUnlock()
+	if room != nil && room.LocalParticipant != nil {
+		own = room.LocalParticipant.Identity()
 	}
 	for _, id := range identities {
 		if id == "" || id == own {
@@ -196,7 +286,10 @@ func (p *Peer) processSendQueue() {
 			if !ok {
 				return
 			}
-			if p.room == nil || p.room.LocalParticipant == nil {
+			p.roomMu.RLock()
+			room := p.room
+			p.roomMu.RUnlock()
+			if room == nil || room.LocalParticipant == nil {
 				continue
 			}
 			opts := []lksdk.DataPublishOption{
@@ -206,7 +299,7 @@ func (p *Peer) processSendQueue() {
 			if dst := p.pickCorrespondent(); len(dst) > 0 {
 				opts = append(opts, lksdk.WithDataPublishDestination(dst))
 			}
-			if err := p.room.LocalParticipant.PublishDataPacket(
+			if err := room.LocalParticipant.PublishDataPacket(
 				lksdk.UserData(payload),
 				opts...,
 			); err != nil {
@@ -295,9 +388,15 @@ func (p *Peer) Close() error {
 	if !p.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	if p.reconnectCancel != nil {
+		p.reconnectCancel()
+	}
 	close(p.done)
-	if p.room != nil {
-		p.room.Disconnect()
+	p.roomMu.RLock()
+	room := p.room
+	p.roomMu.RUnlock()
+	if room != nil {
+		room.Disconnect()
 	}
 	close(p.sendQueue)
 	p.wg.Wait()
