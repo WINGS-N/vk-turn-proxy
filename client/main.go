@@ -34,7 +34,7 @@ import (
 	tlsclient "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
 
-	"github.com/bschaatsbergen/dnsdialer"
+	"github.com/cacggghp/vk-turn-proxy/client/internal/dnsdial"
 	"github.com/cacggghp/vk-turn-proxy/tcputil"
 	"github.com/cbeuw/connutil"
 	"github.com/google/uuid"
@@ -72,44 +72,7 @@ var (
 	captchaSolverVersion string
 )
 
-// udpDNSServersPtr holds the active UDP/53 resolver list. Default is built-in
-// public resolvers; can be overridden via -dns-servers flag (e.g. carrier
-// resolvers from Android LinkProperties.dnsServers).
-var udpDNSServersPtr atomic.Pointer[[]string]
-
-func init() {
-	def := []string{
-		"77.88.8.8:53", "77.88.8.1:53",
-		"8.8.8.8:53", "8.8.4.4:53",
-		"1.1.1.1:53", "1.0.0.1:53",
-	}
-	udpDNSServersPtr.Store(&def)
-}
-
-func udpDNSServers() []string { return *udpDNSServersPtr.Load() }
-
-// setUDPDNSServers replaces the default UDP/53 server list. Each entry may be
-// "ip" or "ip:port" — bare IPs get :53 appended.
-func setUDPDNSServers(servers []string) {
-	if len(servers) == 0 {
-		return
-	}
-	normalized := make([]string, 0, len(servers))
-	for _, s := range servers {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		if _, _, err := net.SplitHostPort(s); err != nil {
-			s = net.JoinHostPort(s, "53")
-		}
-		normalized = append(normalized, s)
-	}
-	if len(normalized) == 0 {
-		return
-	}
-	udpDNSServersPtr.Store(&normalized)
-}
+var appDialer net.Dialer
 
 func debugf(format string, v ...any) {
 	if isDebug {
@@ -445,25 +408,7 @@ func generateCheckboxCursor() string {
 */
 
 func getCustomNetDialer() net.Dialer {
-	return net.Dialer{
-		Timeout:   20 * time.Second,
-		KeepAlive: 30 * time.Second,
-		Resolver: &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				var d net.Dialer
-				var lastErr error
-				for _, dns := range udpDNSServers() {
-					conn, err := d.DialContext(ctx, "udp", dns)
-					if err == nil {
-						return conn, nil
-					}
-					lastErr = err
-				}
-				return nil, lastErr
-			},
-		},
-	}
+	return appDialer
 }
 
 // endregion
@@ -943,7 +888,7 @@ func (c *StreamCredentialsCache) invalidate(streamID int) {
 	log.Printf("[STREAM %d] [VK Auth] Credentials cache invalidated", streamID)
 }
 
-func getVkCredsCached(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, string, error) {
+func getVkCredsCached(ctx context.Context, link string, streamID int, dialer net.Dialer) (string, string, string, error) {
 	cache := getStreamCache(streamID)
 	cacheID := getCacheID(streamID)
 
@@ -985,7 +930,7 @@ var (
 	globalLastVkFetchTime time.Time
 )
 
-func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, []string, error) {
+func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dialer net.Dialer) (string, string, []string, error) {
 	vkRequestMu.Lock()
 	defer vkRequestMu.Unlock()
 
@@ -1010,7 +955,7 @@ func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dial
 	return fetchVkCreds(ctx, link, streamID, dialer)
 }
 
-func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, []string, error) {
+func fetchVkCreds(ctx context.Context, link string, streamID int, dialer net.Dialer) (string, string, []string, error) {
 	// Check Global Lockout to prevent API bans
 	if time.Now().Unix() < globalCaptchaLockout.Load() {
 		return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active")
@@ -1045,7 +990,7 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdia
 	return "", "", nil, fmt.Errorf("all VK credentials failed: %w", lastErr)
 }
 
-func getTokenChain(ctx context.Context, link string, streamID int, creds VKCredentials, dialer *dnsdialer.Dialer, jar tlsclient.CookieJar) (string, string, []string, error) {
+func getTokenChain(ctx context.Context, link string, streamID int, creds VKCredentials, dialer net.Dialer, jar tlsclient.CookieJar) (string, string, []string, error) {
 	profile := Profile{
 		UserAgent:       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 		SecChUa:         `"Not(A:Brand";v="99", "Google Chrome";v="146", "Chromium";v="146"`,
@@ -2116,26 +2061,6 @@ func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *ne
 	}
 }
 
-func setupGlobalResolver() {
-	dialer := &net.Dialer{
-		Timeout:   10 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-	net.DefaultResolver = &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			var lastErr error
-			for _, dns := range udpDNSServers() {
-				conn, err := dialer.DialContext(ctx, "udp", dns)
-				if err == nil {
-					return conn, nil
-				}
-				lastErr = err
-			}
-			return nil, lastErr
-		},
-	}
-}
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2172,15 +2097,22 @@ func main() {
 	debugFlag := flag.Bool("debug", false, "enable debug logging")
 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip auto captcha solving, use manual mode immediately")
 	captchaSolverFlag := flag.String("captcha-solver", "v2", "auto captcha solver implementation: v1|v2")
+	dnsFlag := flag.String("dns", dnsdial.DNSModeAuto, "DNS resolution mode: udp | doh | auto (auto tries UDP/53 first, sticky-fallback to DoH on total failure)")
 	dnsServersFlag := flag.String("dns-servers", "", "comma-separated UDP/53 DNS servers to use instead of built-in defaults (e.g. carrier resolvers from Android LinkProperties). Format: ip[:port][,ip[:port]...].")
 	flag.Parse()
 
+	switch *dnsFlag {
+	case dnsdial.DNSModeUDP, dnsdial.DNSModeDoH, dnsdial.DNSModeAuto:
+	default:
+		log.Panicf("invalid -dns value %q: must be udp | doh | auto", *dnsFlag)
+	}
 	if *dnsServersFlag != "" {
 		servers := strings.Split(*dnsServersFlag, ",")
-		setUDPDNSServers(servers)
-		log.Printf("[DNS] using custom UDP servers: %v", udpDNSServers())
+		dnsdial.SetUDPDNSServers(servers)
+		log.Printf("[DNS] using custom UDP servers: %v", servers)
 	}
-	setupGlobalResolver()
+	appDialer = dnsdial.AppDialer(*dnsFlag)
+	dnsdial.InstallGlobalResolver(*dnsFlag)
 	if *genWrapKey {
 		key, err := genWrapKeyHex()
 		if err != nil {
@@ -2228,14 +2160,8 @@ func main() {
 		parts := strings.Split(*vklink, "join/")
 		link = parts[len(parts)-1]
 
-		dialer := dnsdialer.New(
-			dnsdialer.WithResolvers(udpDNSServers()...),
-			dnsdialer.WithStrategy(dnsdialer.Fallback{}),
-			dnsdialer.WithCache(100, 10*time.Hour, 10*time.Hour),
-		)
-
 		getCreds = func(ctx context.Context, s string, streamID int) (string, string, string, error) {
-			return getVkCredsCached(ctx, s, streamID, dialer)
+			return getVkCredsCached(ctx, s, streamID, appDialer)
 		}
 		if *n <= 0 {
 			*n = 10
