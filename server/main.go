@@ -180,15 +180,17 @@ type throughputStats struct {
 }
 
 func (s *throughputStats) addTx(n int) {
-	if n > 0 {
-		s.tx.Add(uint64(n))
+	if !isDebug || n <= 0 {
+		return
 	}
+	s.tx.Add(uint64(n))
 }
 
 func (s *throughputStats) addRx(n int) {
-	if n > 0 {
-		s.rx.Add(uint64(n))
+	if !isDebug || n <= 0 {
+		return
 	}
+	s.rx.Add(uint64(n))
 }
 
 func (s *throughputStats) logEvery(ctx context.Context, label, txName, rxName string) {

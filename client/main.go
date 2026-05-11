@@ -175,15 +175,20 @@ type throughputStats struct {
 }
 
 func (s *throughputStats) addTx(n int) {
-	if n > 0 {
-		s.tx.Add(uint64(n))
+	// Counters are only consumed by logEvery, which is itself debug-gated.
+	// Skip the atomic add (and the cache-line traffic across N streams)
+	// when nobody is going to read the result.
+	if !isDebug || n <= 0 {
+		return
 	}
+	s.tx.Add(uint64(n))
 }
 
 func (s *throughputStats) addRx(n int) {
-	if n > 0 {
-		s.rx.Add(uint64(n))
+	if !isDebug || n <= 0 {
+		return
 	}
+	s.rx.Add(uint64(n))
 }
 
 func (s *throughputStats) logEvery(ctx context.Context, label, txName, rxName string) {
@@ -1730,7 +1735,7 @@ func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.Pa
 	}
 
 	wg := sync.WaitGroup{}
-	wg.Add(1)
+	wg.Add(2)
 	context.AfterFunc(dtlsctx, func() {
 		if err := dtlsConn.SetDeadline(time.Now()); err != nil {
 			log.Printf("[STREAM %d] Warning: SetDeadline failed: %v", streamID, err)
@@ -1738,6 +1743,7 @@ func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.Pa
 	})
 
 	go func() {
+		defer wg.Done()
 		defer dtlscancel()
 		for {
 			select {
@@ -1784,6 +1790,32 @@ type connectedUDPConn struct {
 
 func (c *connectedUDPConn) WriteTo(p []byte, _ net.Addr) (int, error) {
 	return c.Write(p)
+}
+
+// splitFirstWriteConn wraps a TCP net.Conn and splits the first Write into two
+// segments (default 6 bytes + remainder) with a small delay, so the STUN magic
+// cookie at offset 4-7 is broken across two TCP segments. Defeats DPI rules
+// that match on the first segment without reassembly.
+type splitFirstWriteConn struct {
+	net.Conn
+	splitAt int
+	delay   time.Duration
+	done    atomic.Bool
+}
+
+func (s *splitFirstWriteConn) Write(b []byte) (int, error) {
+	if s.done.CompareAndSwap(false, true) && len(b) > s.splitAt {
+		n1, err := s.Conn.Write(b[:s.splitAt])
+		if err != nil {
+			return n1, err
+		}
+		if s.delay > 0 {
+			time.Sleep(s.delay)
+		}
+		n2, err := s.Conn.Write(b[s.splitAt:])
+		return n1 + n2, err
+	}
+	return s.Conn.Write(b)
 }
 
 type turnParams struct {
@@ -1854,7 +1886,8 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 				return
 			}
 		}()
-		turnConn = turn.NewSTUNConn(conn)
+		wrappedConn := &splitFirstWriteConn{Conn: conn, splitAt: 6, delay: 20 * time.Millisecond}
+		turnConn = turn.NewSTUNConn(wrappedConn)
 	}
 	var addrFamily turn.RequestedAddressFamily
 	if peer.IP.To4() != nil {
@@ -1930,6 +1963,12 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	go func() {
 		defer turncancel()
 		buf := make([]byte, 1600)
+		// Reusable scratch buffer for wrapped wire bytes; sized once per
+		// stream so the hot-path TX loop performs zero allocations.
+		var wireBuf []byte
+		if useWrap {
+			wireBuf = make([]byte, wrapNonceLen+len(buf))
+		}
 		for {
 			if turnctx.Err() != nil {
 				return
@@ -1946,12 +1985,12 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 
 			out := buf[:n]
 			if useWrap {
-				wrapped, wrapErr := wrapPacket(turnParams.wrapKey, out)
+				written, wrapErr := wrapInto(wireBuf, turnParams.wrapKey, out)
 				if wrapErr != nil {
 					log.Printf("[STREAM %d] WRAP failed: %v", streamID, wrapErr)
 					return
 				}
-				out = wrapped
+				out = wireBuf[:written]
 			}
 
 			written, err1 := relayConn.WriteTo(out, peer)
@@ -2248,6 +2287,14 @@ func main() {
 	inboundChan := make(chan *UDPPacket, 2000)
 
 	go func() {
+		// Pointer-cache for the last seen local peer addr. Avoids the
+		// per-packet addr.String() allocation pair on the hot WG ingest path:
+		// most packets come from the same UDPAddr instance, so a pointer
+		// equality check covers the fast path. The slow path (new instance
+		// from ReadFrom for the same ip:port) does one String compare and
+		// then refreshes the cache.
+		var lastAddr net.Addr
+		var lastAddrStr string
 		for {
 			pktIface := packetPool.Get()
 			pkt, ok := pktIface.(*UDPPacket)
@@ -2260,16 +2307,13 @@ func main() {
 				return
 			}
 
-			// Save the local WireGuard peer address
-			current := activeLocalPeer.Load()
-			if current == nil {
-				activeLocalPeer.Store(addr)
-			} else if addrStr, ok := current.(net.Addr); ok {
-				if addrStr.String() != addr.String() {
+			if addr != lastAddr {
+				s := addr.String()
+				if s != lastAddrStr {
 					activeLocalPeer.Store(addr)
+					lastAddrStr = s
 				}
-			} else {
-				activeLocalPeer.Store(addr)
+				lastAddr = addr
 			}
 
 			pkt.N = nRead
@@ -2919,7 +2963,8 @@ func createSmuxSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr, i
 			return nil, nil, fmt.Errorf("dial TURN (tcp): %w", err1)
 		}
 		cleanupFns = append(cleanupFns, func() { _ = c.Close() })
-		turnConn = turn.NewSTUNConn(c)
+		wrappedC := &splitFirstWriteConn{Conn: c, splitAt: 6, delay: 20 * time.Millisecond}
+		turnConn = turn.NewSTUNConn(wrappedC)
 	}
 
 	// 3. Create TURN client and allocate relay

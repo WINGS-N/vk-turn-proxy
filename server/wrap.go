@@ -4,9 +4,11 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	dtlsnet "github.com/pion/dtls/v3/pkg/net"
@@ -18,6 +20,25 @@ const (
 	wrapNonceLen = 12
 	wrapKeyLen   = 32
 )
+
+// Nonce layout matches the client: [4B session prefix | 8B atomic counter].
+// Replaces a per-packet crypto/rand syscall (getrandom on Linux) with a
+// monotonic counter; (key, nonce) uniqueness preserved within the process.
+// Wire format unchanged.
+var (
+	nonceSessionPrefix [4]byte
+	nonceCounter       atomic.Uint64
+)
+
+func init() {
+	_, _ = rand.Read(nonceSessionPrefix[:])
+}
+
+func fillWrapNonce(dst []byte) {
+	_ = dst[wrapNonceLen-1]
+	copy(dst[:4], nonceSessionPrefix[:])
+	binary.BigEndian.PutUint64(dst[4:wrapNonceLen], nonceCounter.Add(1))
+}
 
 func listenWrapped(addr *net.UDPAddr, key []byte) (dtlsnet.PacketListener, error) {
 	if len(key) != wrapKeyLen {
@@ -78,9 +99,7 @@ func (c *wrapPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
 
 func (c *wrapPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	out := make([]byte, wrapNonceLen+len(p))
-	if _, err := rand.Read(out[:wrapNonceLen]); err != nil {
-		return 0, fmt.Errorf("wrap: nonce gen: %w", err)
-	}
+	fillWrapNonce(out[:wrapNonceLen])
 	cipher, err := chacha20.NewUnauthenticatedCipher(c.key, out[:wrapNonceLen])
 	if err != nil {
 		return 0, fmt.Errorf("wrap: cipher init: %w", err)

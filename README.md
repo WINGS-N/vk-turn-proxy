@@ -291,6 +291,8 @@ docker build -t vk-turn-proxy .
 
 Для более тонкой настройки доступны переменные: `VK_TURN_KCP_NODELAY`, `VK_TURN_KCP_INTERVAL`, `VK_TURN_KCP_RESEND`, `VK_TURN_KCP_NC`, `VK_TURN_KCP_SNDWND`, `VK_TURN_KCP_RCVWND`, `VK_TURN_KCP_ACK_NODELAY`.
 
+**FEC (Reed-Solomon):** `VK_TURN_KCP_FEC=data:parity` (например, `10:3`) — упреждающая коррекция ошибок. На каждые `data` пакетов добавляется `parity` избыточных, потери до `parity` из `data+parity` восстанавливаются без ретрансмита. Overhead по полосе: `parity/data` (для `10:3` — 30%). Должно совпадать на клиенте и сервере. По умолчанию выключено (`0:0`). Включай только при случайных потерях; при шейпе по полосе FEC ухудшит goodput.
+
 
 ## Яндекс Телемост
 

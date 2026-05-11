@@ -95,6 +95,25 @@ func envInt(name string, fallback int) int {
 	return value
 }
 
+// selectedFEC parses VK_TURN_KCP_FEC as "data:parity" (e.g. "10:3").
+// Returns 0,0 if unset/invalid (FEC disabled). Both sides must match.
+func selectedFEC() (dataShards, parityShards int) {
+	raw := strings.TrimSpace(os.Getenv("VK_TURN_KCP_FEC"))
+	if raw == "" {
+		return 0, 0
+	}
+	parts := strings.SplitN(raw, ":", 2)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	d, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	p, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || d <= 0 || p <= 0 {
+		return 0, 0
+	}
+	return d, p
+}
+
 func envBool(name string, fallback bool) bool {
 	raw := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
 	switch raw {
@@ -158,10 +177,12 @@ func NewKCPOverDTLS(dtlsConn net.Conn, isServer bool) (*kcp.UDPSession, error) {
 
 	var sess *kcp.UDPSession
 
+	dataShards, parityShards := selectedFEC()
+
 	if isServer {
 		// Server: listen on the PacketConn and accept one session
 		var listener *kcp.Listener
-		listener, err = kcp.ServeConn(block, 0, 0, pc)
+		listener, err = kcp.ServeConn(block, dataShards, parityShards, pc)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +195,7 @@ func NewKCPOverDTLS(dtlsConn net.Conn, isServer bool) (*kcp.UDPSession, error) {
 		}
 	} else {
 		// Client: dial through the PacketConn
-		sess, err = kcp.NewConn2(dtlsConn.RemoteAddr(), block, 0, 0, pc)
+		sess, err = kcp.NewConn2(dtlsConn.RemoteAddr(), block, dataShards, parityShards, pc)
 		if err != nil {
 			return nil, err
 		}
