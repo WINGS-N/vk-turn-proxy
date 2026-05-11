@@ -125,6 +125,19 @@ func rewriteProxyRequest(req *http.Request, targetURL *neturl.URL) {
 
 	req.Header.Del("Accept-Encoding")
 	req.Header.Del("TE") // Disable transfer encoding compression
+	for _, h := range []string{
+		"X-Requested-With",
+		"X-Android-Package",
+		"X-Android-Cert",
+		"X-Client-Data",
+		"X-Discord-Locale",
+		"X-Discord-Timezone",
+		"Save-Data",
+		"Purpose",
+		"Sec-Purpose",
+	} {
+		req.Header.Del(h)
+	}
 	for _, headerName := range []string{"Origin", "Referer"} {
 		if rewritten := rewriteProxyHeaderURL(req.Header.Get(headerName), targetURL); rewritten != "" {
 			req.Header.Set(headerName, rewritten)
