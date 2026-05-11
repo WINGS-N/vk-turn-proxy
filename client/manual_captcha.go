@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
 )
 
 const captchaListenPort = "8765"

@@ -2061,7 +2061,6 @@ func oneTurnConnectionLoop(ctx context.Context, turnParams *turnParams, peer *ne
 	}
 }
 
-
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	globalAppCancel = cancel
