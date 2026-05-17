@@ -37,14 +37,14 @@ func TestPacketConnRoundTrip(t *testing.T) {
 	ws := PacketConn(server, serverCipher)
 
 	payload := []byte("vk-turn obfuscation packet conn round-trip — should arrive intact")
-	if err := wc.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err = wc.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wc.WriteTo(payload, server.LocalAddr()); err != nil {
+	if _, err = wc.WriteTo(payload, server.LocalAddr()); err != nil {
 		t.Fatalf("WriteTo: %v", err)
 	}
 
-	if err := ws.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err = ws.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	buf := make([]byte, 4096)

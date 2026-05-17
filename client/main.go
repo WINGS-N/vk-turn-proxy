@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/internal/controlpath"
+	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	"github.com/cbeuw/connutil"
 	"github.com/google/uuid"
@@ -1467,6 +1468,16 @@ type turnParams struct {
 	getCreds     getCredsFunc
 	resolver     *protectedResolver
 	credsManager *groupedCredsManager
+	// WRAP per-packet obfuscation. wrapCipher == WRAP_CIPHER_NONE /
+	// _UNSPECIFIED disables WRAP regardless of wrapKey.
+	wrapCipher sessionproto.WrapCipher
+	wrapKey    []byte
+	// wrapMode controls fallback semantics when WRAP is configured:
+	//   "off"       — never wrap (wrapCipher should already be NONE)
+	//   "preferred" — try WRAP, fall back to raw if no successfully unwrapped
+	//                 inbound packet arrives within wrapFallbackInboundTimeout
+	//   "required"  — fail hard if WRAP unwrap doesn't succeed; never fall back
+	wrapMode string
 }
 
 func oneTurnConnection(
@@ -1632,6 +1643,53 @@ func oneTurnConnection(
 			}
 		}
 	})
+	wrapCipher, err1 := wrap.New(turnParams.wrapCipher, turnParams.wrapKey)
+	if err1 != nil {
+		err = fmt.Errorf("WRAP cipher init failed: %s", err1)
+		return
+	}
+	wrapModeForAttempt := turnParams.wrapMode
+	// Fallback key is the peer (our server) address: WRAP support is a
+	// property of the peer, not of the VK TURN relay we route through.
+	fallbackKey := peer.String()
+	if wrapCipher != nil && wrapModeForAttempt == "preferred" && wrapDisabledForAddr(fallbackKey) {
+		log.Printf("[STREAM %d] WRAP marked unsupported for peer %s recently; using raw this attempt", streamID, fallbackKey)
+		wrapCipher = nil
+	}
+	if wrapCipher != nil {
+		log.Printf("[STREAM %d] WRAP active: cipher=%s mode=%s", streamID, turnParams.wrapCipher, wrapModeForAttempt)
+	}
+	var anyWrapInboundSuccess atomic.Bool
+	wrapActiveThisAttempt := wrapCipher != nil
+	// On return: if WRAP was active and no successful inbound unwrap
+	// happened (worker exited due to DTLS handshake timeout, peer
+	// closure, ctx cancellation, etc.), record peer as no-wrap so the
+	// maintain loop's next attempt goes raw within the TTL window.
+	defer func() {
+		if wrapActiveThisAttempt && wrapModeForAttempt == "preferred" && !anyWrapInboundSuccess.Load() {
+			markWrapDisabledForAddr(fallbackKey)
+			log.Printf("[STREAM %d] WRAP exit with no decoded inbound; disabling WRAP for peer %s", streamID, fallbackKey)
+		}
+	}()
+	if wrapActiveThisAttempt && wrapModeForAttempt == "preferred" {
+		go func() {
+			timer := time.NewTimer(wrapFallbackInboundTimeout)
+			defer timer.Stop()
+			select {
+			case <-turnctx.Done():
+				return
+			case <-timer.C:
+				if !anyWrapInboundSuccess.Load() {
+					markWrapDisabledForAddr(fallbackKey)
+					log.Printf(
+						"[STREAM %d] no WRAP-decoded inbound from peer %s in %s — disabling WRAP and reconnecting raw",
+						streamID, fallbackKey, wrapFallbackInboundTimeout,
+					)
+					turncancel()
+				}
+			}
+		}()
+	}
 	var addr atomic.Value
 	// Start read-loop on conn2 (output of DTLS)
 	go func() {
@@ -1654,7 +1712,16 @@ func oneTurnConnection(
 
 			addr.Store(addr1) // store peer
 
-			_, err1 = relayConn.WriteTo(buf[:n], peer)
+			payload := buf[:n]
+			if wrapCipher != nil {
+				sealed, sealErr := wrapCipher.Seal(payload)
+				if sealErr != nil {
+					log.Printf("[STREAM %d] WRAP seal failed: %s", streamID, sealErr)
+					return
+				}
+				payload = sealed
+			}
+			_, err1 = relayConn.WriteTo(payload, peer)
 			if err1 != nil {
 				if !shouldSuppressWorkerError(turnctx, err1) {
 					log.Printf("Failed: %s", err1)
@@ -1668,7 +1735,11 @@ func oneTurnConnection(
 	go func() {
 		defer wg.Done()
 		defer turncancel()
-		buf := make([]byte, 1600)
+		readBufLen := 1600
+		if wrapCipher != nil {
+			readBufLen += wrapCipher.Overhead()
+		}
+		buf := make([]byte, readBufLen)
 		for {
 			select {
 			case <-turnctx.Done():
@@ -1687,7 +1758,17 @@ func oneTurnConnection(
 				continue
 			}
 
-			_, err1 = conn2.WriteTo(buf[:n], addr1)
+			payload := buf[:n]
+			if wrapCipher != nil {
+				plain, openErr := wrapCipher.Open(payload)
+				if openErr != nil {
+					log.Printf("[STREAM %d] WRAP unwrap failed (%d bytes): %s", streamID, n, openErr)
+					continue
+				}
+				anyWrapInboundSuccess.Store(true)
+				payload = plain
+			}
+			_, err1 = conn2.WriteTo(payload, addr1)
 			if err1 != nil {
 				if !shouldSuppressWorkerError(turnctx, err1) {
 					log.Printf("Failed: %s", err1)
@@ -2016,6 +2097,10 @@ func main() { //nolint:cyclop
 		setStrategy := func(_ sessionproto.Mode, _ uint32, _ int) {}
 		return unifiedGetCreds, setStrategy
 	}
+	wrapCipherSel, wrapKey, wrapMode, err := resolveWrapConfig(opts.wrapMode, opts.wrapCipher, opts.wrapKeyHex)
+	if err != nil {
+		log.Panicf("WRAP config: %v", err)
+	}
 	params := &turnParams{
 		host:         opts.host,
 		port:         opts.port,
@@ -2024,6 +2109,9 @@ func main() { //nolint:cyclop
 		getCreds:     nil,
 		resolver:     peerResolver,
 		credsManager: vkLinkManager,
+		wrapCipher:   wrapCipherSel,
+		wrapKey:      wrapKey,
+		wrapMode:     wrapMode,
 	}
 	sessionID := []byte(nil)
 
@@ -2271,10 +2359,24 @@ func main() { //nolint:cyclop
 				false,
 			)
 			if !waitForReady(ctx, okchan, mainlineBootstrapTimeout) {
+				// If WRAP was attempted, the watchdog in each worker has
+				// by now marked the peer as no-wrap; pre-emptively mark
+				// it here too so any racing worker also goes raw. Give
+				// bootstrap one more shot before tearing the process
+				// down so Android does not enter a respawn loop that
+				// wipes the wrap-disabled cache each time.
+				if params.wrapMode == "preferred" {
+					markWrapDisabledForAddr(peer.String())
+					log.Printf("bootstrap timed out; forcing WRAP fallback for peer %s and retrying", peer.String())
+					if waitForReady(ctx, okchan, mainlineBootstrapTimeout) {
+						goto mainlineBootstrapDone
+					}
+				}
 				runtimeCancel()
 				runtimeWG.Wait()
 				log.Fatalf("failed to bootstrap mainline session")
 			}
+		mainlineBootstrapDone:
 
 			supportedVersion := waitForProbeVersion(ctx, probeResult, muProbeTimeout)
 			activeMainlineControl := waitForMainlineControlHandle(ctx, mainlineControl, muProbeTimeout)

@@ -18,11 +18,14 @@ import (
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/internal/controlpath"
+	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	sessionmuv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/mu/v1"
 	"github.com/cacggghp/vk-turn-proxy/tcputil"
 	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
+	dtlsnet "github.com/pion/dtls/v3/pkg/net"
+	pionudp "github.com/pion/transport/v4/udp"
 	"github.com/xtaci/smux"
 )
 
@@ -989,7 +992,22 @@ func main() {
 		ConnectionIDGenerator: dtls.RandomCIDGenerator(8),
 	}
 
-	listener, err := dtls.Listen("udp", addr, config)
+	wrapCipher, err := resolveServerWrapConfig(opts.wrapMode, opts.wrapCipher, opts.wrapKeyHex)
+	if err != nil {
+		panic(err)
+	}
+	var listener net.Listener
+	if wrapCipher != nil {
+		log.Printf("WRAP active on listener (cipher=%s)", opts.wrapCipher)
+		inner, listenErr := pionudp.Listen("udp", addr)
+		if listenErr != nil {
+			panic(listenErr)
+		}
+		pl := wrap.PacketListener(dtlsnet.PacketListenerFromListener(inner), wrapCipher)
+		listener, err = dtls.NewListener(pl, config)
+	} else {
+		listener, err = dtls.Listen("udp", addr, config)
+	}
 	if err != nil {
 		panic(err)
 	}

@@ -3,6 +3,8 @@ package wrap
 import (
 	"log"
 	"net"
+
+	dtlsnet "github.com/pion/dtls/v3/pkg/net"
 )
 
 // readBufSize bounds how much we read from the underlying conn per packet.
@@ -61,3 +63,31 @@ func (w *wrappedConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	}
 	return len(p), nil
 }
+
+// PacketListener wraps a dtls.PacketListener so every accepted connection has
+// the supplied Cipher applied to its reads/writes.
+//
+// Returning the inner listener verbatim when cipher is nil keeps call-sites
+// symmetric for the "no obfuscation negotiated" path.
+func PacketListener(inner dtlsnet.PacketListener, c Cipher) dtlsnet.PacketListener {
+	if c == nil {
+		return inner
+	}
+	return &wrappedListener{inner: inner, cipher: c}
+}
+
+type wrappedListener struct {
+	inner  dtlsnet.PacketListener
+	cipher Cipher
+}
+
+func (l *wrappedListener) Accept() (net.PacketConn, net.Addr, error) {
+	pc, addr, err := l.inner.Accept()
+	if err != nil {
+		return pc, addr, err
+	}
+	return PacketConn(pc, l.cipher), addr, nil
+}
+
+func (l *wrappedListener) Close() error   { return l.inner.Close() }
+func (l *wrappedListener) Addr() net.Addr { return l.inner.Addr() }
