@@ -1527,7 +1527,7 @@ func oneTurnConnection(
 	if turnParams.udp {
 		rawConn, err2 := d.DialContext(ctx1, "udp", turnServerAddr)
 		if err2 != nil {
-			err = fmt.Errorf("failed to connect to TURN server: %s", err2)
+			err = newTurnSetupError(turnServerAddr, fmt.Errorf("dial TURN (udp) %s: %s", turnServerAddr, err2))
 			return
 		}
 		conn, ok := rawConn.(*net.UDPConn)
@@ -1547,7 +1547,7 @@ func oneTurnConnection(
 	} else {
 		conn, err2 := d.DialContext(ctx1, "tcp", turnServerAddr) // nolint: noctx
 		if err2 != nil {
-			err = fmt.Errorf("failed to connect to TURN server: %s", err2)
+			err = newTurnSetupError(turnServerAddr, fmt.Errorf("dial TURN (tcp) %s: %s", turnServerAddr, err2))
 			return
 		}
 		defer func() {
@@ -1587,7 +1587,7 @@ func oneTurnConnection(
 	// Start listening on the conn provided.
 	err1 = client.Listen()
 	if err1 != nil {
-		err = fmt.Errorf("failed to listen: %s", err1)
+		err = newTurnSetupError(turnServerAddr, fmt.Errorf("TURN listen %s: %s", turnServerAddr, err1))
 		return
 	}
 
@@ -1596,7 +1596,7 @@ func oneTurnConnection(
 	// socket.
 	relayConn, err1 := client.Allocate()
 	if err1 != nil {
-		err = fmt.Errorf("failed to allocate: %s", err1)
+		err = newTurnSetupError(turnServerAddr, fmt.Errorf("TURN allocate %s: %s", turnServerAddr, err1))
 		return
 	}
 	connectedStreams.Add(1)
@@ -1792,6 +1792,11 @@ func oneTurnConnectionLoop(
 				if err := <-c; err != nil {
 					if ctx.Err() != nil {
 						return
+					}
+					if addr, ok := turnSetupAddr(err); ok {
+						rotateStreamServer(streamID)
+						markTURNServerCooldown(addr)
+						log.Printf("[STREAM %d] cooling down TURN server %s after setup failure", streamID, addr)
 					}
 					if isFatalCaptchaFailure(err) {
 						log.Printf("[STREAM %d] Fatal captcha error, shutting down runtime: %s", streamID, err)

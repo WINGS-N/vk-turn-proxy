@@ -202,6 +202,11 @@ func maintainTCPSession(ctx context.Context, turnConfig *turnParams, peer *net.U
 			if turnConfig.credsManager != nil {
 				turnConfig.credsManager.ReportWorkerError(sessionID, err)
 			}
+			if addr, ok := turnSetupAddr(err); ok {
+				rotateStreamServer(sessionID)
+				markTURNServerCooldown(addr)
+				log.Printf("[tcp session %d] cooling down TURN server %s after setup failure", sessionID, addr)
+			}
 			log.Printf("[tcp session %d] setup error: %s, retrying...", sessionID, err)
 			select {
 			case <-ctx.Done():
@@ -278,7 +283,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	if turnConfig.udp {
 		rawConn, err := dialer.DialContext(dialCtx, "udp", turnServerAddr)
 		if err != nil {
-			return nil, nil, fmt.Errorf("dial TURN (udp): %w", err)
+			return nil, nil, newTurnSetupError(turnServerAddr, fmt.Errorf("dial TURN (udp): %w", err))
 		}
 		conn, ok := rawConn.(*net.UDPConn)
 		if !ok {
@@ -290,7 +295,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	} else {
 		conn, err := dialer.DialContext(dialCtx, "tcp", turnServerAddr)
 		if err != nil {
-			return nil, nil, fmt.Errorf("dial TURN (tcp): %w", err)
+			return nil, nil, newTurnSetupError(turnServerAddr, fmt.Errorf("dial TURN (tcp): %w", err))
 		}
 		cleanupFns = append(cleanupFns, func() { _ = conn.Close() })
 		turnConn = turn.NewSTUNConn(conn)
@@ -320,13 +325,13 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	cleanupFns = append(cleanupFns, func() { client.Close() })
 	if err = client.Listen(); err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("TURN listen: %w", err)
+		return nil, nil, newTurnSetupError(turnServerAddr, fmt.Errorf("TURN listen: %w", err))
 	}
 
 	relayConn, err := client.Allocate()
 	if err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("TURN allocate: %w", err)
+		return nil, nil, newTurnSetupError(turnServerAddr, fmt.Errorf("TURN allocate: %w", err))
 	}
 	connectedStreams.Add(1)
 	cleanupFns = append(cleanupFns, func() {
@@ -339,7 +344,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	dtlsConn, err := dtlsFunc(ctx, &relayPacketConn{relay: relayConn, peer: peer}, peer)
 	if err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("DTLS handshake: %w", err)
+		return nil, nil, newTurnSetupError(turnServerAddr, fmt.Errorf("DTLS handshake: %w", err))
 	}
 	cleanupFns = append(cleanupFns, func() { _ = dtlsConn.Close() })
 	emitProxyStatus("dtls_ready")
