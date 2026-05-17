@@ -171,6 +171,58 @@ func (TcpTransportFlavor) EnumDescriptor() ([]byte, []int) {
 	return file_proto_session_proto_rawDescGZIP(), []int{2}
 }
 
+type WrapCipher int32
+
+const (
+	WrapCipher_WRAP_CIPHER_UNSPECIFIED  WrapCipher = 0
+	WrapCipher_WRAP_CIPHER_NONE         WrapCipher = 1
+	WrapCipher_WRAP_CIPHER_AES_256_CTR  WrapCipher = 2
+	WrapCipher_WRAP_CIPHER_CHACHA20_XOR WrapCipher = 3
+)
+
+// Enum value maps for WrapCipher.
+var (
+	WrapCipher_name = map[int32]string{
+		0: "WRAP_CIPHER_UNSPECIFIED",
+		1: "WRAP_CIPHER_NONE",
+		2: "WRAP_CIPHER_AES_256_CTR",
+		3: "WRAP_CIPHER_CHACHA20_XOR",
+	}
+	WrapCipher_value = map[string]int32{
+		"WRAP_CIPHER_UNSPECIFIED":  0,
+		"WRAP_CIPHER_NONE":         1,
+		"WRAP_CIPHER_AES_256_CTR":  2,
+		"WRAP_CIPHER_CHACHA20_XOR": 3,
+	}
+)
+
+func (x WrapCipher) Enum() *WrapCipher {
+	p := new(WrapCipher)
+	*p = x
+	return p
+}
+
+func (x WrapCipher) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WrapCipher) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_session_proto_enumTypes[3].Descriptor()
+}
+
+func (WrapCipher) Type() protoreflect.EnumType {
+	return &file_proto_session_proto_enumTypes[3]
+}
+
+func (x WrapCipher) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use WrapCipher.Descriptor instead.
+func (WrapCipher) EnumDescriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{3}
+}
+
 type RoomProvider int32
 
 const (
@@ -201,11 +253,11 @@ func (x RoomProvider) String() string {
 }
 
 func (RoomProvider) Descriptor() protoreflect.EnumDescriptor {
-	return file_proto_session_proto_enumTypes[3].Descriptor()
+	return file_proto_session_proto_enumTypes[4].Descriptor()
 }
 
 func (RoomProvider) Type() protoreflect.EnumType {
-	return &file_proto_session_proto_enumTypes[3]
+	return &file_proto_session_proto_enumTypes[4]
 }
 
 func (x RoomProvider) Number() protoreflect.EnumNumber {
@@ -214,7 +266,7 @@ func (x RoomProvider) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RoomProvider.Descriptor instead.
 func (RoomProvider) EnumDescriptor() ([]byte, []int) {
-	return file_proto_session_proto_rawDescGZIP(), []int{3}
+	return file_proto_session_proto_rawDescGZIP(), []int{4}
 }
 
 type ClientHello struct {
@@ -228,8 +280,14 @@ type ClientHello struct {
 	SupportedTcpFlavors []TcpTransportFlavor   `protobuf:"varint,7,rep,packed,name=supported_tcp_flavors,json=supportedTcpFlavors,proto3,enum=sessionproto.TcpTransportFlavor" json:"supported_tcp_flavors,omitempty"`
 	PreferredTcpFlavor  TcpTransportFlavor     `protobuf:"varint,8,opt,name=preferred_tcp_flavor,json=preferredTcpFlavor,proto3,enum=sessionproto.TcpTransportFlavor" json:"preferred_tcp_flavor,omitempty"`
 	RoomExchange        *RoomDataExchange      `protobuf:"bytes,9,opt,name=room_exchange,json=roomExchange,proto3" json:"room_exchange,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// WRAP per-packet obfuscation negotiation. Order in supported_wrap_ciphers
+	// expresses client preference (most-preferred first).
+	SupportedWrapCiphers []WrapCipher `protobuf:"varint,10,rep,packed,name=supported_wrap_ciphers,json=supportedWrapCiphers,proto3,enum=sessionproto.WrapCipher" json:"supported_wrap_ciphers,omitempty"`
+	// Optional client-proposed shared key (32 bytes for AES-256-CTR/ChaCha20).
+	// Server may accept or fall back to its preset key based on configuration.
+	WrapKeyProposal []byte `protobuf:"bytes,11,opt,name=wrap_key_proposal,json=wrapKeyProposal,proto3" json:"wrap_key_proposal,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ClientHello) Reset() {
@@ -321,6 +379,20 @@ func (x *ClientHello) GetPreferredTcpFlavor() TcpTransportFlavor {
 func (x *ClientHello) GetRoomExchange() *RoomDataExchange {
 	if x != nil {
 		return x.RoomExchange
+	}
+	return nil
+}
+
+func (x *ClientHello) GetSupportedWrapCiphers() []WrapCipher {
+	if x != nil {
+		return x.SupportedWrapCiphers
+	}
+	return nil
+}
+
+func (x *ClientHello) GetWrapKeyProposal() []byte {
+	if x != nil {
+		return x.WrapKeyProposal
 	}
 	return nil
 }
@@ -471,8 +543,12 @@ type ServerHello struct {
 	SupportedTransports       []TransportMode        `protobuf:"varint,6,rep,packed,name=supported_transports,json=supportedTransports,proto3,enum=sessionproto.TransportMode" json:"supported_transports,omitempty"`
 	SupportedTcpFlavors       []TcpTransportFlavor   `protobuf:"varint,7,rep,packed,name=supported_tcp_flavors,json=supportedTcpFlavors,proto3,enum=sessionproto.TcpTransportFlavor" json:"supported_tcp_flavors,omitempty"`
 	SelectedTcpFlavor         TcpTransportFlavor     `protobuf:"varint,8,opt,name=selected_tcp_flavor,json=selectedTcpFlavor,proto3,enum=sessionproto.TcpTransportFlavor" json:"selected_tcp_flavor,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
+	// Final WRAP cipher chosen by the server.
+	//
+	//	WRAP_CIPHER_UNSPECIFIED / WRAP_CIPHER_NONE → stay on raw datagrams.
+	SelectedWrapCipher WrapCipher `protobuf:"varint,9,opt,name=selected_wrap_cipher,json=selectedWrapCipher,proto3,enum=sessionproto.WrapCipher" json:"selected_wrap_cipher,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ServerHello) Reset() {
@@ -559,6 +635,13 @@ func (x *ServerHello) GetSelectedTcpFlavor() TcpTransportFlavor {
 		return x.SelectedTcpFlavor
 	}
 	return TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED
+}
+
+func (x *ServerHello) GetSelectedWrapCipher() WrapCipher {
+	if x != nil {
+		return x.SelectedWrapCipher
+	}
+	return WrapCipher_WRAP_CIPHER_UNSPECIFIED
 }
 
 type Heartbeat struct {
@@ -673,7 +756,7 @@ var File_proto_session_proto protoreflect.FileDescriptor
 
 const file_proto_session_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/session.proto\x12\fsessionproto\"\xa3\x04\n" +
+	"\x13proto/session.proto\x12\fsessionproto\"\x9f\x05\n" +
 	"\vClientHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x121\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1d.sessionproto.ClientHelloTypeR\x04type\x12\x1d\n" +
@@ -684,7 +767,10 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\x12T\n" +
 	"\x15supported_tcp_flavors\x18\a \x03(\x0e2 .sessionproto.TcpTransportFlavorR\x13supportedTcpFlavors\x12R\n" +
 	"\x14preferred_tcp_flavor\x18\b \x01(\x0e2 .sessionproto.TcpTransportFlavorR\x12preferredTcpFlavor\x12C\n" +
-	"\rroom_exchange\x18\t \x01(\v2\x1e.sessionproto.RoomDataExchangeR\froomExchange\"\xe1\x01\n" +
+	"\rroom_exchange\x18\t \x01(\v2\x1e.sessionproto.RoomDataExchangeR\froomExchange\x12N\n" +
+	"\x16supported_wrap_ciphers\x18\n" +
+	" \x03(\x0e2\x18.sessionproto.WrapCipherR\x14supportedWrapCiphers\x12*\n" +
+	"\x11wrap_key_proposal\x18\v \x01(\fR\x0fwrapKeyProposal\"\xe1\x01\n" +
 	"\x10RoomDataExchange\x126\n" +
 	"\bprovider\x18\x01 \x01(\x0e2\x1a.sessionproto.RoomProviderR\bprovider\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12!\n" +
@@ -696,7 +782,7 @@ const file_proto_session_proto_rawDesc = "" +
 	"\broom_ids\x18\x06 \x03(\tR\aroomIds\"?\n" +
 	"\vRoomDataAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xe4\x03\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xb0\x04\n" +
 	"\vServerHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12!\n" +
 	"\fmu_supported\x18\x02 \x01(\bR\vmuSupported\x12\x14\n" +
@@ -705,7 +791,8 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x12selected_transport\x18\x05 \x01(\x0e2\x1b.sessionproto.TransportModeR\x11selectedTransport\x12N\n" +
 	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\x12T\n" +
 	"\x15supported_tcp_flavors\x18\a \x03(\x0e2 .sessionproto.TcpTransportFlavorR\x13supportedTcpFlavors\x12P\n" +
-	"\x13selected_tcp_flavor\x18\b \x01(\x0e2 .sessionproto.TcpTransportFlavorR\x11selectedTcpFlavor\"\xd2\x02\n" +
+	"\x13selected_tcp_flavor\x18\b \x01(\x0e2 .sessionproto.TcpTransportFlavorR\x11selectedTcpFlavor\x12J\n" +
+	"\x14selected_wrap_cipher\x18\t \x01(\x0e2\x18.sessionproto.WrapCipherR\x12selectedWrapCipher\"\xd2\x02\n" +
 	"\tHeartbeat\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\"\n" +
 	"\rwall_clock_ms\x18\x02 \x01(\x03R\vwallClockMs\x12%\n" +
@@ -728,7 +815,13 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x12TcpTransportFlavor\x12$\n" +
 	" TCP_TRANSPORT_FLAVOR_UNSPECIFIED\x10\x00\x12(\n" +
 	"$TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX\x10\x01\x12$\n" +
-	" TCP_TRANSPORT_FLAVOR_DIRECT_SMUX\x10\x02*J\n" +
+	" TCP_TRANSPORT_FLAVOR_DIRECT_SMUX\x10\x02*z\n" +
+	"\n" +
+	"WrapCipher\x12\x1b\n" +
+	"\x17WRAP_CIPHER_UNSPECIFIED\x10\x00\x12\x14\n" +
+	"\x10WRAP_CIPHER_NONE\x10\x01\x12\x1b\n" +
+	"\x17WRAP_CIPHER_AES_256_CTR\x10\x02\x12\x1c\n" +
+	"\x18WRAP_CIPHER_CHACHA20_XOR\x10\x03*J\n" +
 	"\fRoomProvider\x12\x1d\n" +
 	"\x19ROOM_PROVIDER_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17ROOM_PROVIDER_WB_STREAM\x10\x01B=Z;github.com/cacggghp/vk-turn-proxy/sessionproto;sessionprotob\x06proto3"
@@ -745,18 +838,19 @@ func file_proto_session_proto_rawDescGZIP() []byte {
 	return file_proto_session_proto_rawDescData
 }
 
-var file_proto_session_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_proto_session_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
 var file_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_proto_session_proto_goTypes = []any{
 	(ClientHelloType)(0),     // 0: sessionproto.ClientHelloType
 	(TransportMode)(0),       // 1: sessionproto.TransportMode
 	(TcpTransportFlavor)(0),  // 2: sessionproto.TcpTransportFlavor
-	(RoomProvider)(0),        // 3: sessionproto.RoomProvider
-	(*ClientHello)(nil),      // 4: sessionproto.ClientHello
-	(*RoomDataExchange)(nil), // 5: sessionproto.RoomDataExchange
-	(*RoomDataAck)(nil),      // 6: sessionproto.RoomDataAck
-	(*ServerHello)(nil),      // 7: sessionproto.ServerHello
-	(*Heartbeat)(nil),        // 8: sessionproto.Heartbeat
+	(WrapCipher)(0),          // 3: sessionproto.WrapCipher
+	(RoomProvider)(0),        // 4: sessionproto.RoomProvider
+	(*ClientHello)(nil),      // 5: sessionproto.ClientHello
+	(*RoomDataExchange)(nil), // 6: sessionproto.RoomDataExchange
+	(*RoomDataAck)(nil),      // 7: sessionproto.RoomDataAck
+	(*ServerHello)(nil),      // 8: sessionproto.ServerHello
+	(*Heartbeat)(nil),        // 9: sessionproto.Heartbeat
 }
 var file_proto_session_proto_depIdxs = []int32{
 	0,  // 0: sessionproto.ClientHello.type:type_name -> sessionproto.ClientHelloType
@@ -764,18 +858,20 @@ var file_proto_session_proto_depIdxs = []int32{
 	1,  // 2: sessionproto.ClientHello.supported_transports:type_name -> sessionproto.TransportMode
 	2,  // 3: sessionproto.ClientHello.supported_tcp_flavors:type_name -> sessionproto.TcpTransportFlavor
 	2,  // 4: sessionproto.ClientHello.preferred_tcp_flavor:type_name -> sessionproto.TcpTransportFlavor
-	5,  // 5: sessionproto.ClientHello.room_exchange:type_name -> sessionproto.RoomDataExchange
-	3,  // 6: sessionproto.RoomDataExchange.provider:type_name -> sessionproto.RoomProvider
-	1,  // 7: sessionproto.ServerHello.selected_transport:type_name -> sessionproto.TransportMode
-	1,  // 8: sessionproto.ServerHello.supported_transports:type_name -> sessionproto.TransportMode
-	2,  // 9: sessionproto.ServerHello.supported_tcp_flavors:type_name -> sessionproto.TcpTransportFlavor
-	2,  // 10: sessionproto.ServerHello.selected_tcp_flavor:type_name -> sessionproto.TcpTransportFlavor
-	1,  // 11: sessionproto.Heartbeat.transport:type_name -> sessionproto.TransportMode
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	6,  // 5: sessionproto.ClientHello.room_exchange:type_name -> sessionproto.RoomDataExchange
+	3,  // 6: sessionproto.ClientHello.supported_wrap_ciphers:type_name -> sessionproto.WrapCipher
+	4,  // 7: sessionproto.RoomDataExchange.provider:type_name -> sessionproto.RoomProvider
+	1,  // 8: sessionproto.ServerHello.selected_transport:type_name -> sessionproto.TransportMode
+	1,  // 9: sessionproto.ServerHello.supported_transports:type_name -> sessionproto.TransportMode
+	2,  // 10: sessionproto.ServerHello.supported_tcp_flavors:type_name -> sessionproto.TcpTransportFlavor
+	2,  // 11: sessionproto.ServerHello.selected_tcp_flavor:type_name -> sessionproto.TcpTransportFlavor
+	3,  // 12: sessionproto.ServerHello.selected_wrap_cipher:type_name -> sessionproto.WrapCipher
+	1,  // 13: sessionproto.Heartbeat.transport:type_name -> sessionproto.TransportMode
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_proto_session_proto_init() }
@@ -788,7 +884,7 @@ func file_proto_session_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_session_proto_rawDesc), len(file_proto_session_proto_rawDesc)),
-			NumEnums:      4,
+			NumEnums:      5,
 			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,

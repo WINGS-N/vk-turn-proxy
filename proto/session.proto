@@ -23,6 +23,13 @@ enum TcpTransportFlavor {
   TCP_TRANSPORT_FLAVOR_DIRECT_SMUX = 2;
 }
 
+enum WrapCipher {
+  WRAP_CIPHER_UNSPECIFIED = 0;
+  WRAP_CIPHER_NONE = 1;
+  WRAP_CIPHER_AES_256_CTR = 2;
+  WRAP_CIPHER_CHACHA20_XOR = 3;
+}
+
 message ClientHello {
   uint32 version = 1;
   ClientHelloType type = 2;
@@ -33,6 +40,12 @@ message ClientHello {
   repeated TcpTransportFlavor supported_tcp_flavors = 7;
   TcpTransportFlavor preferred_tcp_flavor = 8;
   RoomDataExchange room_exchange = 9;
+  // WRAP per-packet obfuscation negotiation. Order in supported_wrap_ciphers
+  // expresses client preference (most-preferred first).
+  repeated WrapCipher supported_wrap_ciphers = 10;
+  // Optional client-proposed shared key (32 bytes for AES-256-CTR/ChaCha20).
+  // Server may accept or fall back to its preset key based on configuration.
+  bytes wrap_key_proposal = 11;
 }
 
 enum RoomProvider {
@@ -63,6 +76,9 @@ message ServerHello {
   repeated TransportMode supported_transports = 6;
   repeated TcpTransportFlavor supported_tcp_flavors = 7;
   TcpTransportFlavor selected_tcp_flavor = 8;
+  // Final WRAP cipher chosen by the server.
+  //   WRAP_CIPHER_UNSPECIFIED / WRAP_CIPHER_NONE → stay on raw datagrams.
+  WrapCipher selected_wrap_cipher = 9;
 }
 
 message Heartbeat {

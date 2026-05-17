@@ -57,8 +57,32 @@ func BuildSessionHelloWithTransport(
 	requestedTransport sessionproto.TransportMode,
 	supportedTransports []sessionproto.TransportMode,
 ) ([]byte, error) {
+	return BuildSessionHelloWithWrap(
+		sessionID,
+		streamID,
+		requestedTransport,
+		supportedTransports,
+		nil,
+		nil,
+	)
+}
+
+// BuildSessionHelloWithWrap extends BuildSessionHelloWithTransport with WRAP
+// per-packet obfuscation negotiation fields. Pass nil/empty slices to disable.
+func BuildSessionHelloWithWrap(
+	sessionID []byte,
+	streamID byte,
+	requestedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	supportedWrapCiphers []sessionproto.WrapCipher,
+	wrapKeyProposal []byte,
+) ([]byte, error) {
 	if len(sessionID) != sessionproto.SessionIDLen {
 		return nil, fmt.Errorf("session ID must be %d bytes", sessionproto.SessionIDLen)
+	}
+	var keyCopy []byte
+	if len(wrapKeyProposal) > 0 {
+		keyCopy = append([]byte(nil), wrapKeyProposal...)
 	}
 	return sessionproto.MarshalClientHello(&sessionproto.ClientHello{
 		Version:            ProtocolVersion,
@@ -69,6 +93,8 @@ func BuildSessionHelloWithTransport(
 		SupportedTransports: sessionproto.NormalizeSupportedTransports(
 			supportedTransports,
 		),
+		SupportedWrapCiphers: append([]sessionproto.WrapCipher(nil), supportedWrapCiphers...),
+		WrapKeyProposal:      keyCopy,
 	})
 }
 
@@ -127,6 +153,30 @@ func BuildServerHelloWithTcpFlavor(
 	supportedTcpFlavors []sessionproto.TcpTransportFlavor,
 	selectedTcpFlavor sessionproto.TcpTransportFlavor,
 ) ([]byte, error) {
+	return BuildServerHelloWithWrap(
+		muSupported,
+		errorText,
+		controlHeartbeatSupported,
+		selectedTransport,
+		supportedTransports,
+		supportedTcpFlavors,
+		selectedTcpFlavor,
+		sessionproto.WrapCipher_WRAP_CIPHER_UNSPECIFIED,
+	)
+}
+
+// BuildServerHelloWithWrap extends BuildServerHelloWithTcpFlavor with the
+// final WRAP cipher decision negotiated against the client.
+func BuildServerHelloWithWrap(
+	muSupported bool,
+	errorText string,
+	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	supportedTcpFlavors []sessionproto.TcpTransportFlavor,
+	selectedTcpFlavor sessionproto.TcpTransportFlavor,
+	selectedWrapCipher sessionproto.WrapCipher,
+) ([]byte, error) {
 	return sessionproto.MarshalServerHello(&sessionproto.ServerHello{
 		Version:                   ProtocolVersion,
 		MuSupported:               muSupported,
@@ -138,5 +188,6 @@ func BuildServerHelloWithTcpFlavor(
 		),
 		SupportedTcpFlavors: sessionproto.NormalizeSupportedTcpFlavors(supportedTcpFlavors),
 		SelectedTcpFlavor:   selectedTcpFlavor,
+		SelectedWrapCipher:  selectedWrapCipher,
 	})
 }
