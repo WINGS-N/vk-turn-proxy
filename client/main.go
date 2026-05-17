@@ -340,10 +340,10 @@ func vkDelayRandom(minMs, maxMs int) {
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
 
-func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, string, time.Duration, error) {
+func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, []string, time.Duration, error) {
 	if remaining := captchaLockoutRemaining(); remaining > 0 {
 		emitCaptchaLockoutStatus(remaining)
-		return "", "", "", 0, fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active for %s", remaining.Round(time.Second))
+		return "", "", nil, 0, fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active for %s", remaining.Round(time.Second))
 	}
 
 	profile := getRandomProfile()
@@ -351,7 +351,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 	escapedName := neturl.QueryEscape(name)
 	client, err := resolver.newTLSHTTPClient(profile, 20*time.Second)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("failed to initialize tls client: %w", err)
+		return "", "", nil, 0, fmt.Errorf("failed to initialize tls client: %w", err)
 	}
 	defer client.CloseIdleConnections()
 
@@ -410,16 +410,16 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	resp, err = doRequest(data, url)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("request error:%s", err)
+		return "", "", nil, 0, fmt.Errorf("request error:%s", err)
 	}
 
 	dataMap, ok := resp["data"].(map[string]interface{})
 	if !ok {
-		return "", "", "", 0, fmt.Errorf("unexpected anon token response: %v", resp)
+		return "", "", nil, 0, fmt.Errorf("unexpected anon token response: %v", resp)
 	}
 	token1, ok := dataMap["access_token"].(string)
 	if !ok {
-		return "", "", "", 0, fmt.Errorf("missing access_token in response: %v", resp)
+		return "", "", nil, 0, fmt.Errorf("missing access_token in response: %v", resp)
 	}
 
 	vkDelayRandom(100, 150)
@@ -440,14 +440,14 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 	for attempt := 0; attempt <= maxCaptchaAttempts; attempt++ {
 		resp, err = doRequest(data, url)
 		if err != nil {
-			return "", "", "", 0, fmt.Errorf("request error:%s", err)
+			return "", "", nil, 0, fmt.Errorf("request error:%s", err)
 		}
 
 		if errObj, hasErr := resp["error"].(map[string]interface{}); hasErr {
 			errCode, _ := errObj["error_code"].(float64)
 			if errCode == 14 {
 				if attempt == maxCaptchaAttempts {
-					return "", "", "", 0, wrapCaptchaFailure(fmt.Errorf("captcha failed after %d attempts", maxCaptchaAttempts), allowInteractiveFallback)
+					return "", "", nil, 0, wrapCaptchaFailure(fmt.Errorf("captcha failed after %d attempts", maxCaptchaAttempts), allowInteractiveFallback)
 				}
 
 				captchaErr := parseVkCaptchaError(errObj)
@@ -507,7 +507,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						}
 					}
 					if solveErr != nil {
-						return "", "", "", 0, wrapCaptchaFailure(fmt.Errorf("smart captcha solve error: %w", solveErr), allowInteractiveFallback)
+						return "", "", nil, 0, wrapCaptchaFailure(fmt.Errorf("smart captcha solve error: %w", solveErr), allowInteractiveFallback)
 					}
 					storeCachedCaptchaToken(successToken)
 					captchaAttempt := captchaErr.CaptchaAttempt
@@ -538,7 +538,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 							profile.UserAgent,
 						)
 						if solveErr != nil {
-							return "", "", "", 0, wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), false)
+							return "", "", nil, 0, wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), false)
 						}
 						data = fmt.Sprintf(
 							"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_sid=%s&captcha_key=%s",
@@ -562,7 +562,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 						profile.UserAgent,
 					)
 					if solveErr != nil {
-						return "", "", "", 0, wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), true)
+						return "", "", nil, 0, wrapCaptchaFailure(fmt.Errorf("captcha solve error: %w", solveErr), true)
 					}
 					data = fmt.Sprintf(
 						"vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s&captcha_sid=%s&captcha_key=%s",
@@ -575,16 +575,16 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 				}
 				continue
 			}
-			return "", "", "", 0, fmt.Errorf("VK API error: %v", errObj)
+			return "", "", nil, 0, fmt.Errorf("VK API error: %v", errObj)
 		}
 
 		responseMap, ok := resp["response"].(map[string]interface{})
 		if !ok {
-			return "", "", "", 0, fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
+			return "", "", nil, 0, fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
 		}
 		token2, ok = responseMap["token"].(string)
 		if !ok {
-			return "", "", "", 0, fmt.Errorf("missing token in response: %v", resp)
+			return "", "", nil, 0, fmt.Errorf("missing token in response: %v", resp)
 		}
 		if usedAutoCaptcha {
 			log.Printf("VK smart captcha accepted by auth endpoint")
@@ -598,7 +598,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	resp, err = doRequest(data, url)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("request error:%s", err)
+		return "", "", nil, 0, fmt.Errorf("request error:%s", err)
 	}
 
 	token3 := resp["session_key"].(string)
@@ -609,13 +609,16 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	resp, err = doRequest(data, url)
 	if err != nil {
-		return "", "", "", 0, fmt.Errorf("request error:%s", err)
+		return "", "", nil, 0, fmt.Errorf("request error:%s", err)
 	}
 
 	turnServer := resp["turn_server"].(map[string]interface{})
 	user := turnServer["username"].(string)
 	pass := turnServer["credential"].(string)
-	turn := turnServer["urls"].([]interface{})[0].(string)
+	urlsRaw, ok := turnServer["urls"].([]interface{})
+	if !ok || len(urlsRaw) == 0 {
+		return "", "", nil, 0, fmt.Errorf("missing or empty urls in turn_server")
+	}
 
 	var lifetime time.Duration
 	if rawLifetime, ok := turnServer["lifetime"].(float64); ok && rawLifetime > 0 {
@@ -624,10 +627,22 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 		lifetime = time.Duration(rawTTL) * time.Second
 	}
 
-	clean := strings.Split(turn, "?")[0]
-	address := strings.TrimPrefix(strings.TrimPrefix(clean, "turn:"), "turns:")
+	var addresses []string
+	for _, u := range urlsRaw {
+		urlStr, ok := u.(string)
+		if !ok {
+			continue
+		}
+		clean := strings.Split(urlStr, "?")[0]
+		address := strings.TrimPrefix(strings.TrimPrefix(clean, "turn:"), "turns:")
+		addresses = append(addresses, address)
+	}
+	if len(addresses) == 0 {
+		return "", "", nil, 0, fmt.Errorf("no valid TURN addresses parsed from urls")
+	}
+	log.Printf("VK Auth: TURN urls (%d) %v", len(addresses), addresses)
 
-	return user, pass, address, lifetime, nil
+	return user, pass, addresses, lifetime, nil
 }
 
 func getYandexCreds(link string, resolver *protectedResolver) (string, string, string, error) {
@@ -1941,11 +1956,11 @@ func main() { //nolint:cyclop
 		credsGroupSize := max(1, opts.credsGroupSize)
 		numGroups := max(1, ceilDiv(opts.n, credsGroupSize))
 		vkFetch := func(fctx context.Context, hash string, allowInteractive bool) (turnCred, error) {
-			user, pass, addr, lifetime, err := getVkCredsWithFallback(hash, peerResolver, allowInteractive)
+			user, pass, addrs, lifetime, err := getVkCredsWithFallback(hash, peerResolver, allowInteractive)
 			if err != nil {
 				return turnCred{}, err
 			}
-			return turnCred{user: user, pass: pass, addr: addr, lifetime: lifetime}, nil
+			return turnCred{user: user, pass: pass, addrs: addrs, lifetime: lifetime}, nil
 		}
 		vkLinkManager = newGroupedCredsManager(ctx, numGroups, credsGroupSize, tracker, vkFetch)
 		log.Printf(
@@ -1967,14 +1982,17 @@ func main() { //nolint:cyclop
 		if opts.n <= 0 {
 			opts.n = 1
 		}
-		yandexBase := func(s string, _ bool) (string, string, string, time.Duration, error) {
+		yandexBase := func(s string, _ bool) (string, string, []string, time.Duration, error) {
 			user, pass, addr, err := getYandexCreds(s, peerResolver)
-			return user, pass, addr, 0, err
+			if err != nil {
+				return "", "", nil, 0, err
+			}
+			return user, pass, []string{addr}, 0, nil
 		}
 		yandexPool := poolCreds(yandexBase, 1)
 		yandexLink := link
-		unifiedGetCreds = func(_ int) (string, string, string, error) {
-			return yandexPool(yandexLink)
+		unifiedGetCreds = func(workerID int) (string, string, string, error) {
+			return yandexPool(yandexLink, workerID)
 		}
 	}
 	configuredPoolSize := max(1, opts.n)

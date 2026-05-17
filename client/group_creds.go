@@ -91,7 +91,15 @@ func (m *groupedCredsManager) GetCredsForWorker(workerID int) (string, string, s
 	if err != nil {
 		return "", "", "", err
 	}
-	return cred.user, cred.pass, cred.addr, nil
+	return cred.user, cred.pass, pickStreamServerAddr(workerID, cred.addrs), nil
+}
+
+// ReportSetupFailure advances the rotation offset for the worker and marks the
+// failing TURN address as cooling-down, so subsequent GetCredsForWorker calls
+// hand out a different endpoint within the same credential.
+func (m *groupedCredsManager) ReportSetupFailure(workerID int, addr string) {
+	rotateStreamServer(workerID)
+	markTURNServerCooldown(addr)
 }
 
 func (m *groupedCredsManager) ReportWorkerError(workerID int, err error) {

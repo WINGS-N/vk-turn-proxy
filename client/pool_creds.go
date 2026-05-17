@@ -11,15 +11,24 @@ import (
 type turnCred struct {
 	user            string
 	pass            string
-	addr            string
+	addrs           []string
 	bornAt          time.Time
 	lifetime        time.Duration
 	isSecondaryLink bool
 }
 
-type pooledGetCredsFunc func(string, bool) (string, string, string, time.Duration, error)
+// primaryAddr returns the canonical address for identity comparison; an empty
+// addrs slice yields "" so dedup/log paths stay safe.
+func (cred turnCred) primaryAddr() string {
+	if len(cred.addrs) == 0 {
+		return ""
+	}
+	return cred.addrs[0]
+}
 
-type pooledGetCredsResult func(link string) (string, string, string, error)
+type pooledGetCredsFunc func(string, bool) (string, string, []string, time.Duration, error)
+
+type pooledGetCredsResult func(link string, workerID int) (string, string, string, error)
 
 type adaptivePoolConfig struct {
 	minSize            int
@@ -165,7 +174,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 
 	appendIfNewLocked := func(cred turnCred) bool {
 		for _, existing := range state.pool {
-			if existing.user == cred.user && existing.pass == cred.pass && existing.addr == cred.addr {
+			if existing.user == cred.user && existing.pass == cred.pass && existing.primaryAddr() == cred.primaryAddr() {
 				return false
 			}
 		}
@@ -196,7 +205,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 				state.mu.Unlock()
 			}()
 
-			user, pass, addr, lifetime, err := f(link, false)
+			user, pass, addrs, lifetime, err := f(link, false)
 			if err != nil {
 				state.mu.Lock()
 				state.backgroundRetryAfter = time.Now().Add(backgroundPoolRetryCooldown)
@@ -213,7 +222,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 			added := appendIfNewLocked(turnCred{
 				user:     user,
 				pass:     pass,
-				addr:     addr,
+				addrs:    addrs,
 				bornAt:   time.Now(),
 				lifetime: lifetime,
 			})
@@ -229,7 +238,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 		}()
 	}
 
-	return func(link string) (string, string, string, error) {
+	return func(link string, workerID int) (string, string, string, error) {
 		for {
 			state.mu.Lock()
 			expireIfNeededLocked()
@@ -244,7 +253,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 				if currentSize < desiredSize {
 					startBackgroundFill(link)
 				}
-				return cred.user, cred.pass, cred.addr, nil
+				return cred.user, cred.pass, pickStreamServerAddr(workerID, cred.addrs), nil
 			}
 
 			if state.foregroundFillRunning {
@@ -259,7 +268,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 					if currentSize < desiredSize {
 						startBackgroundFill(link)
 					}
-					return cred.user, cred.pass, cred.addr, nil
+					return cred.user, cred.pass, pickStreamServerAddr(workerID, cred.addrs), nil
 				}
 				state.mu.Unlock()
 				continue
@@ -268,7 +277,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 			state.foregroundFillRunning = true
 			state.mu.Unlock()
 
-			user, pass, addr, lifetime, err := f(link, true)
+			user, pass, addrs, lifetime, err := f(link, true)
 
 			state.mu.Lock()
 			state.foregroundFillRunning = false
@@ -276,7 +285,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 				_ = appendIfNewLocked(turnCred{
 					user:     user,
 					pass:     pass,
-					addr:     addr,
+					addrs:    addrs,
 					bornAt:   time.Now(),
 					lifetime: lifetime,
 				})
@@ -291,7 +300,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 				if currentSize < desiredSize {
 					startBackgroundFill(link)
 				}
-				return user, pass, addr, nil
+				return user, pass, pickStreamServerAddr(workerID, addrs), nil
 			}
 
 			state.cond.Broadcast()
@@ -304,7 +313,7 @@ func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGet
 				if currentSize < desiredSize {
 					startBackgroundFill(link)
 				}
-				return cred.user, cred.pass, cred.addr, nil
+				return cred.user, cred.pass, pickStreamServerAddr(workerID, cred.addrs), nil
 			}
 			state.mu.Unlock()
 
