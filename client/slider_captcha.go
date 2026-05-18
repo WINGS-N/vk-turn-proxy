@@ -107,7 +107,7 @@ func (s *captchaNotRobotSession) baseValues() neturl.Values {
 	return values
 }
 
-func (s *captchaNotRobotSession) request(method string, values neturl.Values) (map[string]interface{}, error) {
+func (s *captchaNotRobotSession) request(method string, values neturl.Values) (map[string]any, error) {
 	reqURL := "https://api.vk.ru/method/" + method + "?v=5.131"
 
 	req, err := fhttp.NewRequestWithContext(s.ctx, "POST", reqURL, strings.NewReader(values.Encode()))
@@ -138,7 +138,7 @@ func (s *captchaNotRobotSession) request(method string, values neturl.Values) (m
 		return nil, err
 	}
 
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (s *captchaNotRobotSession) requestComponentDone() error {
 		return fmt.Errorf("componentDone failed: %w", err)
 	}
 
-	respObj, ok := resp["response"].(map[string]interface{})
+	respObj, ok := resp["response"].(map[string]any)
 	if ok {
 		if statusVal, ok := respObj["status"].(string); ok && statusVal != "" && statusVal != "OK" {
 			return fmt.Errorf("componentDone status: %s", statusVal)
@@ -230,7 +230,7 @@ func (s *captchaNotRobotSession) requestSliderContentWithFallback(sliderSettings
 	return nil, lastErr
 }
 
-func (s *captchaNotRobotSession) requestSliderCheck(activeSteps []int, candidateIndex int, candidateCount int) (*captchaCheckResult, error) {
+func (s *captchaNotRobotSession) requestSliderCheck(activeSteps []int) (*captchaCheckResult, error) {
 	answer, err := encodeSliderAnswer(activeSteps)
 	if err != nil {
 		return nil, err
@@ -375,7 +375,7 @@ func callCaptchaNotRobotWithSliderPOC(
 			candidate.Index,
 			candidate.Score,
 		)
-		return session.requestSliderCheck(candidate.ActiveSteps, candidate.Index, len(candidates))
+		return session.requestSliderCheck(candidate.ActiveSteps)
 	})
 	if err != nil {
 		return "", err
@@ -394,8 +394,8 @@ func buildCaptchaDeviceJSON(profile Profile) string {
 	)
 }
 
-func parseCaptchaSettingsResponse(resp map[string]interface{}) (*captchaSettingsResponse, error) {
-	respObj, ok := resp["response"].(map[string]interface{})
+func parseCaptchaSettingsResponse(resp map[string]any) (*captchaSettingsResponse, error) {
+	respObj, ok := resp["response"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid settings response: %v", resp)
 	}
@@ -411,7 +411,7 @@ func parseCaptchaSettingsResponse(resp map[string]interface{}) (*captchaSettings
 	}
 
 	for _, rawItem := range rawSettings {
-		item, ok := rawItem.(map[string]interface{})
+		item, ok := rawItem.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -474,15 +474,15 @@ func parseCaptchaSettingsFromHTML(html string) (*captchaSettingsResponse, error)
 	var initPayload struct {
 		Data struct {
 			ShowCaptchaType string      `json:"show_captcha_type"`
-			CaptchaSettings interface{} `json:"captcha_settings"`
+			CaptchaSettings any `json:"captcha_settings"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(initMatch[1]), &initPayload); err != nil {
 		return nil, fmt.Errorf("parse window.init captcha data: %w", err)
 	}
 
-	return parseCaptchaSettingsResponse(map[string]interface{}{
-		"response": map[string]interface{}{
+	return parseCaptchaSettingsResponse(map[string]any{
+		"response": map[string]any{
 			"show_captcha_type": initPayload.Data.ShowCaptchaType,
 			"captcha_settings":  initPayload.Data.CaptchaSettings,
 		},
@@ -525,16 +525,16 @@ func cloneCaptchaSettings(src *captchaSettingsResponse) *captchaSettingsResponse
 	return cloned
 }
 
-func expandCaptchaSettings(raw interface{}) ([]interface{}, bool) {
+func expandCaptchaSettings(raw any) ([]any, bool) {
 	switch value := raw.(type) {
 	case nil:
 		return nil, false
-	case []interface{}:
+	case []any:
 		return value, true
-	case map[string]interface{}:
-		items := make([]interface{}, 0, len(value))
+	case map[string]any:
+		items := make([]any, 0, len(value))
 		for captchaType, settings := range value {
-			items = append(items, map[string]interface{}{
+			items = append(items, map[string]any{
 				"type":     captchaType,
 				"settings": settings,
 			})
@@ -546,12 +546,12 @@ func expandCaptchaSettings(raw interface{}) ([]interface{}, bool) {
 			return nil, false
 		}
 
-		var items []interface{}
+		var items []any
 		if err := json.Unmarshal([]byte(trimmed), &items); err == nil {
 			return items, true
 		}
 
-		var mapping map[string]interface{}
+		var mapping map[string]any
 		if err := json.Unmarshal([]byte(trimmed), &mapping); err == nil {
 			return expandCaptchaSettings(mapping)
 		}
@@ -560,7 +560,7 @@ func expandCaptchaSettings(raw interface{}) ([]interface{}, bool) {
 	return nil, false
 }
 
-func normalizeCaptchaSettings(raw interface{}) (string, error) {
+func normalizeCaptchaSettings(raw any) (string, error) {
 	switch value := raw.(type) {
 	case nil:
 		return "", nil
@@ -575,8 +575,8 @@ func normalizeCaptchaSettings(raw interface{}) (string, error) {
 	}
 }
 
-func parseCaptchaCheckResult(resp map[string]interface{}) (*captchaCheckResult, error) {
-	respObj, ok := resp["response"].(map[string]interface{})
+func parseCaptchaCheckResult(resp map[string]any) (*captchaCheckResult, error) {
+	respObj, ok := resp["response"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid check response: %v", resp)
 	}
@@ -592,8 +592,8 @@ func parseCaptchaCheckResult(resp map[string]interface{}) (*captchaCheckResult, 
 	return result, nil
 }
 
-func parseSliderCaptchaContentResponse(resp map[string]interface{}) (*sliderCaptchaContent, error) {
-	respObj, ok := resp["response"].(map[string]interface{})
+func parseSliderCaptchaContentResponse(resp map[string]any) (*sliderCaptchaContent, error) {
+	respObj, ok := resp["response"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid slider content response: %v", resp)
 	}
@@ -623,7 +623,7 @@ func parseSliderCaptchaContentResponse(resp map[string]interface{}) (*sliderCapt
 		return nil, fmt.Errorf("slider image missing")
 	}
 
-	rawSteps, ok := respObj["steps"].([]interface{})
+	rawSteps, ok := respObj["steps"].([]any)
 	if !ok {
 		return nil, fmt.Errorf("slider steps missing")
 	}
@@ -651,7 +651,7 @@ func parseSliderCaptchaContentResponse(resp map[string]interface{}) (*sliderCapt
 	}, nil
 }
 
-func parseIntSlice(raw []interface{}) ([]int, error) {
+func parseIntSlice(raw []any) ([]int, error) {
 	values := make([]int, 0, len(raw))
 	for _, item := range raw {
 		number, err := parseIntValue(item)
@@ -663,7 +663,7 @@ func parseIntSlice(raw []interface{}) ([]int, error) {
 	return values, nil
 }
 
-func parseIntValue(raw interface{}) (int, error) {
+func parseIntValue(raw any) (int, error) {
 	switch value := raw.(type) {
 	case float64:
 		return int(value), nil
@@ -942,45 +942,6 @@ func absDiff(left uint32, right uint32) int64 {
 	}
 	return int64(right - left)
 }
-
-/*
-func generateSliderCursor(candidateIndex int, candidateCount int) string {
-	return buildSliderCursor(candidateIndex, candidateCount, time.Now().Add(-220*time.Millisecond).UnixMilli())
-}
-
-func buildSliderCursor(candidateIndex int, candidateCount int, startTime int64) string {
-	if candidateCount <= 0 {
-		return "[]"
-	}
-
-	type cursorPoint struct {
-		X int   `json:"x"`
-		Y int   `json:"y"`
-		T int64 `json:"t"`
-	}
-
-	startX := 140
-	endX := startX + 620*candidateIndex/candidateCount
-	startY := 430
-
-	points := make([]cursorPoint, 0, 12)
-	for step := 0; step < 12; step++ {
-		x := startX + (endX-startX)*step/11
-		y := startY + ((step % 3) - 1)
-		points = append(points, cursorPoint{
-			X: x,
-			Y: y,
-			T: startTime + int64(step*18),
-		})
-	}
-
-	data, err := json.Marshal(points)
-	if err != nil {
-		return "[]"
-	}
-	return string(data)
-}
-*/
 
 func trySliderCaptchaCandidates(
 	candidates []sliderCandidate,

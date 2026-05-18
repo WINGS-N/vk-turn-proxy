@@ -137,9 +137,7 @@ func main() {
 			log.Println(err)
 			continue
 		}
-		wg1.Add(1)
-		go func(conn net.Conn) {
-			defer wg1.Done()
+		wg1.Go(func() {
 			defer func() {
 				if closeErr := conn.Close(); closeErr != nil {
 					log.Printf("failed to close incoming connection: %s", closeErr)
@@ -170,7 +168,7 @@ func main() {
 			}
 
 			debugf("Connection closed: %s\n", conn.RemoteAddr())
-		}(conn)
+		})
 	}
 }
 
@@ -548,16 +546,13 @@ func (c *bondServerConn) run() {
 	debugf("[bond %d] backend connected", c.id)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		c.copyBondToBackend(backendConn)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		defer c.cancel()
 		c.copyBackendToBond(backendConn)
-	}()
+	})
 	wg.Wait()
 }
 
@@ -729,7 +724,6 @@ func handleUDPConnection(ctx context.Context, conn net.Conn, connectAddr string)
 	}()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
 	ctx2, cancel2 := context.WithCancel(ctx)
 	stats := &throughputStats{}
 	go stats.logEvery(
@@ -747,8 +741,7 @@ func handleUDPConnection(ctx context.Context, conn net.Conn, connectAddr string)
 			log.Printf("failed to set outgoing deadline: %s", err)
 		}
 	})
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer cancel2()
 		buf := make([]byte, 1600)
 		for {
@@ -778,9 +771,8 @@ func handleUDPConnection(ctx context.Context, conn net.Conn, connectAddr string)
 				return
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		defer cancel2()
 		buf := make([]byte, 1600)
 		for {
@@ -810,7 +802,7 @@ func handleUDPConnection(ctx context.Context, conn net.Conn, connectAddr string)
 				return
 			}
 		}
-	}()
+	})
 	wg.Wait()
 }
 
@@ -866,10 +858,8 @@ func handleVLESSConnection(ctx context.Context, dtlsConn net.Conn, connectAddr s
 			break
 		}
 
-		wg.Add(1)
-		go func(s *smux.Stream) {
-			defer wg.Done()
-
+		s := stream
+		wg.Go(func() {
 			var prefix [4]byte
 			if _, err := io.ReadFull(s, prefix[:]); err != nil {
 				if err != io.EOF && err != io.ErrUnexpectedEOF {
@@ -907,7 +897,7 @@ func handleVLESSConnection(ctx context.Context, dtlsConn net.Conn, connectAddr s
 
 			// Bidirectional copy
 			pipeConn(ctx, &prefixedConn{Conn: s, prefix: prefix[:]}, backendConn)
-		}(stream)
+		})
 	}
 	wg.Wait()
 }
@@ -927,21 +917,18 @@ func pipeConn(ctx context.Context, c1, c2 net.Conn) {
 	})
 
 	var wg sync.WaitGroup
-	wg.Add(2)
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if _, err := io.Copy(c1, c2); err != nil {
 			debugf("pipeConn: c1<-c2 copy error: %v", err)
 		}
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if _, err := io.Copy(c2, c1); err != nil {
 			debugf("pipeConn: c2<-c1 copy error: %v", err)
 		}
-	}()
+	})
 
 	wg.Wait()
 

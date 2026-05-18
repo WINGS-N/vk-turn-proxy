@@ -8,11 +8,9 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -69,7 +67,6 @@ var (
 	isDebug              bool
 	manualCaptcha        bool
 	autoCaptchaSliderPOC bool
-	captchaSolverVersion string
 )
 
 var appDialer net.Dialer
@@ -351,62 +348,6 @@ func generateBrowserFp(profile Profile) string {
 	return hex.EncodeToString(h[:])
 }
 
-/*
-func generateFakeCursor() string {
-	startX := 600 + rand.Intn(400)
-	startY := 300 + rand.Intn(200)
-	startTime := time.Now().UnixMilli() - int64(rand.Intn(2000)+1000)
-	var points []string
-	for i := 0; i < 15+rand.Intn(10); i++ {
-		startX += rand.Intn(15) - 5
-		startY += rand.Intn(15) + 2
-		startTime += int64(rand.Intn(40) + 10)
-		points = append(points, fmt.Sprintf(`{"x":%d,"y":%d,"t":%d}`, startX, startY, startTime))
-	}
-	return "[" + strings.Join(points, ",") + "]"
-}
-
-// generateCheckboxCursor simulates a mouse moving from a random starting position
-// towards the VK captcha checkbox area, decelerating as it approaches the target.
-// This looks more like a real click than either a stationary cursor or pure random jitter.
-func generateCheckboxCursor() string {
-	type point struct {
-		X int   `json:"x"`
-		Y int   `json:"y"`
-		T int64 `json:"t"`
-	}
-
-	// Target is roughly where VK renders the checkbox
-	targetX := 290 + rand.Intn(20) - 10
-	targetY := 437 + rand.Intn(10) - 5
-
-	// Starting position: somewhere to the upper-right of the checkbox
-	startX := targetX + 200 + rand.Intn(300)
-	startY := targetY - 80 - rand.Intn(120)
-
-	steps := 14 + rand.Intn(6)
-	startTime := time.Now().Add(-time.Duration(400+rand.Intn(600)) * time.Millisecond).UnixMilli()
-
-	points := make([]point, 0, steps)
-	for i := 0; i < steps; i++ {
-		// Ease-out: fast at start, slow near target
-		t := float64(i) / float64(steps-1)
-		ease := 1 - (1-t)*(1-t)
-		x := startX + int(float64(targetX-startX)*ease) + rand.Intn(5) - 2
-		y := startY + int(float64(targetY-startY)*ease) + rand.Intn(5) - 2
-		dt := int64(15 + rand.Intn(25) + int(20*t)) // slower near target
-		startTime += dt
-		points = append(points, point{X: x, Y: y, T: startTime})
-	}
-
-	data, err := json.Marshal(points)
-	if err != nil {
-		return "[]"
-	}
-	return string(data)
-}
-*/
-
 func getCustomNetDialer() net.Dialer {
 	return appDialer
 }
@@ -427,7 +368,7 @@ type VkCaptchaError struct {
 	CaptchaAttempt          string
 }
 
-func ParseVkCaptchaError(errData map[string]interface{}) *VkCaptchaError {
+func ParseVkCaptchaError(errData map[string]any) *VkCaptchaError {
 	// Extract error_code
 	codeFloat, ok := errData["error_code"].(float64)
 	if !ok {
@@ -548,16 +489,13 @@ func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID in
 		profile = sp.Profile // Use saved headers/UA
 	}
 
-	if !useSliderPOC && !strings.EqualFold(captchaSolverVersion, "v1") {
+	if !useSliderPOC {
 		successToken, v2Err := solveVkCaptchaV2(ctx, captchaErr, streamID, client, profile, savedProfile)
-		if v2Err == nil {
-			log.Printf("[STREAM %d] [Captcha] v2 solver succeeded", streamID)
-			return successToken, nil
-		}
-		if errors.Is(v2Err, errCaptchaV2RateLimit) {
+		if v2Err != nil {
 			return "", v2Err
 		}
-		log.Printf("[STREAM %d] [Captcha] v2 solver failed, falling back to legacy solver: %v", streamID, v2Err)
+		log.Printf("[STREAM %d] [Captcha] v2 solver succeeded", streamID)
+		return successToken, nil
 	}
 
 	bootstrap, err := fetchCaptchaBootstrap(ctx, captchaErr.RedirectURI, client, profile)
@@ -570,21 +508,16 @@ func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID in
 	hash := solvePoW(bootstrap.PowInput, bootstrap.Difficulty)
 	log.Printf("[STREAM %d] [Captcha] PoW solved: hash=%s", streamID, hash)
 
-	var successToken string
-	if useSliderPOC {
-		successToken, err = callCaptchaNotRobotWithSliderPOC(
-			ctx,
-			captchaErr.SessionToken,
-			hash,
-			streamID,
-			client,
-			profile,
-			bootstrap.Settings,
-			savedProfile, // Pass savedProfile if available
-		)
-	} else {
-		successToken, err = callCaptchaNotRobot(ctx, captchaErr.SessionToken, hash, streamID, client, profile, savedProfile)
-	}
+	successToken, err := callCaptchaNotRobotWithSliderPOC(
+		ctx,
+		captchaErr.SessionToken,
+		hash,
+		streamID,
+		client,
+		profile,
+		bootstrap.Settings,
+		savedProfile,
+	)
 	if err != nil {
 		return "", fmt.Errorf("captchaNotRobot API failed: %w", err)
 	}
@@ -638,128 +571,6 @@ func solvePoW(powInput string, difficulty int) string {
 		}
 	}
 	return ""
-}
-
-func callCaptchaNotRobot(ctx context.Context, sessionToken, hash string, streamID int, client tlsclient.HttpClient, profile Profile, savedProfile *SavedProfile) (string, error) {
-	vkReq := func(method string, postData string) (map[string]interface{}, error) {
-		reqURL := "https://api.vk.ru/method/" + method + "?v=5.131"
-		parsedURL, err := neturl.Parse(reqURL)
-		if err != nil {
-			return nil, fmt.Errorf("parse request URL: %w", err)
-		}
-		domain := parsedURL.Hostname()
-
-		req, err := fhttp.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(postData))
-		if err != nil {
-			return nil, err
-		}
-
-		req.Host = domain
-		applyBrowserProfileFhttp(req, profile)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Header.Set("Accept", "*/*")
-		req.Header.Set("Origin", "https://api.vk.ru")
-		req.Header.Set("Referer", fmt.Sprintf("https://api.vk.ru/not_robot_captcha?domain=vk.com&session_token=%s&variant=popup&blank=1", sessionToken))
-		req.Header.Set("Sec-Fetch-Site", "same-origin")
-		req.Header.Set("Sec-Fetch-Mode", "cors")
-		req.Header.Set("Sec-Fetch-Dest", "empty")
-
-		httpResp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer func(Body io.ReadCloser) {
-			_ = Body.Close()
-		}(httpResp.Body)
-
-		body, err := io.ReadAll(httpResp.Body)
-		if err != nil {
-			return nil, err
-		}
-		var resp map[string]interface{}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-
-	adFpBytes := make([]byte, 16)
-	for i := range adFpBytes {
-		adFpBytes[i] = byte(rand.Intn(256))
-	}
-	adFp := base64.RawURLEncoding.EncodeToString(adFpBytes)[:21]
-
-	baseParams := fmt.Sprintf("session_token=%s&domain=vk.com&adFp=%s&access_token=", neturl.QueryEscape(sessionToken), neturl.QueryEscape(adFp))
-
-	log.Printf("[STREAM %d] [Captcha] Step 1/4: settings", streamID)
-	if _, err := vkReq("captchaNotRobot.settings", baseParams); err != nil {
-		return "", fmt.Errorf("settings failed: %w", err)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	log.Printf("[STREAM %d] [Captcha] Step 2/4: componentDone", streamID)
-	browserFp := generateBrowserFp(profile)
-	deviceJSON := buildCaptchaDeviceJSON(profile)
-	if savedProfile != nil {
-		browserFp = savedProfile.BrowserFp
-		deviceJSON = savedProfile.DeviceJSON
-	}
-	componentDoneData := baseParams + fmt.Sprintf("&browser_fp=%s&device=%s", browserFp, neturl.QueryEscape(deviceJSON))
-
-	if _, err := vkReq("captchaNotRobot.componentDone", componentDoneData); err != nil {
-		return "", fmt.Errorf("componentDone failed: %w", err)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	log.Printf("[STREAM %d] [Captcha] Step 3/4: check", streamID)
-	// The real browser sends an empty array for cursor on the first check.
-	cursorJSON := "[]"
-	answer := base64.StdEncoding.EncodeToString([]byte("{}"))
-
-	// The real browser sends a static SHA-256 hash for debug_info.
-	// We use the exact one captured from the real browser's session.
-	debugInfo := "f3ef768dab7a20f574c6461f34e4257894d2a3c30a53d8727a3edaf7ab70847d"
-
-	connectionRtt := "[250,250,250,250,250]"
-	connectionDownlink := "[1.45,1.45,1.45,1.45,1.45]"
-
-	checkData := baseParams + fmt.Sprintf(
-		"&accelerometer=%s&gyroscope=%s&motion=%s&cursor=%s&taps=%s&connectionRtt=%s&connectionDownlink=%s&browser_fp=%s&hash=%s&answer=%s&debug_info=%s",
-		neturl.QueryEscape("[]"), neturl.QueryEscape("[]"), neturl.QueryEscape("[]"),
-		neturl.QueryEscape(cursorJSON), neturl.QueryEscape("[]"), neturl.QueryEscape(connectionRtt),
-		neturl.QueryEscape(connectionDownlink),
-		browserFp, hash, answer, debugInfo,
-	)
-
-	checkResp, err := vkReq("captchaNotRobot.check", checkData)
-	if err != nil {
-		return "", fmt.Errorf("check failed: %w", err)
-	}
-
-	respObj, ok := checkResp["response"].(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("invalid check response: %v", checkResp)
-	}
-	status, ok := respObj["status"].(string)
-	if !ok || status != "OK" {
-		return "", fmt.Errorf("check status: %s", status)
-	}
-	successToken, ok := respObj["success_token"].(string)
-	if !ok || successToken == "" {
-		return "", fmt.Errorf("success_token not found")
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	log.Printf("[STREAM %d] [Captcha] Step 4/4: endSession", streamID)
-	_, err = vkReq("captchaNotRobot.endSession", baseParams)
-	if err != nil {
-		log.Printf("[STREAM %d] [Captcha] Warning: endSession failed: %v", streamID, err)
-	}
-
-	return successToken, nil
 }
 
 // endregion
@@ -1013,7 +824,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 
 	log.Printf("[STREAM %d] [VK Auth] Connecting Identity - Name: %s | User-Agent: %s", streamID, name, profile.UserAgent)
 
-	doRequest := func(data string, url string) (resp map[string]interface{}, err error) {
+	doRequest := func(data string, url string) (resp map[string]any, err error) {
 		parsedURL, err := neturl.Parse(url)
 		if err != nil {
 			return nil, fmt.Errorf("parse request URL: %w", err)
@@ -1064,7 +875,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	if err != nil {
 		return "", "", nil, err
 	}
-	dataMap, ok := resp["data"].(map[string]interface{})
+	dataMap, ok := resp["data"].(map[string]any)
 	if !ok {
 		return "", "", nil, fmt.Errorf("unexpected anon token response: %v", resp)
 	}
@@ -1095,7 +906,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 			return "", "", nil, err
 		}
 
-		if errObj, hasErr := resp["error"].(map[string]interface{}); hasErr {
+		if errObj, hasErr := resp["error"].(map[string]any); hasErr {
 			captchaErr := ParseVkCaptchaError(errObj)
 			if captchaErr != nil && captchaErr.IsCaptchaError() {
 				solveMode, hasSolveMode := captchaSolveModeForAttempt(attempt, manualCaptcha, autoCaptchaSliderPOC)
@@ -1227,7 +1038,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 			return "", "", nil, fmt.Errorf("VK API error: %v", errObj)
 		}
 
-		respMap, okLoop := resp["response"].(map[string]interface{})
+		respMap, okLoop := resp["response"].(map[string]any)
 		if !okLoop {
 			return "", "", nil, fmt.Errorf("unexpected getAnonymousToken response: %v", resp)
 		}
@@ -1261,7 +1072,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		return "", "", nil, err
 	}
 
-	tsRaw, ok := resp["turn_server"].(map[string]interface{})
+	tsRaw, ok := resp["turn_server"].(map[string]any)
 	if !ok {
 		return "", "", nil, fmt.Errorf("missing turn_server in response: %v", resp)
 	}
@@ -1273,7 +1084,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	if !ok {
 		return "", "", nil, fmt.Errorf("missing credential in turn_server")
 	}
-	urlsRaw, ok := tsRaw["urls"].([]interface{})
+	urlsRaw, ok := tsRaw["urls"].([]any)
 	if !ok || len(urlsRaw) == 0 {
 		return "", "", nil, fmt.Errorf("missing or empty urls in turn_server")
 	}
@@ -1680,15 +1491,13 @@ func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.Pa
 	}
 
 	wg := sync.WaitGroup{}
-	wg.Add(2)
 	context.AfterFunc(dtlsctx, func() {
 		if err := dtlsConn.SetDeadline(time.Now()); err != nil {
 			log.Printf("[STREAM %d] Warning: SetDeadline failed: %v", streamID, err)
 		}
 	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer dtlscancel()
 		for {
 			select {
@@ -1699,10 +1508,9 @@ func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.Pa
 				packetPool.Put(pkt)
 			}
 		}
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer dtlscancel()
 		buf := make([]byte, 1600)
 		for {
@@ -1720,7 +1528,7 @@ func oneDtlsConnection(ctx context.Context, peer *net.UDPAddr, listenConn net.Pa
 				}
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 	if err := dtlsConn.SetDeadline(time.Time{}); err != nil {
@@ -1891,7 +1699,6 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 	}
 
 	wg := sync.WaitGroup{}
-	wg.Add(1)
 	turnctx, turncancel := context.WithCancel(ctx)
 	stats := &throughputStats{}
 	go stats.logEvery(turnctx, fmt.Sprintf("[STREAM %d] TURN", streamID), "to-turn", "from-turn")
@@ -1946,8 +1753,7 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 		}
 	}()
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer turncancel()
 		readBufLen := 1600
 		if useWrap {
@@ -1981,7 +1787,7 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
 				}
 			}
 		}
-	}()
+	})
 
 	wg.Wait()
 	if err := relayConn.SetDeadline(time.Time{}); err != nil {
@@ -2095,7 +1901,6 @@ func main() {
 	streamsPerCredFlag := flag.Int("streams-per-cred", streamsPerCache, "number of TURN streams sharing one VK credential cache")
 	debugFlag := flag.Bool("debug", false, "enable debug logging")
 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip auto captcha solving, use manual mode immediately")
-	captchaSolverFlag := flag.String("captcha-solver", "v2", "auto captcha solver implementation: v1|v2")
 	dnsFlag := flag.String("dns", dnsdial.DNSModeAuto, "DNS resolution mode: udp | doh | auto (auto tries UDP/53 first, sticky-fallback to DoH on total failure)")
 	dnsServersFlag := flag.String("dns-servers", "", "comma-separated UDP/53 DNS servers to use instead of built-in defaults (e.g. carrier resolvers from Android LinkProperties). Format: ip[:port][,ip[:port]...].")
 	flag.Parse()
@@ -2147,10 +1952,6 @@ func main() {
 
 	isDebug = *debugFlag
 	manualCaptcha = *manualCaptchaFlag
-	captchaSolverVersion = strings.ToLower(strings.TrimSpace(*captchaSolverFlag))
-	if captchaSolverVersion != "v1" && captchaSolverVersion != "v2" {
-		captchaSolverVersion = "v2"
-	}
 	autoCaptchaSliderPOC = !manualCaptcha
 
 	var link string
@@ -2261,16 +2062,12 @@ func main() {
 
 	okchan := make(chan struct{})
 	connchan := make(chan net.PacketConn)
-	wg1.Add(1)
-	go func() {
-		defer wg1.Done()
+	wg1.Go(func() {
 		oneDtlsConnectionLoop(ctx, peer, listenConn, inboundChan, connchan, okchan, 1)
-	}()
-	wg1.Add(1)
-	go func() {
-		defer wg1.Done()
+	})
+	wg1.Go(func() {
 		oneTurnConnectionLoop(ctx, params, peer, connchan, t, 1)
-	}()
+	})
 
 	select {
 	case <-okchan:
@@ -2279,16 +2076,13 @@ func main() {
 
 	for i := 1; i < numStreams; i++ {
 		cchan := make(chan net.PacketConn)
-		wg1.Add(1)
-		go func(streamID int) {
-			defer wg1.Done()
+		streamID := i
+		wg1.Go(func() {
 			oneDtlsConnectionLoop(ctx, peer, listenConn, inboundChan, cchan, nil, streamID)
-		}(i)
-		wg1.Add(1)
-		go func(streamID int) {
-			defer wg1.Done()
+		})
+		wg1.Go(func() {
 			oneTurnConnectionLoop(ctx, params, peer, cchan, t, streamID)
-		}(i)
+		})
 	}
 
 	wg1.Wait()
@@ -2505,9 +2299,8 @@ func handleBondedTCP(ctx context.Context, tcpConn net.Conn, connID uint64, candi
 	recvCh := make(chan bondFrame, 1024)
 	var readWG sync.WaitGroup
 	for _, lane := range lanes {
-		readWG.Add(1)
-		go func(l *bondClientLane) {
-			defer readWG.Done()
+		l := lane
+		readWG.Go(func() {
 			for {
 				f, err := readBondFrame(l.stream)
 				if err != nil {
@@ -2530,7 +2323,7 @@ func handleBondedTCP(ctx context.Context, tcpConn net.Conn, connID uint64, candi
 					return
 				}
 			}
-		}(lane)
+		})
 	}
 	go func() {
 		readWG.Wait()
@@ -2538,16 +2331,13 @@ func handleBondedTCP(ctx context.Context, tcpConn net.Conn, connID uint64, candi
 	}()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		copyTCPToBond(ctx, connID, tcpConn, lanes)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		copyBondToTCP(ctx, connID, tcpConn, recvCh)
 		cancel()
-	}()
+	})
 	wg.Wait()
 }
 
@@ -2595,7 +2385,7 @@ func copyTCPToBond(ctx context.Context, connID uint64, tcpConn net.Conn, lanes [
 }
 
 func writeBondFrameToNextLane(ctx context.Context, lanes []*bondClientLane, typ byte, seq uint64, data []byte, laneIdx *uint64) (*bondClientLane, error) {
-	for attempts := 0; attempts < len(lanes); attempts++ {
+	for range lanes {
 		idx := *laneIdx % uint64(len(lanes))
 		*laneIdx++
 		lane := lanes[idx]
@@ -2675,17 +2465,15 @@ func runVLESSMode(ctx context.Context, tp *turnParams, peer *net.UDPAddr, listen
 
 	// Start N session maintainers with staggered startup
 	var wgMaint sync.WaitGroup
-	for i := 0; i < numSessions; i++ {
-		wgMaint.Add(1)
-		go func(id int) {
-			defer wgMaint.Done()
+	for id := range numSessions {
+		wgMaint.Go(func() {
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Duration(id) * 300 * time.Millisecond):
 			}
 			maintainVLESSSession(ctx, tp, peer, id, pool)
-		}(i)
+		})
 	}
 
 	// Wait for at least one session
@@ -2744,11 +2532,10 @@ func runVLESSMode(ctx context.Context, tp *turnParams, peer *net.UDPAddr, listen
 				continue
 			}
 
-			wgConn.Add(1)
-			go func(tc net.Conn, connID uint64, lanes []*pooledSession) {
-				defer wgConn.Done()
-				handleBondedTCP(ctx, tc, connID, lanes)
-			}(tcpConn, connID, lanes)
+			tc, cid, lns := tcpConn, connID, lanes
+			wgConn.Go(func() {
+				handleBondedTCP(ctx, tc, cid, lns)
+			})
 			continue
 		}
 
@@ -2765,30 +2552,29 @@ func runVLESSMode(ctx context.Context, tp *turnParams, peer *net.UDPAddr, listen
 		debugf("[session %d] TCP accept #%d from=%s active=%d opened=%d pool=%d",
 			ps.id, connID, tcpConn.RemoteAddr(), active, opened, pool.count())
 
-		wgConn.Add(1)
-		go func(tc net.Conn, ps *pooledSession, connID uint64) {
-			defer wgConn.Done()
+		tc, sessRef, cid := tcpConn, ps, connID
+		wgConn.Go(func() {
 			defer func() { _ = tc.Close() }()
 			defer func() {
-				active := ps.active.Add(-1)
-				closed := ps.closed.Add(1)
+				active := sessRef.active.Add(-1)
+				closed := sessRef.closed.Add(1)
 				debugf("[session %d] TCP close #%d active=%d closed=%d totals: to-session=%s from-session=%s",
-					ps.id, connID, active, closed,
-					formatByteCount(ps.toSession.Load()), formatByteCount(ps.fromSession.Load()))
+					sessRef.id, cid, active, closed,
+					formatByteCount(sessRef.toSession.Load()), formatByteCount(sessRef.fromSession.Load()))
 			}()
 
-			stream, err := ps.sess.OpenStream()
+			stream, err := sessRef.sess.OpenStream()
 			if err != nil {
-				log.Printf("[session %d] smux open stream error for TCP #%d: %s", ps.id, connID, err)
+				log.Printf("[session %d] smux open stream error for TCP #%d: %s", sessRef.id, cid, err)
 				return
 			}
 			defer func() { _ = stream.Close() }()
 			fromSession, toSession := pipe(ctx, tc, stream)
-			ps.fromSession.Add(uint64(fromSession))
-			ps.toSession.Add(uint64(toSession))
+			sessRef.fromSession.Add(uint64(fromSession))
+			sessRef.toSession.Add(uint64(toSession))
 			debugf("[session %d] TCP done #%d local<-session=%s local->session=%s",
-				ps.id, connID, formatByteCount(uint64(fromSession)), formatByteCount(uint64(toSession)))
-		}(tcpConn, ps, connID)
+				sessRef.id, cid, formatByteCount(uint64(fromSession)), formatByteCount(uint64(toSession)))
+		})
 	}
 }
 
@@ -3040,9 +2826,7 @@ func pipe(ctx context.Context, c1, c2 net.Conn) (int64, int64) {
 	var wg sync.WaitGroup
 	var c1FromC2 int64
 	var c2FromC1 int64
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer cancel()
 		n, err := io.Copy(c1, c2)
 		c1FromC2 = n
@@ -3051,9 +2835,8 @@ func pipe(ctx context.Context, c1, c2 net.Conn) (int64, int64) {
 				log.Printf("pipe: c1<-c2 copy error: %v", err)
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		defer cancel()
 		n, err := io.Copy(c2, c1)
 		c2FromC1 = n
@@ -3062,7 +2845,7 @@ func pipe(ctx context.Context, c1, c2 net.Conn) (int64, int64) {
 				log.Printf("pipe: c2<-c1 copy error: %v", err)
 			}
 		}
-	}()
+	})
 	wg.Wait()
 	if err := c1.SetDeadline(time.Time{}); err != nil {
 		if isDebug {

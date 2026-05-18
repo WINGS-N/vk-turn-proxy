@@ -34,8 +34,8 @@ func TestParseSliderSteps(t *testing.T) {
 func TestParseCaptchaSettingsResponseSupportsJSONStringMap(t *testing.T) {
 	t.Parallel()
 
-	resp := map[string]interface{}{
-		"response": map[string]interface{}{
+	resp := map[string]any{
+		"response": map[string]any{
 			"show_captcha_type": "checkbox",
 			"captcha_settings":  `{"slider":"slider-token","sound":"sound-token"}`,
 		},
@@ -235,12 +235,12 @@ func TestParseSliderCaptchaContentResponse(t *testing.T) {
 		t.Fatalf("failed to encode jpeg fixture: %v", err)
 	}
 
-	resp := map[string]interface{}{
-		"response": map[string]interface{}{
+	resp := map[string]any{
+		"response": map[string]any{
 			"status":    "OK",
 			"extension": "jpeg",
 			"image":     base64.StdEncoding.EncodeToString(buf.Bytes()),
-			"steps":     []interface{}{float64(5), float64(0), float64(1), float64(2), float64(3), float64(6)},
+			"steps":     []any{float64(5), float64(0), float64(1), float64(2), float64(3), float64(6)},
 		},
 	}
 

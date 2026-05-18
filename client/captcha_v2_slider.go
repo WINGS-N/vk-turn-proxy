@@ -255,10 +255,8 @@ func rankSliderGuessesV2(img image.Image, gridSize int, swaps []int) ([]sliderGu
 		workers = len(jobs)
 	}
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range workers {
+		wg.Go(func() {
 			for index := range jobCh {
 				mapping, err := applySliderSwapsV2(gridSize, guesses[index-1].Swaps)
 				if err != nil {
@@ -268,7 +266,7 @@ func rankSliderGuessesV2(img image.Image, gridSize int, swaps []int) ([]sliderGu
 				rgb, text := seamScoreRGBTextV2(img, gridSize, mapping)
 				resCh <- stage2Result{index: index, rgb: rgb, text: text}
 			}
-		}()
+		})
 	}
 	for _, idx := range jobs {
 		jobCh <- idx
