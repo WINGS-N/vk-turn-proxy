@@ -31,6 +31,7 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/client/internal/browserprofile"
 	"github.com/cacggghp/vk-turn-proxy/client/internal/captcha"
 	"github.com/cacggghp/vk-turn-proxy/client/internal/dnsdial"
+	"github.com/cacggghp/vk-turn-proxy/client/internal/namegen"
 	"github.com/cacggghp/vk-turn-proxy/tcputil"
 	"github.com/cbeuw/connutil"
 	"github.com/google/uuid"
@@ -584,7 +585,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		return "", "", nil, fmt.Errorf("failed to initialize tls_client: %w", err)
 	}
 
-	name := generateName()
+	name := namegen.Generate()
 	escapedName := neturl.QueryEscape(name)
 
 	log.Printf("[STREAM %d] [VK Auth] Connecting Identity - Name: %s | User-Agent: %s", streamID, name, profile.UserAgent)
