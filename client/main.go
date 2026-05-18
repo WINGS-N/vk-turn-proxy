@@ -460,7 +460,7 @@ func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID in
 		profile = sp.Profile
 	}
 
-	successToken, err := solveVkCaptchaV2(ctx, captchaErr, streamID, client, profile, savedProfile)
+	successToken, err := solveCaptchaAuto(ctx, captchaErr, streamID, client, profile, savedProfile)
 	if err != nil {
 		return "", err
 	}

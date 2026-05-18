@@ -19,14 +19,14 @@ import (
 	"sync"
 )
 
-type sliderPuzzleV2 struct {
+type sliderPuzzle struct {
 	Image    image.Image
 	Size     int
 	Swaps    []int
 	Attempts int
 }
 
-type sliderGuessV2 struct {
+type sliderGuess struct {
 	Index         int
 	Swaps         []int
 	Score         int64
@@ -36,7 +36,7 @@ type sliderGuessV2 struct {
 	ConsensusRank int
 }
 
-func (s *captchaV2Session) solveSliderCaptcha(
+func (s *captchaSession) solveSliderCaptcha(
 	sessionToken string,
 	browserFP string,
 	hash string,
@@ -55,13 +55,13 @@ func (s *captchaV2Session) solveSliderCaptcha(
 	if err != nil {
 		return "", fmt.Errorf("slider getContent failed: %w", err)
 	}
-	puzzle, err := parseSliderPuzzleV2(resp)
+	puzzle, err := parseSliderPuzzle(resp)
 	if err != nil {
 		return "", err
 	}
-	log.Printf("v2 slider puzzle decoded: grid=%d attempts=%d swaps=%d", puzzle.Size, puzzle.Attempts, len(puzzle.Swaps))
+	log.Printf("slider puzzle decoded: grid=%d attempts=%d swaps=%d", puzzle.Size, puzzle.Attempts, len(puzzle.Swaps))
 
-	guesses, err := rankSliderGuessesV2(puzzle.Image, puzzle.Size, puzzle.Swaps)
+	guesses, err := rankSliderGuesses(puzzle.Image, puzzle.Size, puzzle.Swaps)
 	if err != nil {
 		return "", err
 	}
@@ -73,9 +73,9 @@ func (s *captchaV2Session) solveSliderCaptcha(
 	if limit <= 0 {
 		return "", errors.New("slider has no attempts available")
 	}
-	log.Printf("v2 slider guesses ranked: total=%d limit=%d", len(guesses), limit)
+	log.Printf("slider guesses ranked: total=%d limit=%d", len(guesses), limit)
 
-	deviceJSON := captchaV2DeviceInfo
+	deviceJSON := captchaDeviceInfo
 	if s.savedProfile != nil && strings.TrimSpace(s.savedProfile.DeviceJSON) != "" {
 		deviceJSON = s.savedProfile.DeviceJSON
 	}
@@ -91,7 +91,7 @@ func (s *captchaV2Session) solveSliderCaptcha(
 	}
 
 	for i := 0; i < limit; i++ {
-		log.Printf("v2 slider attempt %d/%d (guess #%d)", i+1, limit, guesses[i].Index)
+		log.Printf("slider attempt %d/%d (guess #%d)", i+1, limit, guesses[i].Index)
 		answerData, err := json.Marshal(struct {
 			Value []int `json:"value"`
 		}{Value: guesses[i].Swaps})
@@ -103,7 +103,7 @@ func (s *captchaV2Session) solveSliderCaptcha(
 			browserFP,
 			hash,
 			string(answerData),
-			buildSliderCursorV2(guesses[i].Index, len(guesses)),
+			buildSliderCursor(guesses[i].Index, len(guesses)),
 			debugInfo,
 		)
 		if err != nil {
@@ -113,26 +113,26 @@ func (s *captchaV2Session) solveSliderCaptcha(
 			if check.SuccessToken == "" {
 				return "", errors.New("captcha success token not found")
 			}
-			log.Printf("v2 slider accepted on attempt %d", i+1)
+			log.Printf("slider accepted on attempt %d", i+1)
 			return check.SuccessToken, nil
 		}
 		if strings.EqualFold(check.Status, "error_limit") {
-			return "", errCaptchaV2RateLimit
+			return "", errCaptchaRateLimit
 		}
 	}
 	return "", errors.New("slider guesses exhausted")
 }
 
-func parseSliderPuzzleV2(raw map[string]any) (*sliderPuzzleV2, error) {
+func parseSliderPuzzle(raw map[string]any) (*sliderPuzzle, error) {
 	resp, ok := raw["response"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid slider content response: %v", raw)
 	}
-	status := captchaV2StringifyAny(resp["status"])
+	status := captchaStringifyAny(resp["status"])
 	if !strings.EqualFold(status, "ok") {
 		return nil, fmt.Errorf("slider getContent status: %s", status)
 	}
-	rawImage := captchaV2StringifyAny(resp["image"])
+	rawImage := captchaStringifyAny(resp["image"])
 	if rawImage == "" {
 		return nil, errors.New("slider image missing")
 	}
@@ -157,7 +157,7 @@ func parseSliderPuzzleV2(raw map[string]any) (*sliderPuzzleV2, error) {
 			return nil, fmt.Errorf("invalid numeric value: %v", item)
 		}
 	}
-	size, swaps, attempts, err := splitSliderStepsV2(steps)
+	size, swaps, attempts, err := splitSliderSteps(steps)
 	if err != nil {
 		return nil, err
 	}
@@ -169,10 +169,10 @@ func parseSliderPuzzleV2(raw map[string]any) (*sliderPuzzleV2, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode slider image: %w", err)
 	}
-	return &sliderPuzzleV2{Image: img, Size: size, Swaps: swaps, Attempts: attempts}, nil
+	return &sliderPuzzle{Image: img, Size: size, Swaps: swaps, Attempts: attempts}, nil
 }
 
-func splitSliderStepsV2(steps []int) (int, []int, int, error) {
+func splitSliderSteps(steps []int) (int, []int, int, error) {
 	if len(steps) < 3 {
 		return 0, nil, 0, errors.New("slider steps payload too short")
 	}
@@ -185,7 +185,7 @@ func splitSliderStepsV2(steps []int) (int, []int, int, error) {
 	if len(tail)%2 != 0 {
 		attempts = tail[len(tail)-1]
 		tail = tail[:len(tail)-1]
-		log.Printf("v2 slider payload had odd-length tail; fallback attempts=%d", attempts)
+		log.Printf("slider payload had odd-length tail; fallback attempts=%d", attempts)
 	}
 	if attempts <= 0 {
 		attempts = 4
@@ -196,24 +196,24 @@ func splitSliderStepsV2(steps []int) (int, []int, int, error) {
 	return size, tail, attempts, nil
 }
 
-func rankSliderGuessesV2(img image.Image, gridSize int, swaps []int) ([]sliderGuessV2, error) {
+func rankSliderGuesses(img image.Image, gridSize int, swaps []int) ([]sliderGuess, error) {
 	candidateCount := len(swaps) / 2
 	if candidateCount == 0 {
 		return nil, errors.New("slider has no candidates")
 	}
 
-	guesses := make([]sliderGuessV2, candidateCount)
+	guesses := make([]sliderGuess, candidateCount)
 	for idx := 1; idx <= candidateCount; idx++ {
-		active := activeSwapsForIndexV2(swaps, idx)
-		mapping, err := applySliderSwapsV2(gridSize, active)
+		active := activeSwapsForIndex(swaps, idx)
+		mapping, err := applySliderSwaps(gridSize, active)
 		if err != nil {
 			return nil, err
 		}
-		guesses[idx-1] = sliderGuessV2{Index: idx, Swaps: active}
-		guesses[idx-1].ScoreLuma = seamScoreLumaV2(img, gridSize, mapping)
+		guesses[idx-1] = sliderGuess{Index: idx, Swaps: active}
+		guesses[idx-1].ScoreLuma = seamScoreLuma(img, gridSize, mapping)
 	}
 
-	lumaOrder := append([]sliderGuessV2(nil), guesses...)
+	lumaOrder := append([]sliderGuess(nil), guesses...)
 	sort.SliceStable(lumaOrder, func(i, j int) bool {
 		if lumaOrder[i].ScoreLuma == lumaOrder[j].ScoreLuma {
 			return lumaOrder[i].Index < lumaOrder[j].Index
@@ -258,12 +258,12 @@ func rankSliderGuessesV2(img image.Image, gridSize int, swaps []int) ([]sliderGu
 	for range workers {
 		wg.Go(func() {
 			for index := range jobCh {
-				mapping, err := applySliderSwapsV2(gridSize, guesses[index-1].Swaps)
+				mapping, err := applySliderSwaps(gridSize, guesses[index-1].Swaps)
 				if err != nil {
 					resCh <- stage2Result{index: index, err: err}
 					continue
 				}
-				rgb, text := seamScoreRGBTextV2(img, gridSize, mapping)
+				rgb, text := seamScoreRGBText(img, gridSize, mapping)
 				resCh <- stage2Result{index: index, rgb: rgb, text: text}
 			}
 		})
@@ -283,14 +283,14 @@ func rankSliderGuessesV2(img image.Image, gridSize int, swaps []int) ([]sliderGu
 		g.ScoreText = r.text
 	}
 
-	stage2 := make([]sliderGuessV2, 0, stage2Count)
+	stage2 := make([]sliderGuess, 0, stage2Count)
 	for _, g := range guesses {
 		if _, ok := stage2Set[g.Index]; ok {
 			stage2 = append(stage2, g)
 		}
 	}
 
-	rgbOrder := append([]sliderGuessV2(nil), stage2...)
+	rgbOrder := append([]sliderGuess(nil), stage2...)
 	sort.SliceStable(rgbOrder, func(i, j int) bool {
 		if rgbOrder[i].ScoreRGB == rgbOrder[j].ScoreRGB {
 			return rgbOrder[i].Index < rgbOrder[j].Index
@@ -302,7 +302,7 @@ func rankSliderGuessesV2(img image.Image, gridSize int, swaps []int) ([]sliderGu
 		rgbRank[g.Index] = rank
 	}
 
-	textOrder := append([]sliderGuessV2(nil), stage2...)
+	textOrder := append([]sliderGuess(nil), stage2...)
 	sort.SliceStable(textOrder, func(i, j int) bool {
 		if textOrder[i].ScoreText == textOrder[j].ScoreText {
 			return textOrder[i].Index < textOrder[j].Index
@@ -337,7 +337,7 @@ func rankSliderGuessesV2(img image.Image, gridSize int, swaps []int) ([]sliderGu
 	return guesses, nil
 }
 
-func activeSwapsForIndexV2(swaps []int, index int) []int {
+func activeSwapsForIndex(swaps []int, index int) []int {
 	if index <= 0 {
 		return []int{}
 	}
@@ -348,7 +348,7 @@ func activeSwapsForIndexV2(swaps []int, index int) []int {
 	return append([]int(nil), swaps[:end]...)
 }
 
-func applySliderSwapsV2(gridSize int, swaps []int) ([]int, error) {
+func applySliderSwaps(gridSize int, swaps []int) ([]int, error) {
 	tileCount := gridSize * gridSize
 	if tileCount <= 0 {
 		return nil, fmt.Errorf("invalid slider tile count: %d", tileCount)
@@ -371,7 +371,7 @@ func applySliderSwapsV2(gridSize int, swaps []int) ([]int, error) {
 	return mapping, nil
 }
 
-func seamScoreLumaV2(img image.Image, gridSize int, mapping []int) int64 {
+func seamScoreLuma(img image.Image, gridSize int, mapping []int) int64 {
 	bounds := img.Bounds()
 	var score int64
 	for row := 0; row < gridSize; row++ {
@@ -388,9 +388,9 @@ func seamScoreLumaV2(img image.Image, gridSize int, mapping []int) int64 {
 			}
 			for y := 0; y < h; y++ {
 				yy := leftDst.Min.Y + y
-				a := sampleLumaMappedV2(img, leftDst, leftSrc, leftDst.Max.X-1, yy)
-				b := sampleLumaMappedV2(img, rightDst, rightSrc, rightDst.Min.X, yy)
-				score += int64(absIntV2(int(a) - int(b)))
+				a := sampleLumaMapped(img, leftDst, leftSrc, leftDst.Max.X-1, yy)
+				b := sampleLumaMapped(img, rightDst, rightSrc, rightDst.Min.X, yy)
+				score += int64(absInt(int(a) - int(b)))
 			}
 		}
 	}
@@ -408,16 +408,16 @@ func seamScoreLumaV2(img image.Image, gridSize int, mapping []int) int64 {
 			}
 			for x := 0; x < w; x++ {
 				xx := topDst.Min.X + x
-				a := sampleLumaMappedV2(img, topDst, topSrc, xx, topDst.Max.Y-1)
-				b := sampleLumaMappedV2(img, bottomDst, bottomSrc, xx, bottomDst.Min.Y)
-				score += int64(absIntV2(int(a) - int(b)))
+				a := sampleLumaMapped(img, topDst, topSrc, xx, topDst.Max.Y-1)
+				b := sampleLumaMapped(img, bottomDst, bottomSrc, xx, bottomDst.Min.Y)
+				score += int64(absInt(int(a) - int(b)))
 			}
 		}
 	}
 	return score
 }
 
-func seamScoreRGBTextV2(img image.Image, gridSize int, mapping []int) (int64, float64) {
+func seamScoreRGBText(img image.Image, gridSize int, mapping []int) (int64, float64) {
 	bounds := img.Bounds()
 	height := float64(bounds.Dy())
 	textCenters := []float64{
@@ -431,9 +431,9 @@ func seamScoreRGBTextV2(img image.Image, gridSize int, mapping []int) (int64, fl
 	}
 	weight := func(y int) float64 {
 		yf := float64(y)
-		best := absFloatV2(yf - textCenters[0])
+		best := absFloat(yf - textCenters[0])
 		for i := 1; i < len(textCenters); i++ {
-			d := absFloatV2(yf - textCenters[i])
+			d := absFloat(yf - textCenters[i])
 			if d < best {
 				best = d
 			}
@@ -457,12 +457,12 @@ func seamScoreRGBTextV2(img image.Image, gridSize int, mapping []int) (int64, fl
 			}
 			for y := 0; y < h; y++ {
 				yy := leftDst.Min.Y + y
-				l := sampleColorMappedV2(img, leftDst, leftSrc, leftDst.Max.X-1, yy)
-				r := sampleColorMappedV2(img, rightDst, rightSrc, rightDst.Min.X, yy)
+				l := sampleColorMapped(img, leftDst, leftSrc, leftDst.Max.X-1, yy)
+				r := sampleColorMapped(img, rightDst, rightSrc, rightDst.Min.X, yy)
 				rgbScore += pixelDiff(l, r)
 				_, _, lb, _ := l.RGBA()
 				_, _, rb, _ := r.RGBA()
-				textScore += weight(yy) * float64(absIntV2(int(lb>>8)-int(rb>>8)))
+				textScore += weight(yy) * float64(absInt(int(lb>>8)-int(rb>>8)))
 			}
 		}
 	}
@@ -480,19 +480,19 @@ func seamScoreRGBTextV2(img image.Image, gridSize int, mapping []int) (int64, fl
 			}
 			for x := 0; x < w; x++ {
 				xx := topDst.Min.X + x
-				t := sampleColorMappedV2(img, topDst, topSrc, xx, topDst.Max.Y-1)
-				b := sampleColorMappedV2(img, bottomDst, bottomSrc, xx, bottomDst.Min.Y)
+				t := sampleColorMapped(img, topDst, topSrc, xx, topDst.Max.Y-1)
+				b := sampleColorMapped(img, bottomDst, bottomSrc, xx, bottomDst.Min.Y)
 				rgbScore += pixelDiff(t, b)
 				_, _, tb, _ := t.RGBA()
 				_, _, bb, _ := b.RGBA()
-				textScore += 0.65 * float64(absIntV2(int(tb>>8)-int(bb>>8)))
+				textScore += 0.65 * float64(absInt(int(tb>>8)-int(bb>>8)))
 			}
 		}
 	}
 	return rgbScore, textScore
 }
 
-func sampleColorMappedV2(img image.Image, dstRect image.Rectangle, srcRect image.Rectangle, dstX int, dstY int) color.Color {
+func sampleColorMapped(img image.Image, dstRect image.Rectangle, srcRect image.Rectangle, dstX int, dstY int) color.Color {
 	dx := dstRect.Dx()
 	if dx < 1 {
 		dx = 1
@@ -506,21 +506,21 @@ func sampleColorMappedV2(img image.Image, dstRect image.Rectangle, srcRect image
 	return img.At(sx, sy)
 }
 
-func sampleLumaMappedV2(img image.Image, dstRect image.Rectangle, srcRect image.Rectangle, dstX int, dstY int) uint8 {
-	c := sampleColorMappedV2(img, dstRect, srcRect, dstX, dstY)
+func sampleLumaMapped(img image.Image, dstRect image.Rectangle, srcRect image.Rectangle, dstX int, dstY int) uint8 {
+	c := sampleColorMapped(img, dstRect, srcRect, dstX, dstY)
 	r, g, b, _ := c.RGBA()
 	y := (299*(r>>8) + 587*(g>>8) + 114*(b>>8)) / 1000
 	return uint8(y)
 }
 
-func absFloatV2(v float64) float64 {
+func absFloat(v float64) float64 {
 	if v < 0 {
 		return -v
 	}
 	return v
 }
 
-func absIntV2(v int) int {
+func absInt(v int) int {
 	if v < 0 {
 		return -v
 	}
@@ -550,7 +550,7 @@ func absDiff(left uint32, right uint32) int64 {
 	return int64(right - left)
 }
 
-func buildSliderCursorV2(candidateIndex int, candidateCount int) string {
+func buildSliderCursor(candidateIndex int, candidateCount int) string {
 	if candidateCount <= 0 {
 		return "[]"
 	}
