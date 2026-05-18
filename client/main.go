@@ -29,6 +29,8 @@ import (
 	tlsclient "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
 
+	"github.com/cacggghp/vk-turn-proxy/client/internal/browserprofile"
+	"github.com/cacggghp/vk-turn-proxy/client/internal/captcha"
 	"github.com/cacggghp/vk-turn-proxy/client/internal/dnsdial"
 	"github.com/cacggghp/vk-turn-proxy/tcputil"
 	"github.com/cbeuw/connutil"
@@ -305,25 +307,6 @@ func (l directTCPListener) AcceptTCP() (transport.TCPConn, error) {
 
 // region Helper: HTTP Headers Injection
 
-// applyBrowserProfile applies consistent User-Agent and Client Hints to bypass WAFs
-func applyBrowserProfile(req *http.Request, profile Profile) {
-	req.Header.Set("User-Agent", profile.UserAgent)
-	req.Header.Set("sec-ch-ua", profile.SecChUa)
-	req.Header.Set("sec-ch-ua-mobile", profile.SecChUaMobile)
-	req.Header.Set("sec-ch-ua-platform", profile.SecChUaPlatform)
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("DNT", "1")
-}
-
-func applyBrowserProfileFhttp(req *fhttp.Request, profile Profile) {
-	req.Header.Set("User-Agent", profile.UserAgent)
-	req.Header.Set("sec-ch-ua", profile.SecChUa)
-	req.Header.Set("sec-ch-ua-mobile", profile.SecChUaMobile)
-	req.Header.Set("sec-ch-ua-platform", profile.SecChUaPlatform)
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("DNT", "1")
-}
-
 func getCustomNetDialer() net.Dialer {
 	return appDialer
 }
@@ -332,118 +315,7 @@ func getCustomNetDialer() net.Dialer {
 
 // region Automatic Captcha Solver & Authentication
 
-type VkCaptchaError struct {
-	ErrorCode               int
-	ErrorMsg                string
-	CaptchaSid              string
-	CaptchaImg              string
-	RedirectURI             string
-	IsSoundCaptchaAvailable bool
-	SessionToken            string
-	CaptchaTs               string
-	CaptchaAttempt          string
-}
-
-func ParseVkCaptchaError(errData map[string]any) *VkCaptchaError {
-	// Extract error_code
-	codeFloat, ok := errData["error_code"].(float64)
-	if !ok {
-		log.Printf("missing error_code in captcha error data")
-		return nil
-	}
-	code := int(codeFloat)
-
-	// Extract redirect_uri
-	RedirectURI, ok := errData["redirect_uri"].(string)
-	if !ok {
-		log.Printf("missing redirect_uri in captcha error data")
-		return nil
-	}
-
-	// Extract captcha_sid
-	captchaSid, ok := errData["captcha_sid"].(string)
-	if !ok {
-		// try numeric
-		if sidNum, ok2 := errData["captcha_sid"].(float64); ok2 {
-			captchaSid = fmt.Sprintf("%.0f", sidNum)
-		} else {
-			log.Printf("missing captcha_sid in captcha error data")
-			return nil
-		}
-	}
-
-	// Extract captcha_img
-	captchaImg, ok := errData["captcha_img"].(string)
-	if !ok {
-		log.Printf("missing captcha_img in captcha error data")
-		return nil
-	}
-
-	// Extract error_msg
-	errorMsg, ok := errData["error_msg"].(string)
-	if !ok {
-		log.Printf("missing error_msg in captcha error data")
-		return nil
-	}
-
-	// Extract session token
-	var sessionToken string
-	if RedirectURI != "" {
-		if parsed, err := neturl.Parse(RedirectURI); err == nil {
-			sessionToken = parsed.Query().Get("session_token")
-		} else {
-			log.Printf("failed to parse redirect_uri: %v", err)
-			return nil
-		}
-	}
-	// Fallback to top-level session_token field if not in redirect_uri
-	if sessionToken == "" {
-		if st, stOk := errData["session_token"].(string); stOk {
-			sessionToken = st
-		}
-	}
-
-	// Extract is_sound_captcha_available
-	isSound, ok := errData["is_sound_captcha_available"].(bool)
-	if !ok {
-		isSound = false
-	}
-
-	// Extract captcha_ts
-	var captchaTs string
-	if tsFloat, ok := errData["captcha_ts"].(float64); ok {
-		captchaTs = fmt.Sprintf("%.0f", tsFloat)
-	} else if tsStr, ok := errData["captcha_ts"].(string); ok {
-		captchaTs = tsStr
-	}
-
-	// Extract captcha_attempt
-	var captchaAttempt string
-	if attFloat, ok := errData["captcha_attempt"].(float64); ok {
-		captchaAttempt = fmt.Sprintf("%.0f", attFloat)
-	} else if attStr, ok := errData["captcha_attempt"].(string); ok {
-		captchaAttempt = attStr
-	}
-
-	// Build VkCaptchaError
-	return &VkCaptchaError{
-		ErrorCode:               code,
-		ErrorMsg:                errorMsg,
-		CaptchaSid:              captchaSid,
-		CaptchaImg:              captchaImg,
-		RedirectURI:             RedirectURI,
-		IsSoundCaptchaAvailable: isSound,
-		SessionToken:            sessionToken,
-		CaptchaTs:               captchaTs,
-		CaptchaAttempt:          captchaAttempt,
-	}
-}
-
-func (e *VkCaptchaError) IsCaptchaError() bool {
-	return e.ErrorCode == 14 && e.RedirectURI != "" && e.SessionToken != ""
-}
-
-func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID int, client tlsclient.HttpClient, profile Profile) (string, error) {
+func solveVkCaptcha(ctx context.Context, captchaErr *captcha.Error, streamID int, client tlsclient.HttpClient, profile browserprofile.Profile) (string, error) {
 	log.Printf("[STREAM %d] [Captcha] Solving captcha...", streamID)
 
 	if captchaErr.SessionToken == "" {
@@ -453,14 +325,14 @@ func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID in
 		return "", fmt.Errorf("no redirect_uri for auto-solve")
 	}
 
-	var savedProfile *SavedProfile
-	if sp, err := LoadProfileFromDisk(); err == nil {
+	var savedProfile *browserprofile.Saved
+	if sp, err := browserprofile.Load(); err == nil {
 		log.Printf("[STREAM %d] [Captcha] Using saved real browser profile", streamID)
 		savedProfile = sp
 		profile = sp.Profile
 	}
 
-	successToken, err := solveCaptchaAuto(ctx, captchaErr, streamID, client, profile, savedProfile)
+	successToken, err := captcha.Solve(ctx, captchaErr, streamID, client, profile, savedProfile)
 	if err != nil {
 		return "", err
 	}
@@ -697,7 +569,7 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, dialer net.Dia
 }
 
 func getTokenChain(ctx context.Context, link string, streamID int, creds VKCredentials, dialer net.Dialer, jar tlsclient.CookieJar) (string, string, []string, error) {
-	profile := Profile{
+	profile := browserprofile.Profile{
 		UserAgent:       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 		SecChUa:         `"Not(A:Brand";v="99", "Google Chrome";v="146", "Chromium";v="146"`,
 		SecChUaMobile:   "?0",
@@ -732,7 +604,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		}
 
 		req.Host = domain
-		applyBrowserProfileFhttp(req, profile)
+		browserprofile.ApplyFhttp(req, profile)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "*/*")
 		req.Header.Set("Origin", "https://vk.ru")
@@ -802,8 +674,8 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		}
 
 		if errObj, hasErr := resp["error"].(map[string]any); hasErr {
-			captchaErr := ParseVkCaptchaError(errObj)
-			if captchaErr != nil && captchaErr.IsCaptchaError() {
+			captchaErr := captcha.ParseError(errObj)
+			if captchaErr != nil && captchaErr.IsCaptcha() {
 				solveMode, hasSolveMode := captchaSolveModeForAttempt(attempt, manualCaptcha)
 				if !hasSolveMode {
 					log.Printf("[STREAM %d] [Captcha] No more solve modes available (attempt %d)", streamID, attempt+1)
@@ -1004,7 +876,7 @@ func getYandexCreds(link string) (string, string, string, error) {
 	const telemostConfHost = "cloud-api.yandex.ru"
 	telemostConfPath := fmt.Sprintf("%s%s%s", "/telemost_front/v2/telemost/conferences/https%3A%2F%2Ftelemost.yandex.ru%2Fj%2F", link, "/connection?next_gen_media_platform_allowed=false")
 
-	profile := getRandomProfile()
+	profile := browserprofile.Random()
 	name := generateName()
 
 	type ConferenceResponse struct {
@@ -1134,7 +1006,7 @@ func getYandexCreds(link string) (string, string, string, error) {
 		return "", "", "", err
 	}
 
-	applyBrowserProfile(req, profile)
+	browserprofile.ApplyHTTP(req, profile)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Referer", "https://telemost.yandex.ru/")
 	req.Header.Set("Origin", "https://telemost.yandex.ru")

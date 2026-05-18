@@ -1,4 +1,4 @@
-package main
+package captcha
 
 import (
 	"bytes"
@@ -21,6 +21,8 @@ import (
 
 	fhttp "github.com/bogdanfinn/fhttp"
 	tlsclient "github.com/bogdanfinn/tls-client"
+
+	"github.com/cacggghp/vk-turn-proxy/client/internal/browserprofile"
 )
 
 const (
@@ -102,22 +104,24 @@ func (e *captchaShowTypeError) Error() string {
 type captchaSession struct {
 	ctx          context.Context
 	client       tlsclient.HttpClient
-	profile      Profile
-	savedProfile *SavedProfile
+	profile      browserprofile.Profile
+	savedProfile *browserprofile.Saved
 }
 
-func solveCaptchaAuto(
+// Solve runs the automatic captcha challenge against VK's captchaNotRobot API
+// and returns a success token on success.
+func Solve(
 	ctx context.Context,
-	captchaErr *VkCaptchaError,
+	captchaErr *Error,
 	streamID int,
 	client tlsclient.HttpClient,
-	profile Profile,
-	savedProfile *SavedProfile,
+	profile browserprofile.Profile,
+	savedProfile *browserprofile.Saved,
 ) (string, error) {
 	if captchaErr == nil || captchaErr.SessionToken == "" {
 		return "", fmt.Errorf("no session_token in redirect_uri")
 	}
-	log.Printf("[STREAM %d] [Captcha] Solving VK Smart Captcha automatically (v2)...", streamID)
+	log.Printf("[STREAM %d] [Captcha] Solving VK Smart Captcha automatically...", streamID)
 
 	s := &captchaSession{ctx: ctx, client: client, profile: profile, savedProfile: savedProfile}
 
@@ -146,7 +150,7 @@ func solveCaptchaAuto(
 	return "", fmt.Errorf("captcha attempts exhausted")
 }
 
-func (s *captchaSession) solveOnce(captchaErr *VkCaptchaError) (string, error) {
+func (s *captchaSession) solveOnce(captchaErr *Error) (string, error) {
 	html, err := s.fetchCaptchaHTML(captchaErr.RedirectURI)
 	if err != nil {
 		return "", err
@@ -490,7 +494,7 @@ func (s *captchaSession) doRaw(
 	if err != nil {
 		return nil, err
 	}
-	applyBrowserProfileFhttp(req, s.profile)
+	browserprofile.ApplyFhttp(req, s.profile)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Sec-Fetch-Site", "same-site")
 	req.Header.Set("Sec-Fetch-Mode", "cors")

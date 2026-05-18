@@ -18,6 +18,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cacggghp/vk-turn-proxy/client/internal/browserprofile"
 )
 
 const captchaListenPort = "8765"
@@ -626,8 +628,8 @@ func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 
 			// We only save it if device is present. componentDone usually has it.
 			if device != "" && browserFp != "" {
-				sp := SavedProfile{
-					Profile: Profile{
+				sp := browserprofile.Saved{
+					Profile: browserprofile.Profile{
 						UserAgent:       req.Header.Get("User-Agent"),
 						SecChUa:         req.Header.Get("Sec-Ch-Ua"),
 						SecChUaMobile:   req.Header.Get("Sec-Ch-Ua-Mobile"),
@@ -636,7 +638,7 @@ func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 					DeviceJSON: device,
 					BrowserFp:  browserFp,
 				}
-				if err := SaveProfileToDisk(sp); err != nil {
+				if err := browserprofile.Save(sp); err != nil {
 					log.Printf("[Captcha Proxy] Failed to save browser profile: %v", err)
 				} else {
 					log.Printf("[Captcha Proxy] Successfully intercepted and saved real browser profile!")
