@@ -13,7 +13,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,8 +29,6 @@ const (
 	// Total budget across all endpoint attempts in forwardRaw. Must be a
 	// multiple of dohQueryTimeout to give every fallback a real chance.
 	dohForwardBudget    = 25 * time.Second
-	dohCacheMinTTL      = 10 * time.Second
-	dohCacheMaxTTL      = 1 * time.Hour
 	dohMaxResponseBytes = 64 * 1024
 	dohContentType      = "application/dns-message"
 
@@ -64,11 +61,10 @@ var defaultDohEndpoints = []DohEndpoint{
 	{"https://family.dot.dns.yandex.net/dns-query", "family.dot.dns.yandex.net", []string{"77.88.8.7", "77.88.8.3"}},
 }
 
-// DohResolver resolves hostnames to IPs via DNS-over-HTTPS (RFC 8484).
+// DohResolver POSTs DNS wire queries to one of several DoH endpoints.
 type DohResolver struct {
 	endpoints []DohEndpoint
 	client    *http.Client
-	cache     *dohCache
 }
 
 // NewDohResolver constructs a resolver using defaultDohEndpoints if endpoints
@@ -81,13 +77,12 @@ func NewDohResolver(endpoints []DohEndpoint) *DohResolver {
 	return &DohResolver{
 		endpoints: endpoints,
 		client:    &http.Client{Timeout: dohQueryTimeout, Transport: newBootstrapTransport(endpoints)},
-		cache:     newDohCache(),
 	}
 }
 
 // newDohResolverWithClient is a test hook that skips the bootstrap transport.
 func newDohResolverWithClient(endpoints []DohEndpoint, client *http.Client) *DohResolver {
-	return &DohResolver{endpoints: endpoints, client: client, cache: newDohCache()}
+	return &DohResolver{endpoints: endpoints, client: client}
 }
 
 // newBootstrapTransport returns an http.Transport whose DialContext only
@@ -161,119 +156,6 @@ func newBootstrapTransport(endpoints []DohEndpoint) *http.Transport {
 	}
 }
 
-// LookupIPAddr resolves host to a combined list of A+AAAA IPs (IPv4 first).
-// Cached results bypass the network entirely.
-func (r *DohResolver) LookupIPAddr(ctx context.Context, host string) ([]net.IP, error) {
-	if ip := net.ParseIP(host); ip != nil {
-		return []net.IP{ip}, nil
-	}
-	if ips, ok := r.cache.get(host); ok {
-		return ips, nil
-	}
-
-	type res struct {
-		ips []net.IP
-		ttl time.Duration
-		err error
-	}
-	results := make(chan res, 2)
-	for _, qt := range [...]uint16{dns.TypeA, dns.TypeAAAA} {
-		go func(qtype uint16) {
-			ips, ttl, err := r.queryIPs(ctx, host, qtype)
-			results <- res{ips, ttl, err}
-		}(qt)
-	}
-
-	var (
-		all     []net.IP
-		lastErr error
-		minTTL  = dohCacheMaxTTL
-	)
-	for range 2 {
-		rr := <-results
-		if rr.err != nil {
-			lastErr = rr.err
-			continue
-		}
-		all = append(all, rr.ips...)
-		if rr.ttl > 0 && rr.ttl < minTTL {
-			minTTL = rr.ttl
-		}
-	}
-	if len(all) == 0 {
-		if lastErr == nil {
-			lastErr = fmt.Errorf("doh: no records for %s", host)
-		}
-		return nil, lastErr
-	}
-
-	// IPv4 before IPv6 — better compat with mobile IPv4-only CGNAT.
-	sort.SliceStable(all, func(i, j int) bool {
-		return (all[i].To4() != nil) && (all[j].To4() == nil)
-	})
-
-	if minTTL < dohCacheMinTTL {
-		minTTL = dohCacheMinTTL
-	}
-	r.cache.set(host, all, minTTL)
-	return all, nil
-}
-
-// queryIPs issues one DoH query for qtype, walking endpoints until one
-// succeeds, and parses the wire reply into IPs + min TTL.
-func (r *DohResolver) queryIPs(ctx context.Context, host string, qtype uint16) ([]net.IP, time.Duration, error) {
-	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn(host), qtype)
-	m.Id = 0 // RFC 8484 §4.1 — zero ID is cache-friendly on shared caches.
-	m.RecursionDesired = true
-	wire, err := m.Pack()
-	if err != nil {
-		return nil, 0, fmt.Errorf("doh: pack query: %w", err)
-	}
-
-	body, ep, err := r.forwardRaw(ctx, wire)
-	if err != nil {
-		return nil, 0, err
-	}
-	ips, ttl, err := parseAnswer(body)
-	if err != nil {
-		return nil, 0, fmt.Errorf("doh: parse %s: %w", ep.Hostname, err)
-	}
-	log.Printf("[DoH] %s %s via %s → %d IPs (ttl %s)", host, dns.TypeToString[qtype], ep.Hostname, len(ips), ttl)
-	return ips, ttl, nil
-}
-
-// parseAnswer decodes a DNS wire reply into A/AAAA records and the minimum TTL.
-func parseAnswer(body []byte) ([]net.IP, time.Duration, error) {
-	reply := new(dns.Msg)
-	if err := reply.Unpack(body); err != nil {
-		return nil, 0, fmt.Errorf("unpack: %w", err)
-	}
-	if reply.Rcode != dns.RcodeSuccess {
-		return nil, 0, fmt.Errorf("rcode %s", dns.RcodeToString[reply.Rcode])
-	}
-	var (
-		ips    []net.IP
-		minTTL uint32
-	)
-	updateTTL := func(ttl uint32) {
-		if minTTL == 0 || ttl < minTTL {
-			minTTL = ttl
-		}
-	}
-	for _, ans := range reply.Answer {
-		switch a := ans.(type) {
-		case *dns.A:
-			ips = append(ips, a.A)
-			updateTTL(a.Hdr.Ttl)
-		case *dns.AAAA:
-			ips = append(ips, a.AAAA)
-			updateTTL(a.Hdr.Ttl)
-		}
-	}
-	return ips, time.Duration(minTTL) * time.Second, nil
-}
-
 // forwardRaw POSTs an opaque DNS-wire query to the configured DoH endpoints
 // in order and returns the first successful raw response together with the
 // endpoint that produced it. No parsing — useful for the local forwarder
@@ -329,46 +211,6 @@ func (r *DohResolver) postWire(ctx context.Context, ep DohEndpoint, query []byte
 		return nil, fmt.Errorf("read body: %w", err)
 	}
 	return body, nil
-}
-
-type dohCacheEntry struct {
-	ips    []net.IP
-	expiry time.Time
-}
-
-type dohCache struct {
-	mu sync.RWMutex
-	m  map[string]dohCacheEntry
-}
-
-func newDohCache() *dohCache {
-	return &dohCache{m: make(map[string]dohCacheEntry)}
-}
-
-func (c *dohCache) get(host string) ([]net.IP, bool) {
-	c.mu.RLock()
-	e, ok := c.m[host]
-	c.mu.RUnlock()
-	if !ok || time.Now().After(e.expiry) {
-		return nil, false
-	}
-	out := make([]net.IP, len(e.ips))
-	copy(out, e.ips)
-	return out, true
-}
-
-func (c *dohCache) set(host string, ips []net.IP, ttl time.Duration) {
-	if ttl <= 0 {
-		return
-	}
-	if ttl > dohCacheMaxTTL {
-		ttl = dohCacheMaxTTL
-	}
-	cp := make([]net.IP, len(ips))
-	copy(cp, ips)
-	c.mu.Lock()
-	c.m[host] = dohCacheEntry{ips: cp, expiry: time.Now().Add(ttl)}
-	c.mu.Unlock()
 }
 
 // Go's net.Resolver dials this stub like a regular nameserver, which avoids

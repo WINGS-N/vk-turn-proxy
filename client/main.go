@@ -14,7 +14,6 @@ import (
 	"log"
 	"math/rand"
 	"net"
-	"net/http"
 	neturl "net/url"
 	"os"
 	"os/signal"
@@ -35,7 +34,6 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/tcputil"
 	"github.com/cbeuw/connutil"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 	"github.com/pion/logging"
@@ -872,311 +870,6 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 
 // endregion
 
-func getYandexCreds(link string) (string, string, string, error) {
-	const telemostConfHost = "cloud-api.yandex.ru"
-	telemostConfPath := fmt.Sprintf("%s%s%s", "/telemost_front/v2/telemost/conferences/https%3A%2F%2Ftelemost.yandex.ru%2Fj%2F", link, "/connection?next_gen_media_platform_allowed=false")
-
-	profile := browserprofile.Random()
-	name := generateName()
-
-	type ConferenceResponse struct {
-		URI                 string `json:"uri"`
-		RoomID              string `json:"room_id"`
-		PeerID              string `json:"peer_id"`
-		ClientConfiguration struct {
-			MediaServerURL string `json:"media_server_url"`
-		} `json:"client_configuration"`
-		Credentials string `json:"credentials"`
-	}
-
-	type PartMeta struct {
-		Name        string `json:"name"`
-		Role        string `json:"role"`
-		Description string `json:"description"`
-		SendAudio   bool   `json:"sendAudio"`
-		SendVideo   bool   `json:"sendVideo"`
-	}
-
-	type PartAttrs struct {
-		Name        string `json:"name"`
-		Role        string `json:"role"`
-		Description string `json:"description"`
-	}
-
-	type SdkInfo struct {
-		Implementation string `json:"implementation"`
-		Version        string `json:"version"`
-		UserAgent      string `json:"userAgent"`
-		HwConcurrency  int    `json:"hwConcurrency"`
-	}
-
-	type Capabilities struct {
-		OfferAnswerMode             []string `json:"offerAnswerMode"`
-		InitialSubscriberOffer      []string `json:"initialSubscriberOffer"`
-		SlotsMode                   []string `json:"slotsMode"`
-		SimulcastMode               []string `json:"simulcastMode"`
-		SelfVadStatus               []string `json:"selfVadStatus"`
-		DataChannelSharing          []string `json:"dataChannelSharing"`
-		VideoEncoderConfig          []string `json:"videoEncoderConfig"`
-		DataChannelVideoCodec       []string `json:"dataChannelVideoCodec"`
-		BandwidthLimitationReason   []string `json:"bandwidthLimitationReason"`
-		SdkDefaultDeviceManagement  []string `json:"sdkDefaultDeviceManagement"`
-		JoinOrderLayout             []string `json:"joinOrderLayout"`
-		PinLayout                   []string `json:"pinLayout"`
-		SendSelfViewVideoSlot       []string `json:"sendSelfViewVideoSlot"`
-		ServerLayoutTransition      []string `json:"serverLayoutTransition"`
-		SdkPublisherOptimizeBitrate []string `json:"sdkPublisherOptimizeBitrate"`
-		SdkNetworkLostDetection     []string `json:"sdkNetworkLostDetection"`
-		SdkNetworkPathMonitor       []string `json:"sdkNetworkPathMonitor"`
-		PublisherVp9                []string `json:"publisherVp9"`
-		SvcMode                     []string `json:"svcMode"`
-		SubscriberOfferAsyncAck     []string `json:"subscriberOfferAsyncAck"`
-		SvcModes                    []string `json:"svcModes"`
-		ReportTelemetryModes        []string `json:"reportTelemetryModes"`
-		KeepDefaultDevicesModes     []string `json:"keepDefaultDevicesModes"`
-	}
-
-	type HelloPayload struct {
-		ParticipantMeta        PartMeta     `json:"participantMeta"`
-		ParticipantAttributes  PartAttrs    `json:"participantAttributes"`
-		SendAudio              bool         `json:"sendAudio"`
-		SendVideo              bool         `json:"sendVideo"`
-		SendSharing            bool         `json:"sendSharing"`
-		ParticipantID          string       `json:"participantId"`
-		RoomID                 string       `json:"roomId"`
-		ServiceName            string       `json:"serviceName"`
-		Credentials            string       `json:"credentials"`
-		CapabilitiesOffer      Capabilities `json:"capabilitiesOffer"`
-		SdkInfo                SdkInfo      `json:"sdkInfo"`
-		SdkInitializationID    string       `json:"sdkInitializationId"`
-		DisablePublisher       bool         `json:"disablePublisher"`
-		DisableSubscriber      bool         `json:"disableSubscriber"`
-		DisableSubscriberAudio bool         `json:"disableSubscriberAudio"`
-	}
-
-	type HelloRequest struct {
-		UID   string       `json:"uid"`
-		Hello HelloPayload `json:"hello"`
-	}
-
-	type FlexUrls []string
-
-	type WSSResponse struct {
-		UID         string `json:"uid"`
-		ServerHello struct {
-			RtcConfiguration struct {
-				IceServers []struct {
-					Urls       FlexUrls `json:"urls"`
-					Username   string   `json:"username,omitempty"`
-					Credential string   `json:"credential,omitempty"`
-				} `json:"iceServers"`
-			} `json:"rtcConfiguration"`
-		} `json:"serverHello"`
-	}
-
-	type WSSAck struct {
-		UID string `json:"uid"`
-		Ack struct {
-			Status struct {
-				Code string `json:"code"`
-			} `json:"status"`
-		} `json:"ack"`
-	}
-
-	type WSSData struct {
-		ParticipantID string
-		RoomID        string
-		Credentials   string
-		Wss           string
-	}
-
-	endpoint := "https://" + telemostConfHost + telemostConfPath
-	tr := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-	}
-	client := &http.Client{
-		Timeout:   20 * time.Second,
-		Transport: tr,
-	}
-	defer client.CloseIdleConnections()
-	req, err := http.NewRequest("GET", endpoint, nil)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	browserprofile.ApplyHTTP(req, profile)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Referer", "https://telemost.yandex.ru/")
-	req.Header.Set("Origin", "https://telemost.yandex.ru")
-	req.Header.Set("Client-Instance-Id", uuid.New().String())
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", "", err
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("close response body: %s", closeErr)
-		}
-	}()
-	if resp.StatusCode != http.StatusOK {
-		readBody, err2 := io.ReadAll(resp.Body)
-		if err2 != nil {
-			return "", "", "", fmt.Errorf("GetConference: status=%s (failed to read body: %v)", resp.Status, err2)
-		}
-		return "", "", "", fmt.Errorf("GetConference: status=%s body=%s", resp.Status, string(readBody))
-	}
-
-	var result ConferenceResponse
-	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", "", fmt.Errorf("decode conf: %v", err)
-	}
-	data := WSSData{
-		ParticipantID: result.PeerID,
-		RoomID:        result.RoomID,
-		Credentials:   result.Credentials,
-		Wss:           result.ClientConfiguration.MediaServerURL,
-	}
-	h := http.Header{}
-	h.Set("Origin", "https://telemost.yandex.ru")
-	h.Set("User-Agent", profile.UserAgent)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	dialer := websocket.Dialer{}
-	var conn *websocket.Conn
-	conn, resp, err = dialer.DialContext(ctx, data.Wss, h)
-	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return "", "", "", fmt.Errorf("ws dial: %w", err)
-	}
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-	defer func() {
-		if closeErr := conn.Close(); closeErr != nil {
-			log.Printf("close websocket: %s", closeErr)
-		}
-	}()
-
-	req1 := HelloRequest{
-		UID: uuid.New().String(),
-		Hello: HelloPayload{
-			ParticipantMeta: PartMeta{
-				Name:        name,
-				Role:        "SPEAKER",
-				Description: "",
-				SendAudio:   false,
-				SendVideo:   false,
-			},
-			ParticipantAttributes: PartAttrs{
-				Name:        name,
-				Role:        "SPEAKER",
-				Description: "",
-			},
-			SendAudio:   false,
-			SendVideo:   false,
-			SendSharing: false,
-
-			ParticipantID: data.ParticipantID,
-			RoomID:        data.RoomID,
-			ServiceName:   "telemost",
-			Credentials:   data.Credentials,
-			SdkInfo: SdkInfo{
-				Implementation: "browser",
-				Version:        "5.15.0",
-				UserAgent:      profile.UserAgent,
-				HwConcurrency:  4,
-			},
-			SdkInitializationID:    uuid.New().String(),
-			DisablePublisher:       false,
-			DisableSubscriber:      false,
-			DisableSubscriberAudio: false,
-			CapabilitiesOffer: Capabilities{
-				OfferAnswerMode:             []string{"SEPARATE"},
-				InitialSubscriberOffer:      []string{"ON_HELLO"},
-				SlotsMode:                   []string{"FROM_CONTROLLER"},
-				SimulcastMode:               []string{"DISABLED"},
-				SelfVadStatus:               []string{"FROM_SERVER"},
-				DataChannelSharing:          []string{"TO_RTP"},
-				VideoEncoderConfig:          []string{"NO_CONFIG"},
-				DataChannelVideoCodec:       []string{"VP8"},
-				BandwidthLimitationReason:   []string{"BANDWIDTH_REASON_DISABLED"},
-				SdkDefaultDeviceManagement:  []string{"SDK_DEFAULT_DEVICE_MANAGEMENT_DISABLED"},
-				JoinOrderLayout:             []string{"JOIN_ORDER_LAYOUT_DISABLED"},
-				PinLayout:                   []string{"PIN_LAYOUT_DISABLED"},
-				SendSelfViewVideoSlot:       []string{"SEND_SELF_VIEW_VIDEO_SLOT_DISABLED"},
-				ServerLayoutTransition:      []string{"SERVER_LAYOUT_TRANSITION_DISABLED"},
-				SdkPublisherOptimizeBitrate: []string{"SDK_PUBLISHER_OPTIMIZE_BITRATE_DISABLED"},
-				SdkNetworkLostDetection:     []string{"SDK_NETWORK_LOST_DETECTION_DISABLED"},
-				SdkNetworkPathMonitor:       []string{"SDK_NETWORK_PATH_MONITOR_DISABLED"},
-				PublisherVp9:                []string{"PUBLISH_VP9_DISABLED"},
-				SvcMode:                     []string{"SVC_MODE_DISABLED"},
-				SubscriberOfferAsyncAck:     []string{"SUBSCRIBER_OFFER_ASYNC_ACK_DISABLED"},
-				SvcModes:                    []string{"FALSE"},
-				ReportTelemetryModes:        []string{"TRUE"},
-				KeepDefaultDevicesModes:     []string{"TRUE"},
-			},
-		},
-	}
-
-	if isDebug {
-		b, _ := json.MarshalIndent(req1, "", "  ")
-		log.Printf("Sending HELLO:\n%s", string(b))
-	}
-
-	if err := conn.WriteJSON(req1); err != nil {
-		return "", "", "", fmt.Errorf("ws write: %w", err)
-	}
-
-	if err := conn.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
-		return "", "", "", fmt.Errorf("ws set read deadline: %w", err)
-	}
-
-	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			return "", "", "", fmt.Errorf("ws read: %w", err)
-		}
-		if isDebug {
-			s := string(msg)
-			if len(s) > 800 {
-				s = s[:800] + "...(truncated)"
-			}
-			log.Printf("WSS recv: %s", s)
-		}
-
-		var ack WSSAck
-		if err := json.Unmarshal(msg, &ack); err == nil && ack.Ack.Status.Code != "" {
-			continue
-		}
-
-		var resp WSSResponse
-		if err := json.Unmarshal(msg, &resp); err == nil {
-			ice := resp.ServerHello.RtcConfiguration.IceServers
-			for _, s := range ice {
-				for _, u := range s.Urls {
-					if !strings.HasPrefix(u, "turn:") && !strings.HasPrefix(u, "turns:") {
-						continue
-					}
-					if strings.Contains(u, "transport=tcp") {
-						continue
-					}
-					clean := strings.Split(u, "?")[0]
-					address := strings.TrimPrefix(strings.TrimPrefix(clean, "turn:"), "turns:")
-
-					return s.Username, s.Credential, address, nil
-				}
-			}
-		}
-	}
-}
-
 func dtlsFunc(ctx context.Context, conn net.PacketConn, peer *net.UDPAddr) (net.Conn, error) {
 	certificate, err := selfsign.GenerateSelfSigned()
 	if err != nil {
@@ -1646,9 +1339,8 @@ func main() {
 	port := flag.String("port", "", "override TURN port")
 	listen := flag.String("listen", "127.0.0.1:9000", "listen on ip:port")
 	vklink := flag.String("vk-link", "", "VK calls invite link \"https://vk.com/call/join/...\"")
-	yalink := flag.String("yandex-link", "", "Yandex telemost invite link \"https://telemost.yandex.ru/j/...\"")
 	peerAddr := flag.String("peer", "", "peer server address (host:port)")
-	n := flag.Int("n", 0, "connections to TURN (default 10 for VK, 1 for Yandex)")
+	n := flag.Int("n", 10, "connections to TURN")
 	udp := flag.Bool("udp", false, "connect to TURN with UDP")
 	direct := flag.Bool("no-dtls", false, "connect without obfuscation. DO NOT USE")
 	vlessMode := flag.Bool("vless", false, "VLESS mode: forward TCP connections (for VLESS) instead of UDP packets")
@@ -1690,8 +1382,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if (*vklink == "") == (*yalink == "") {
-		log.Panicf("Need either vk-link or yandex-link!")
+	if *vklink == "" {
+		log.Panicf("Need vk-link!")
 	}
 	if *wrapMode && *direct {
 		log.Panicf("-wrap requires DTLS; remove -no-dtls")
@@ -1711,27 +1403,14 @@ func main() {
 	isDebug = *debugFlag
 	manualCaptcha = *manualCaptchaFlag
 
-	var link string
-	var getCreds getCredsFunc
-	if *vklink != "" {
-		parts := strings.Split(*vklink, "join/")
-		link = parts[len(parts)-1]
+	parts := strings.Split(*vklink, "join/")
+	link := parts[len(parts)-1]
 
-		getCreds = func(ctx context.Context, s string, streamID int) (string, string, string, error) {
-			return getVkCredsCached(ctx, s, streamID, appDialer)
-		}
-		if *n <= 0 {
-			*n = 10
-		}
-	} else {
-		parts := strings.Split(*yalink, "j/")
-		link = parts[len(parts)-1]
-		getCreds = func(ctx context.Context, s string, streamID int) (string, string, string, error) {
-			return getYandexCreds(s)
-		}
-		if *n <= 0 {
-			*n = 1
-		}
+	getCreds := getCredsFunc(func(ctx context.Context, s string, streamID int) (string, string, string, error) {
+		return getVkCredsCached(ctx, s, streamID, appDialer)
+	})
+	if *n <= 0 {
+		*n = 10
 	}
 	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
 		link = link[:idx]

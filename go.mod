@@ -7,7 +7,6 @@ require (
 	github.com/bogdanfinn/tls-client v1.14.0
 	github.com/cbeuw/connutil v1.0.1
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/miekg/dns v1.1.72
 	github.com/pion/dtls/v3 v3.1.2
 	github.com/pion/logging v0.2.4
