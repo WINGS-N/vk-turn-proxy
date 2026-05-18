@@ -527,6 +527,29 @@ func absIntV2(v int) int {
 	return v
 }
 
+func sliderTileRect(bounds image.Rectangle, gridSize int, index int) image.Rectangle {
+	row := index / gridSize
+	col := index % gridSize
+	x0 := bounds.Min.X + col*bounds.Dx()/gridSize
+	x1 := bounds.Min.X + (col+1)*bounds.Dx()/gridSize
+	y0 := bounds.Min.Y + row*bounds.Dy()/gridSize
+	y1 := bounds.Min.Y + (row+1)*bounds.Dy()/gridSize
+	return image.Rect(x0, y0, x1, y1)
+}
+
+func pixelDiff(left color.Color, right color.Color) int64 {
+	lr, lg, lb, _ := left.RGBA()
+	rr, rg, rb, _ := right.RGBA()
+	return absDiff(lr, rr) + absDiff(lg, rg) + absDiff(lb, rb)
+}
+
+func absDiff(left uint32, right uint32) int64 {
+	if left > right {
+		return int64(left - right)
+	}
+	return int64(right - left)
+}
+
 func buildSliderCursorV2(candidateIndex int, candidateCount int) string {
 	if candidateCount <= 0 {
 		return "[]"

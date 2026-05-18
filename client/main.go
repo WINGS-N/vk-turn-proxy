@@ -6,10 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -64,9 +61,8 @@ var (
 	connectedStreams     atomic.Int32
 	globalAppCancel      context.CancelFunc
 	handshakeSem         = make(chan struct{}, 3)
-	isDebug              bool
-	manualCaptcha        bool
-	autoCaptchaSliderPOC bool
+	isDebug       bool
+	manualCaptcha bool
 )
 
 var appDialer net.Dialer
@@ -81,29 +77,19 @@ type captchaSolveMode int
 
 const (
 	captchaSolveModeAuto captchaSolveMode = iota
-	captchaSolveModeSliderPOC
 	captchaSolveModeManual
 )
 
-func captchaSolveModeForAttempt(attempt int, manualOnly bool, enableSliderPOC bool) (captchaSolveMode, bool) {
+func captchaSolveModeForAttempt(attempt int, manualOnly bool) (captchaSolveMode, bool) {
 	if manualOnly {
 		return captchaSolveModeManual, attempt == 0
 	}
-
 	switch attempt {
 	case 0:
 		return captchaSolveModeAuto, true
 	case 1:
-		if enableSliderPOC {
-			return captchaSolveModeSliderPOC, true
-		}
 		return captchaSolveModeManual, true
-	case 2:
-		if enableSliderPOC {
-			return captchaSolveModeManual, true
-		}
 	}
-
 	return 0, false
 }
 
@@ -111,8 +97,6 @@ func captchaSolveModeLabel(mode captchaSolveMode) string {
 	switch mode {
 	case captchaSolveModeAuto:
 		return "auto captcha"
-	case captchaSolveModeSliderPOC:
-		return "auto captcha slider POC"
 	case captchaSolveModeManual:
 		return "manual captcha"
 	default:
@@ -340,14 +324,6 @@ func applyBrowserProfileFhttp(req *fhttp.Request, profile Profile) {
 	req.Header.Set("DNT", "1")
 }
 
-func generateBrowserFp(profile Profile) string {
-	// Fallback logic for generating a fingerprint if no saved profile is available.
-	// This uses a simple MD5 hash of UA and a fixed resolution.
-	data := profile.UserAgent + profile.SecChUa + "1536x864x24"
-	h := md5.Sum([]byte(data))
-	return hex.EncodeToString(h[:])
-}
-
 func getCustomNetDialer() net.Dialer {
 	return appDialer
 }
@@ -467,12 +443,8 @@ func (e *VkCaptchaError) IsCaptchaError() bool {
 	return e.ErrorCode == 14 && e.RedirectURI != "" && e.SessionToken != ""
 }
 
-func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID int, client tlsclient.HttpClient, profile Profile, useSliderPOC bool) (string, error) {
-	if useSliderPOC {
-		log.Printf("[STREAM %d] [Captcha] Solving captcha with slider POC...", streamID)
-	} else {
-		log.Printf("[STREAM %d] [Captcha] Solving captcha...", streamID)
-	}
+func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID int, client tlsclient.HttpClient, profile Profile) (string, error) {
+	log.Printf("[STREAM %d] [Captcha] Solving captcha...", streamID)
 
 	if captchaErr.SessionToken == "" {
 		return "", fmt.Errorf("no session_token in redirect_uri for auto-solve")
@@ -481,96 +453,19 @@ func solveVkCaptcha(ctx context.Context, captchaErr *VkCaptchaError, streamID in
 		return "", fmt.Errorf("no redirect_uri for auto-solve")
 	}
 
-	// Try to load saved profile from disk
 	var savedProfile *SavedProfile
 	if sp, err := LoadProfileFromDisk(); err == nil {
 		log.Printf("[STREAM %d] [Captcha] Using saved real browser profile", streamID)
 		savedProfile = sp
-		profile = sp.Profile // Use saved headers/UA
+		profile = sp.Profile
 	}
 
-	if !useSliderPOC {
-		successToken, v2Err := solveVkCaptchaV2(ctx, captchaErr, streamID, client, profile, savedProfile)
-		if v2Err != nil {
-			return "", v2Err
-		}
-		log.Printf("[STREAM %d] [Captcha] v2 solver succeeded", streamID)
-		return successToken, nil
-	}
-
-	bootstrap, err := fetchCaptchaBootstrap(ctx, captchaErr.RedirectURI, client, profile)
+	successToken, err := solveVkCaptchaV2(ctx, captchaErr, streamID, client, profile, savedProfile)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch captcha bootstrap: %w", err)
+		return "", err
 	}
-
-	log.Printf("[STREAM %d] [Captcha] PoW input: %s, difficulty: %d", streamID, bootstrap.PowInput, bootstrap.Difficulty)
-
-	hash := solvePoW(bootstrap.PowInput, bootstrap.Difficulty)
-	log.Printf("[STREAM %d] [Captcha] PoW solved: hash=%s", streamID, hash)
-
-	successToken, err := callCaptchaNotRobotWithSliderPOC(
-		ctx,
-		captchaErr.SessionToken,
-		hash,
-		streamID,
-		client,
-		profile,
-		bootstrap.Settings,
-		savedProfile,
-	)
-	if err != nil {
-		return "", fmt.Errorf("captchaNotRobot API failed: %w", err)
-	}
-
-	log.Printf("[STREAM %d] [Captcha] Success! Got success_token", streamID)
+	log.Printf("[STREAM %d] [Captcha] solver succeeded", streamID)
 	return successToken, nil
-}
-
-func fetchCaptchaBootstrap(ctx context.Context, redirectURI string, client tlsclient.HttpClient, profile Profile) (*captchaBootstrap, error) {
-	parsedURL, err := neturl.Parse(redirectURI)
-	if err != nil {
-		return nil, err
-	}
-	domain := parsedURL.Hostname()
-
-	req, err := fhttp.NewRequestWithContext(ctx, "GET", redirectURI, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Host = domain
-	applyBrowserProfileFhttp(req, profile)
-	req.Header.Set("Sec-Fetch-Site", "none")
-	req.Header.Set("Sec-Fetch-Mode", "navigate")
-	req.Header.Set("Sec-Fetch-Dest", "document")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return parseCaptchaBootstrapHTML(string(body))
-}
-
-func solvePoW(powInput string, difficulty int) string {
-	target := strings.Repeat("0", difficulty)
-	for nonce := 1; nonce <= 10000000; nonce++ {
-		data := powInput + strconv.Itoa(nonce)
-		hash := sha256.Sum256([]byte(data))
-		hexHash := hex.EncodeToString(hash[:])
-		if strings.HasPrefix(hexHash, target) {
-			return hexHash
-		}
-	}
-	return ""
 }
 
 // endregion
@@ -909,7 +804,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		if errObj, hasErr := resp["error"].(map[string]any); hasErr {
 			captchaErr := ParseVkCaptchaError(errObj)
 			if captchaErr != nil && captchaErr.IsCaptchaError() {
-				solveMode, hasSolveMode := captchaSolveModeForAttempt(attempt, manualCaptcha, autoCaptchaSliderPOC)
+				solveMode, hasSolveMode := captchaSolveModeForAttempt(attempt, manualCaptcha)
 				if !hasSolveMode {
 					log.Printf("[STREAM %d] [Captcha] No more solve modes available (attempt %d)", streamID, attempt+1)
 
@@ -931,21 +826,12 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 				switch solveMode {
 				case captchaSolveModeAuto:
 					if captchaErr.SessionToken != "" && captchaErr.RedirectURI != "" {
-						successToken, solveErr = solveVkCaptcha(ctx, captchaErr, streamID, client, profile, false)
+						successToken, solveErr = solveVkCaptcha(ctx, captchaErr, streamID, client, profile)
 						if solveErr != nil {
 							log.Printf("[STREAM %d] [Captcha] Auto captcha failed: %v", streamID, solveErr)
 						}
 					} else {
 						solveErr = fmt.Errorf("missing fields for auto solve")
-					}
-				case captchaSolveModeSliderPOC:
-					if captchaErr.SessionToken != "" && captchaErr.RedirectURI != "" {
-						successToken, solveErr = solveVkCaptcha(ctx, captchaErr, streamID, client, profile, true)
-						if solveErr != nil {
-							log.Printf("[STREAM %d] [Captcha] Auto captcha slider POC failed: %v", streamID, solveErr)
-						}
-					} else {
-						solveErr = fmt.Errorf("missing fields for slider POC auto solve")
 					}
 				case captchaSolveModeManual:
 					log.Printf("[STREAM %d] [Captcha] Triggering manual captcha fallback...", streamID)
@@ -1004,7 +890,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 				if solveErr != nil {
 					log.Printf("[STREAM %d] [Captcha] %s failed (attempt %d): %v", streamID, captchaSolveModeLabel(solveMode), attempt+1, solveErr)
 
-					nextSolveMode, hasNextSolveMode := captchaSolveModeForAttempt(attempt+1, manualCaptcha, autoCaptchaSliderPOC)
+					nextSolveMode, hasNextSolveMode := captchaSolveModeForAttempt(attempt+1, manualCaptcha)
 					if hasNextSolveMode {
 						log.Printf("[STREAM %d] [Captcha] Falling back to %s...", streamID, captchaSolveModeLabel(nextSolveMode))
 						continue
@@ -1952,7 +1838,6 @@ func main() {
 
 	isDebug = *debugFlag
 	manualCaptcha = *manualCaptchaFlag
-	autoCaptchaSliderPOC = !manualCaptcha
 
 	var link string
 	var getCreds getCredsFunc
