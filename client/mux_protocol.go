@@ -44,9 +44,29 @@ func buildProbeHelloForVersion(version uint32) ([]byte, error) {
 }
 
 func buildSessionHelloForVersion(version uint32, sessionID []byte, streamID byte) ([]byte, error) {
+	return buildSessionHelloForVersionWithWrap(version, sessionID, streamID, nil, nil)
+}
+
+// buildSessionHelloForVersionWithWrap is the variant that populates the
+// WRAP negotiation fields. supportedWrapCiphers in preference order,
+// wrapKeyProposal == nil omits the field (server falls back to preset).
+func buildSessionHelloForVersionWithWrap(
+	version uint32,
+	sessionID []byte,
+	streamID byte,
+	supportedWrapCiphers []sessionproto.WrapCipher,
+	wrapKeyProposal []byte,
+) ([]byte, error) {
 	switch version {
 	case muProtocolV1:
-		return sessionmuv1.BuildSessionHello(sessionID, streamID)
+		return sessionmuv1.BuildSessionHelloWithWrap(
+			sessionID,
+			streamID,
+			sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
+			[]sessionproto.TransportMode{sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM},
+			supportedWrapCiphers,
+			wrapKeyProposal,
+		)
 	default:
 		return nil, fmt.Errorf("unsupported mu protocol version: %d", version)
 	}

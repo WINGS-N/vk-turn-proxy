@@ -51,9 +51,10 @@ type clientOptions struct {
 	roomExchangeE2EEnabled  bool
 	roomExchangeE2ESecret   string
 
-	wrapMode   string // off|preferred|required (preferred ≡ required without negotiation in v1)
-	wrapCipher string // aes-ctr|chacha20-xor
-	wrapKeyHex string // 64-char hex (32 bytes); empty + mode!=off generates fresh key
+	wrapMode    string // off|preferred|required
+	wrapCipher  string // srtp-aes-gcm|srtp-chacha20-poly1305
+	wrapKeyHex  string // 64-char hex (32 bytes); empty + mode!=off generates fresh key
+	wrapSendKey bool   // in-band key delivery (default true)
 }
 
 func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientOptions) {
@@ -100,6 +101,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.wrapMode, "wrap-mode", "off", "WRAP SRTP-mimicry mode: off|preferred|required")
 	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "srtp-aes-gcm", "WRAP AEAD: srtp-aes-gcm|srtp-chacha20-poly1305")
 	fs.StringVar(&opts.wrapKeyHex, "wrap-key", "", "WRAP key (64-char hex, 32 bytes); empty + mode!=off generates a fresh key")
+	fs.BoolVar(&opts.wrapSendKey, "wrap-send-key", true, "Send wrap_key_proposal in mu/v1 SessionHello (default true). Disable to require the server to use its own preset key.")
 	fs.Usage = func() {
 		cliutil.Fprintf(fs.Output(), "Usage:\n  %s -peer <host:port> -vk-link <link> [flags]\n  %s -peer <host:port> -yandex-link <link> [flags]\n\n", program, program)
 		cliutil.Fprintln(fs.Output(), "Examples:")

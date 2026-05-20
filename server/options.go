@@ -22,9 +22,10 @@ type serverOptions struct {
 	wbStreamDisplayName string
 	wbStreamE2ESecret   string
 
-	wrapMode   string // off|on
-	wrapCipher string // aes-ctr|chacha20-xor
-	wrapKeyHex string // 64-char hex (32 bytes)
+	wrapMode             string // off|on — honor client-proposed WRAP at all
+	wrapCipher           string // any|srtp-aes-gcm|srtp-chacha20-poly1305 — accepted cipher(s)
+	wrapKeyHex           string // optional preset key; takes precedence over client proposal
+	wrapAcceptClientKeys bool   // default true; in-band key transmission opt-out
 }
 
 func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverOptions) {
@@ -42,9 +43,10 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", "join the given LiveKit room and forward DataPacket frames instead of the TURN data plane")
 	fs.StringVar(&opts.wbStreamDisplayName, "wb-stream-display-name", "", "display name the server uses when joining a LiveKit room (empty = random VK-style name per room)")
 	fs.StringVar(&opts.wbStreamE2ESecret, "wb-stream-e2e-secret", "", "optional base64-encoded 32-byte AES-256 key for E2E over DataPacket")
-	fs.StringVar(&opts.wrapMode, "wrap-mode", "off", "WRAP SRTP-mimicry mode: off|on")
-	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "srtp-aes-gcm", "WRAP AEAD: srtp-aes-gcm|srtp-chacha20-poly1305")
-	fs.StringVar(&opts.wrapKeyHex, "wrap-key", "", "WRAP key (64-char hex, 32 bytes); required when -wrap-mode=on")
+	fs.StringVar(&opts.wrapMode, "wrap-mode", "on", "Accept client-proposed WRAP SRTP-mimicry: off|on")
+	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "any", "Accepted WRAP cipher(s): any|srtp-aes-gcm|srtp-chacha20-poly1305")
+	fs.StringVar(&opts.wrapKeyHex, "wrap-key", "", "Optional fixed WRAP key (64-char hex, 32 bytes); takes precedence over client proposal when set")
+	fs.BoolVar(&opts.wrapAcceptClientKeys, "wrap-accept-client-keys", true, "Accept wrap_key_proposal from client SessionHello when no -wrap-key is preset (default true)")
 	fs.Usage = func() {
 		cliutil.Fprintf(fs.Output(), "Usage:\n  %s -connect <ip:port> [flags]\n  %s -udp-connect <ip:port> [flags]\n  %s -wb-stream-room-id <id> -udp-connect <ip:port> [flags]\n\n", program, program, program)
 		cliutil.Fprintln(fs.Output(), "Examples:")
@@ -74,9 +76,9 @@ func parseServerOptions(args []string, program string, stdout, stderr io.Writer)
 		}
 		opts.wrapCipher = strings.ToLower(strings.TrimSpace(opts.wrapCipher))
 		switch opts.wrapCipher {
-		case "srtp-aes-gcm", "srtp-chacha20-poly1305":
+		case "any", "srtp-aes-gcm", "srtp-chacha20-poly1305":
 		default:
-			opts.wrapCipher = "srtp-aes-gcm"
+			opts.wrapCipher = "any"
 		}
 		opts.wrapKeyHex = strings.TrimSpace(opts.wrapKeyHex)
 

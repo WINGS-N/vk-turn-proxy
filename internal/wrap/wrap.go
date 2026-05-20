@@ -48,6 +48,11 @@ import (
 // KeyLen is the required key length for every supported cipher (32 bytes).
 const KeyLen = 32
 
+// MaxOverhead returns the largest per-packet byte overhead any of our
+// SRTP-mimicry ciphers can add (RTP header + nonce + AEAD tag = 40 B).
+// Useful for sizing receive buffers without holding a Cipher reference.
+func MaxOverhead() int { return overhead }
+
 // Per-packet wire-format constants.
 const (
 	rtpHdrLen  = 12

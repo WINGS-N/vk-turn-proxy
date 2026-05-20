@@ -547,13 +547,40 @@ func writeMuxSessionHelloResponse(
 	supportedTransports []sessionproto.TransportMode,
 	wrappedSession bool,
 ) error {
-	payload, err := buildServerHelloForVersion(
+	return writeMuxSessionHelloResponseWithWrap(
+		conn,
 		version,
 		muxSupported,
 		errorText,
 		controlHeartbeatSupported,
 		selectedTransport,
 		supportedTransports,
+		wrappedSession,
+		sessionproto.WrapCipher_WRAP_CIPHER_UNSPECIFIED,
+	)
+}
+
+func writeMuxSessionHelloResponseWithWrap(
+	conn net.Conn,
+	version uint32,
+	muxSupported bool,
+	errorText string,
+	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	wrappedSession bool,
+	selectedWrapCipher sessionproto.WrapCipher,
+) error {
+	payload, err := buildServerHelloForVersionWithWrap(
+		version,
+		muxSupported,
+		errorText,
+		controlHeartbeatSupported,
+		selectedTransport,
+		supportedTransports,
+		nil,
+		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED,
+		selectedWrapCipher,
 	)
 	if err != nil {
 		return err
@@ -599,7 +626,7 @@ func handleRoomExchange(conn net.Conn, hello *sessionproto.ClientHello) error {
 	return nil
 }
 
-func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, connectAddr string, hello *sessionproto.ClientHello, wrappedSession bool) error {
+func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, connectAddr string, hello *sessionproto.ClientHello, wrappedSession bool, wrapPol *wrapPolicy, wrapListener *wrap.Listener) error {
 	sessionID := hex.EncodeToString(hello.GetSessionId())
 	streamID := byte(hello.GetStreamId())
 	clientIP := clientIPFromAddr(conn.RemoteAddr())
@@ -641,7 +668,9 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 	session.AddConn(streamID, streamKey, clientIP, conn)
 	defer session.RemoveConn(streamID, conn)
 
-	if err := writeMuxSessionHelloResponse(
+	selectedWrap, wrapCipherInstance := negotiateWrapForSession(conn.RemoteAddr(), hello, wrapPol)
+
+	if err := writeMuxSessionHelloResponseWithWrap(
 		conn,
 		hello.GetVersion(),
 		true,
@@ -650,8 +679,23 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 		sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
 		[]sessionproto.TransportMode{sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM},
 		wrappedSession,
+		selectedWrap,
 	); err != nil {
 		return err
+	}
+
+	// Enable WRAP on the underlying StatefulConn AFTER the ServerHello
+	// has been written raw. From the next outbound record on, all
+	// DTLS-encrypted ApplicationData goes SRTP-shaped; the client's
+	// receive side auto-detects either format so the brief asymmetry
+	// during ServerHello in flight never desyncs the stream.
+	if wrapCipherInstance != nil && wrapListener != nil {
+		if sc := wrapListener.Lookup(conn.RemoteAddr()); sc != nil {
+			sc.Enable(wrapCipherInstance)
+			log.Printf("WRAP active on session for %s: cipher=%s", conn.RemoteAddr(), selectedWrap)
+		} else {
+			log.Printf("WRAP enable skipped for %s: no StatefulConn tracked", conn.RemoteAddr())
+		}
 	}
 
 	log.Printf("New stream %d for session %s from %s", streamID, sessionID, conn.RemoteAddr())
@@ -761,6 +805,8 @@ func handleConnection(
 	manager *SessionManager,
 	backends transportBackends,
 	mode sessionproto.Mode,
+	wrapPol *wrapPolicy,
+	wrapListener *wrap.Listener,
 ) error {
 	dtlsConn, ok := conn.(*dtls.Conn)
 	if !ok {
@@ -888,7 +934,7 @@ func handleConnection(
 					wrappedSession,
 				)
 			}
-			return runMuStream(ctx, conn, manager, backends.udpConnect, hello, wrappedSession)
+			return runMuStream(ctx, conn, manager, backends.udpConnect, hello, wrappedSession, wrapPol, wrapListener)
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE:
 			if mode == sessionproto.ModeMu {
 				log.Printf("protobuf probe without session hello from %s in mu mode", conn.RemoteAddr())
@@ -992,19 +1038,26 @@ func main() {
 		ConnectionIDGenerator: dtls.RandomCIDGenerator(8),
 	}
 
-	wrapFactory, err := resolveServerWrapConfig(opts.wrapMode, opts.wrapCipher, opts.wrapKeyHex)
+	wrapPol, err := resolveServerWrapPolicy(opts.wrapMode, opts.wrapCipher, opts.wrapKeyHex, opts.wrapAcceptClientKeys)
 	if err != nil {
 		panic(err)
 	}
-	var listener net.Listener
-	if wrapFactory != nil {
-		log.Printf("WRAP active on listener (cipher=%s)", opts.wrapCipher)
+	var (
+		listener     net.Listener
+		wrapListener *wrap.Listener
+	)
+	if wrapPol.enabled {
+		desc := "in-band"
+		if wrapPol.presetKey != nil {
+			desc = "preset-key"
+		}
+		log.Printf("WRAP listener active (mode=on, %s, ciphers=%s)", desc, opts.wrapCipher)
 		inner, listenErr := pionudp.Listen("udp", addr)
 		if listenErr != nil {
 			panic(listenErr)
 		}
-		pl := wrap.PacketListener(dtlsnet.PacketListenerFromListener(inner), wrapFactory)
-		listener, err = dtls.NewListener(pl, config)
+		wrapListener = wrap.NewListener(dtlsnet.PacketListenerFromListener(inner))
+		listener, err = dtls.NewListener(wrapListener, config)
 	} else {
 		listener, err = dtls.Listen("udp", addr, config)
 	}
@@ -1054,7 +1107,10 @@ func main() {
 			}()
 
 			log.Printf("Connection from %s", conn.RemoteAddr())
-			if err := handleConnection(ctx, conn, manager, backends, mode); err != nil {
+			if wrapListener != nil {
+				defer wrapListener.Forget(conn.RemoteAddr())
+			}
+			if err := handleConnection(ctx, conn, manager, backends, mode, wrapPol, wrapListener); err != nil {
 				log.Printf("Connection closed: %s (%v)", conn.RemoteAddr(), err)
 			} else {
 				log.Printf("Connection closed: %s", conn.RemoteAddr())

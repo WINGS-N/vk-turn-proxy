@@ -1147,6 +1147,7 @@ func startDtlsTurnWorker(
 	wg.Go(func() {
 		oneDtlsConnectionLoop(
 			ctx,
+			params,
 			peer,
 			listenConn,
 			inboundChan,
@@ -1170,6 +1171,7 @@ func startDtlsTurnWorker(
 
 func oneDtlsConnection(
 	ctx context.Context,
+	turnParams *turnParams,
 	peer *net.UDPAddr,
 	listenConn net.PacketConn,
 	inboundChan <-chan *UDPPacket,
@@ -1237,7 +1239,17 @@ func oneDtlsConnection(
 	var expectRawSessionHello atomic.Bool
 	controlHeartbeatSupported := false
 	if sessionMode == sessionproto.ModeMu {
-		hello, err1 := buildSessionHelloForVersion(protocolVersion, sessionID, streamID)
+		// Propose our WRAP ciphers (in preference order) and optionally
+		// our key. The server picks one in ServerHello; we Enable wrap
+		// on this worker's per-conn StatefulConn afterwards.
+		supportedWrap := clientSupportedWrapCiphers(turnParams)
+		var keyProposal []byte
+		if turnParams.wrapSendKey && len(turnParams.wrapKey) == wrap.KeyLen {
+			keyProposal = turnParams.wrapKey
+		}
+		hello, err1 := buildSessionHelloForVersionWithWrap(
+			protocolVersion, sessionID, streamID, supportedWrap, keyProposal,
+		)
 		if err1 != nil {
 			err = fmt.Errorf("failed to build session hello: %s", err1)
 			return
@@ -1256,6 +1268,10 @@ func oneDtlsConnection(
 			return
 		}
 		controlHeartbeatSupported = serverHello.GetControlHeartbeatSupported()
+		if enableErr := applyServerWrapChoice(turnParams, int(streamID), serverHello); enableErr != nil {
+			err = enableErr
+			return
+		}
 		log.Printf("Established DTLS connection and completed mu negotiation for stream %d!\n", streamID)
 	} else {
 		if probeOnly {
@@ -1474,10 +1490,19 @@ type turnParams struct {
 	wrapKey    []byte
 	// wrapMode controls fallback semantics when WRAP is configured:
 	//   "off"       — never wrap (wrapCipher should already be NONE)
-	//   "preferred" — try WRAP, fall back to raw if no successfully unwrapped
-	//                 inbound packet arrives within wrapFallbackInboundTimeout
-	//   "required"  — fail hard if WRAP unwrap doesn't succeed; never fall back
+	//   "preferred" — try WRAP, accept the server's decline; stay raw
+	//                 if ServerHello.selected_wrap_cipher == NONE
+	//   "required"  — fail the worker if ServerHello declines WRAP
 	wrapMode string
+	// wrapSendKey controls in-band key delivery: when true (default)
+	// the client populates SessionHello.wrap_key_proposal with wrapKey;
+	// when false the server must already have the matching key
+	// configured (-wrap-key preset).
+	wrapSendKey bool
+	// wrapStates registers each worker's *wrap.StatefulConn under its
+	// streamID so the mu/v1 SessionHello handler in oneDtlsConnection
+	// can Enable wrap after the server's selected_wrap_cipher arrives.
+	wrapStates *sync.Map // map[int]*wrap.StatefulConn
 }
 
 func oneTurnConnection(
@@ -1643,52 +1668,18 @@ func oneTurnConnection(
 			}
 		}
 	})
-	wrapCipher, err1 := wrap.New(turnParams.wrapCipher, turnParams.wrapKey, false)
-	if err1 != nil {
-		err = fmt.Errorf("WRAP cipher init failed: %s", err1)
-		return
+	// Wrap relayConn in a *wrap.StatefulConn even when WRAP is fully
+	// disabled — pass-through mode is a no-op. When mode != off the
+	// cipher is installed later by the mu/v1 SessionHello handler in
+	// oneDtlsConnection after the server picks a cipher via
+	// ServerHello.selected_wrap_cipher.
+	statefulRelay := wrap.NewStateful(relayConn)
+	if turnParams.wrapStates != nil {
+		turnParams.wrapStates.Store(streamID, statefulRelay)
+		defer turnParams.wrapStates.Delete(streamID)
 	}
-	wrapModeForAttempt := turnParams.wrapMode
-	// Fallback key is the peer (our server) address: WRAP support is a
-	// property of the peer, not of the VK TURN relay we route through.
-	fallbackKey := peer.String()
-	if wrapCipher != nil && wrapModeForAttempt == "preferred" && wrapDisabledForAddr(fallbackKey) {
-		log.Printf("[STREAM %d] WRAP marked unsupported for peer %s recently; using raw this attempt", streamID, fallbackKey)
-		wrapCipher = nil
-	}
-	if wrapCipher != nil {
-		log.Printf("[STREAM %d] WRAP active: cipher=%s mode=%s", streamID, turnParams.wrapCipher, wrapModeForAttempt)
-	}
-	var anyWrapInboundSuccess atomic.Bool
-	wrapActiveThisAttempt := wrapCipher != nil
-	// On return: if WRAP was active and no successful inbound unwrap
-	// happened (worker exited due to DTLS handshake timeout, peer
-	// closure, ctx cancellation, etc.), record peer as no-wrap so the
-	// maintain loop's next attempt goes raw within the TTL window.
-	defer func() {
-		if wrapActiveThisAttempt && wrapModeForAttempt == "preferred" && !anyWrapInboundSuccess.Load() {
-			markWrapDisabledForAddr(fallbackKey)
-			log.Printf("[STREAM %d] WRAP exit with no decoded inbound; disabling WRAP for peer %s", streamID, fallbackKey)
-		}
-	}()
-	if wrapActiveThisAttempt && wrapModeForAttempt == "preferred" {
-		go func() {
-			timer := time.NewTimer(wrapFallbackInboundTimeout)
-			defer timer.Stop()
-			select {
-			case <-turnctx.Done():
-				return
-			case <-timer.C:
-				if !anyWrapInboundSuccess.Load() {
-					markWrapDisabledForAddr(fallbackKey)
-					log.Printf(
-						"[STREAM %d] no WRAP-decoded inbound from peer %s in %s — disabling WRAP and reconnecting raw",
-						streamID, fallbackKey, wrapFallbackInboundTimeout,
-					)
-					turncancel()
-				}
-			}
-		}()
+	if turnParams.wrapMode != "" && turnParams.wrapMode != "off" {
+		log.Printf("[STREAM %d] WRAP mode=%s; waiting for mu/v1 SessionHello to install cipher", streamID, turnParams.wrapMode)
 	}
 	var addr atomic.Value
 	// Start read-loop on conn2 (output of DTLS)
@@ -1712,16 +1703,7 @@ func oneTurnConnection(
 
 			addr.Store(addr1) // store peer
 
-			payload := buf[:n]
-			if wrapCipher != nil {
-				sealed, sealErr := wrapCipher.Seal(payload)
-				if sealErr != nil {
-					log.Printf("[STREAM %d] WRAP seal failed: %s", streamID, sealErr)
-					return
-				}
-				payload = sealed
-			}
-			_, err1 = relayConn.WriteTo(payload, peer)
+			_, err1 = statefulRelay.WriteTo(buf[:n], peer)
 			if err1 != nil {
 				if !shouldSuppressWorkerError(turnctx, err1) {
 					log.Printf("Failed: %s", err1)
@@ -1731,22 +1713,20 @@ func oneTurnConnection(
 		}
 	}()
 
-	// Start read-loop on relayConn
+	// Start read-loop on the stateful relay (auto-detects raw vs
+	// SRTP-wrapped packets per byte 0, transparently unwraps wrapped
+	// ones once the mu/v1 handler has installed a cipher).
 	go func() {
 		defer wg.Done()
 		defer turncancel()
-		readBufLen := 1600
-		if wrapCipher != nil {
-			readBufLen += wrapCipher.Overhead()
-		}
-		buf := make([]byte, readBufLen)
+		buf := make([]byte, 1600+wrap.MaxOverhead())
 		for {
 			select {
 			case <-turnctx.Done():
 				return
 			default:
 			}
-			n, _, err1 := relayConn.ReadFrom(buf)
+			n, _, err1 := statefulRelay.ReadFrom(buf)
 			if err1 != nil {
 				if !shouldSuppressWorkerError(turnctx, err1) {
 					log.Printf("Failed: %s", err1)
@@ -1757,19 +1737,7 @@ func oneTurnConnection(
 			if !ok {
 				continue
 			}
-
-			payload := buf[:n]
-			if wrapCipher != nil {
-				plain, openErr := wrapCipher.Open(payload)
-				if openErr != nil {
-					log.Printf("[STREAM %d] WRAP unwrap failed (%d bytes): %s", streamID, n, openErr)
-					continue
-				}
-				anyWrapInboundSuccess.Store(true)
-				payload = plain
-			}
-			_, err1 = conn2.WriteTo(payload, addr1)
-			if err1 != nil {
+			if _, err1 = conn2.WriteTo(buf[:n], addr1); err1 != nil {
 				if !shouldSuppressWorkerError(turnctx, err1) {
 					log.Printf("Failed: %s", err1)
 				}
@@ -1793,6 +1761,7 @@ func oneTurnConnection(
 
 func oneDtlsConnectionLoop(
 	ctx context.Context,
+	turnParams *turnParams,
 	peer *net.UDPAddr,
 	listenConn net.PacketConn,
 	inboundChan <-chan *UDPPacket,
@@ -1817,6 +1786,7 @@ func oneDtlsConnectionLoop(
 		c := make(chan error)
 		go oneDtlsConnection(
 			ctx,
+			turnParams,
 			peer,
 			listenConn,
 			inboundChan,
@@ -2112,6 +2082,8 @@ func main() { //nolint:cyclop
 		wrapCipher:   wrapCipherSel,
 		wrapKey:      wrapKey,
 		wrapMode:     wrapMode,
+		wrapSendKey:  opts.wrapSendKey,
+		wrapStates:   &sync.Map{},
 	}
 	sessionID := []byte(nil)
 
@@ -2359,24 +2331,10 @@ func main() { //nolint:cyclop
 				false,
 			)
 			if !waitForReady(ctx, okchan, mainlineBootstrapTimeout) {
-				// If WRAP was attempted, the watchdog in each worker has
-				// by now marked the peer as no-wrap; pre-emptively mark
-				// it here too so any racing worker also goes raw. Give
-				// bootstrap one more shot before tearing the process
-				// down so Android does not enter a respawn loop that
-				// wipes the wrap-disabled cache each time.
-				if params.wrapMode == "preferred" {
-					markWrapDisabledForAddr(peer.String())
-					log.Printf("bootstrap timed out; forcing WRAP fallback for peer %s and retrying", peer.String())
-					if waitForReady(ctx, okchan, mainlineBootstrapTimeout) {
-						goto mainlineBootstrapDone
-					}
-				}
 				runtimeCancel()
 				runtimeWG.Wait()
 				log.Fatalf("failed to bootstrap mainline session")
 			}
-		mainlineBootstrapDone:
 
 			supportedVersion := waitForProbeVersion(ctx, probeResult, muProbeTimeout)
 			activeMainlineControl := waitForMainlineControlHandle(ctx, mainlineControl, muProbeTimeout)

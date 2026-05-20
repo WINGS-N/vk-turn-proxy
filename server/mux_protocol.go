@@ -115,9 +115,33 @@ func buildServerHelloForVersionWithTcpFlavor(
 	supportedTcpFlavors []sessionproto.TcpTransportFlavor,
 	selectedTcpFlavor sessionproto.TcpTransportFlavor,
 ) ([]byte, error) {
+	return buildServerHelloForVersionWithWrap(
+		version,
+		muSupported,
+		errorText,
+		controlHeartbeatSupported,
+		selectedTransport,
+		supportedTransports,
+		supportedTcpFlavors,
+		selectedTcpFlavor,
+		sessionproto.WrapCipher_WRAP_CIPHER_UNSPECIFIED,
+	)
+}
+
+func buildServerHelloForVersionWithWrap(
+	version uint32,
+	muSupported bool,
+	errorText string,
+	controlHeartbeatSupported bool,
+	selectedTransport sessionproto.TransportMode,
+	supportedTransports []sessionproto.TransportMode,
+	supportedTcpFlavors []sessionproto.TcpTransportFlavor,
+	selectedTcpFlavor sessionproto.TcpTransportFlavor,
+	selectedWrapCipher sessionproto.WrapCipher,
+) ([]byte, error) {
 	switch version {
 	case sessionmuv1.ProtocolVersion:
-		return sessionmuv1.BuildServerHelloWithTcpFlavor(
+		return sessionmuv1.BuildServerHelloWithWrap(
 			muSupported,
 			errorText,
 			controlHeartbeatSupported,
@@ -125,6 +149,7 @@ func buildServerHelloForVersionWithTcpFlavor(
 			supportedTransports,
 			supportedTcpFlavors,
 			selectedTcpFlavor,
+			selectedWrapCipher,
 		)
 	default:
 		return nil, fmt.Errorf("unsupported protocol version: %d", version)

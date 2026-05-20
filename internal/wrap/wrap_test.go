@@ -127,8 +127,14 @@ func TestRTPHeaderProgression(t *testing.T) {
 
 func TestDirectionBit(t *testing.T) {
 	client, server := newPair(t, sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM)
-	c := client.(*srtpConn)
-	s := server.(*srtpConn)
+	c, ok := client.(*srtpConn)
+	if !ok {
+		t.Fatalf("client cipher is %T, want *srtpConn", client)
+	}
+	s, ok := server.(*srtpConn)
+	if !ok {
+		t.Fatalf("server cipher is %T, want *srtpConn", server)
+	}
 	if c.sessionID[0]&0x80 != 0 {
 		t.Fatalf("client sessionID MSB should be 0, got 0x%02X", c.sessionID[0])
 	}
