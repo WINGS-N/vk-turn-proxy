@@ -11,29 +11,26 @@ import (
 )
 
 type clientOptions struct {
-	host                           string
-	port                           string
-	listen                         string
-	vklink                         string
-	vklinkSecondary                string
-	yalink                         string
-	peerAddr                       string
-	n                              int
-	transport                      string
-	vlessMode                      bool
-	udp                            bool
-	direct                         bool
-	manualCaptcha                  bool
-	captchaSolver                  string
-	tcpFlavor                      string
-	credsGroupSize                 int
-	protectSock                    string
-	protoFingerprint               string
-	sessionMode                    string
-	sessionID                      string
-	adaptivePoolMin                int
-	adaptivePoolMax                int
-	adaptivePoolStreamsPerIdentity int
+	host             string
+	port             string
+	listen           string
+	vklink           string
+	vklinkSecondary  string
+	yalink           string
+	peerAddr         string
+	n                int
+	transport        string
+	vlessMode        bool
+	udp              bool
+	direct           bool
+	manualCaptcha    bool
+	captchaSolver    string
+	tcpFlavor        string
+	credsGroupSize   int
+	protectSock      string
+	protoFingerprint string
+	sessionMode      string
+	sessionID        string
 
 	wbStreamRoomID             string
 	wbStreamRoomIDs            string
@@ -82,9 +79,6 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.protoFingerprint, "proto-fp", "", "deprecated; ignored")
 	fs.StringVar(&opts.sessionMode, "session-mode", string(sessionproto.ModeMainline), "TURN session mode: mainline|mu|auto")
 	fs.StringVar(&opts.sessionID, "session-id", "", "override session ID (hex, 32 chars) for mu mode")
-	fs.IntVar(&opts.adaptivePoolMin, "adaptive-pool-min", 1, "minimum TURN identity pool size for mu/v1")
-	fs.IntVar(&opts.adaptivePoolMax, "adaptive-pool-max", 0, "maximum TURN identity pool size for mu/v1 (default: stream count)")
-	fs.IntVar(&opts.adaptivePoolStreamsPerIdentity, "adaptive-pool-streams-per-id", defaultAdaptivePoolStreamsPerIdentity, "target concurrent streams per TURN identity for mu/v1")
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", `LiveKit room ID; "any" creates a fresh one. When set, runs WB Stream tunnel mode.`)
 	fs.StringVar(&opts.wbStreamRoomIDs, "wb-stream-room-ids", "", `comma-separated LiveKit room IDs ("any" entries create fresh rooms); takes precedence over -wb-stream-room-id, opens N rooms in parallel and round-robins outbound frames`)
 	fs.StringVar(&opts.wbStreamDisplayName, "wb-stream-display-name", "", "display name for the LiveKit room when -wb-stream-room-id is set (empty = random VK-style name per session)")

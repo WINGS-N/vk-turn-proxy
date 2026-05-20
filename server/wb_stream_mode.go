@@ -242,8 +242,7 @@ type wbStreamBackendBridge struct {
 	mu      sync.Mutex
 	streams map[wbStreamStreamKey]*wbStreamBackendStream
 
-	inboundCount  atomic.Uint64
-	outboundCount atomic.Uint64
+	inboundCount atomic.Uint64
 }
 
 func newWbStreamBackendBridge(peer *wbstream.Peer, connectAddr string) *wbStreamBackendBridge {

@@ -30,28 +30,6 @@ func describeClientHello(hello *sessionproto.ClientHello) string {
 	)
 }
 
-func writeServerHelloForVersion(
-	conn net.Conn,
-	version uint32,
-	muSupported bool,
-	errorText string,
-	controlHeartbeatSupported bool,
-	selectedTransport sessionproto.TransportMode,
-	supportedTransports []sessionproto.TransportMode,
-) error {
-	return writeServerHelloForVersionWithTcpFlavor(
-		conn,
-		version,
-		muSupported,
-		errorText,
-		controlHeartbeatSupported,
-		selectedTransport,
-		supportedTransports,
-		nil,
-		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_UNSPECIFIED,
-	)
-}
-
 func writeServerHelloForVersionWithTcpFlavor(
 	conn net.Conn,
 	version uint32,

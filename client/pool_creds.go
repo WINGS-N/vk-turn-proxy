@@ -30,57 +30,11 @@ type pooledGetCredsFunc func(string, bool) (string, string, []string, time.Durat
 
 type pooledGetCredsResult func(link string, workerID int) (string, string, string, error)
 
-type adaptivePoolConfig struct {
-	minSize            int
-	maxSize            int
-	streamsPerIdentity int
-}
-
 const (
-	backgroundPoolRetryCooldown           = 2 * time.Minute
-	defaultAdaptivePoolStreamsPerIdentity = 1
-	credsRefreshSlackDuration             = 2 * time.Minute
-	credsFallbackLifetime                 = 10 * time.Minute
+	backgroundPoolRetryCooldown = 2 * time.Minute
+	credsRefreshSlackDuration   = 2 * time.Minute
+	credsFallbackLifetime       = 10 * time.Minute
 )
-
-func normalizeAdaptivePoolConfig(minSize, maxSize, streamsPerIdentity, configuredStreams int) adaptivePoolConfig {
-	if configuredStreams < 1 {
-		configuredStreams = 1
-	}
-	if minSize < 1 {
-		minSize = 1
-	}
-	if maxSize < 1 {
-		maxSize = configuredStreams
-	}
-	if maxSize > configuredStreams {
-		maxSize = configuredStreams
-	}
-	if maxSize < minSize {
-		maxSize = minSize
-	}
-	if streamsPerIdentity < 1 {
-		streamsPerIdentity = defaultAdaptivePoolStreamsPerIdentity
-	}
-	return adaptivePoolConfig{
-		minSize:            minSize,
-		maxSize:            maxSize,
-		streamsPerIdentity: streamsPerIdentity,
-	}
-}
-
-func (config adaptivePoolConfig) targetPoolSize() int {
-	activeStreams := max(0, int(connectedStreams.Load()))
-	requiredStreams := max(1, activeStreams+1)
-	desiredSize := ceilDiv(requiredStreams, config.streamsPerIdentity)
-	if desiredSize < config.minSize {
-		desiredSize = config.minSize
-	}
-	if desiredSize > config.maxSize {
-		desiredSize = config.maxSize
-	}
-	return desiredSize
-}
 
 func ceilDiv(value, divisor int) int {
 	if divisor <= 0 {
@@ -107,10 +61,6 @@ func poolCreds(f pooledGetCredsFunc, poolSize int) pooledGetCredsResult {
 	return poolCredsDynamic(f, func() int {
 		return fixedPoolSize
 	})
-}
-
-func poolCredsAdaptive(f pooledGetCredsFunc, config adaptivePoolConfig) pooledGetCredsResult {
-	return poolCredsDynamic(f, config.targetPoolSize)
 }
 
 func poolCredsDynamic(f pooledGetCredsFunc, targetPoolSize func() int) pooledGetCredsResult {

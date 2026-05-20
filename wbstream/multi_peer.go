@@ -43,7 +43,7 @@ func NewMulti(cfg PeerConfig, count int) (*MultiPeer, error) {
 		}
 		peer, err := New(peerCfg)
 		if err != nil {
-			mp.Close()
+			_ = mp.Close()
 			return nil, fmt.Errorf("init peer[%d]: %w", i, err)
 		}
 		mp.peers = append(mp.peers, peer)

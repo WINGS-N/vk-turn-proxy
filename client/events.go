@@ -45,42 +45,6 @@ type proxyCapsEvent struct {
 	Capabilities []string `json:"capabilities"`
 }
 
-type proxyTelemetryStreamEvent struct {
-	ID               int    `json:"id"`
-	Leader           bool   `json:"leader,omitempty"`
-	Primary          bool   `json:"primary,omitempty"`
-	TurnReady        bool   `json:"turnReady,omitempty"`
-	DtlsReady        bool   `json:"dtlsReady,omitempty"`
-	LastAliveMs      int64  `json:"lastAliveMs,omitempty"`
-	QueueDepth       int    `json:"queueDepth,omitempty"`
-	QueueCapacity    int    `json:"queueCapacity,omitempty"`
-	QueueFillPercent int    `json:"queueFillPercent,omitempty"`
-	OutPackets       uint64 `json:"outPackets,omitempty"`
-	OutBytes         uint64 `json:"outBytes,omitempty"`
-	InPackets        uint64 `json:"inPackets,omitempty"`
-	InBytes          uint64 `json:"inBytes,omitempty"`
-}
-
-type proxyTelemetryEvent struct {
-	Type               string                      `json:"type"`
-	Reason             string                      `json:"reason,omitempty"`
-	TimestampMs        int64                       `json:"timestampMs"`
-	SessionMode        string                      `json:"sessionMode,omitempty"`
-	ProtocolVersion    uint32                      `json:"protocolVersion,omitempty"`
-	SessionID          string                      `json:"sessionId,omitempty"`
-	ActiveStreams      int                         `json:"activeStreams"`
-	ConnectedStreams   int                         `json:"connectedStreams"`
-	LeaderStream       *int                        `json:"leaderStream,omitempty"`
-	PrimaryStream      *int                        `json:"primaryStream,omitempty"`
-	ControlHeartbeat   bool                        `json:"controlHeartbeat,omitempty"`
-	DispatcherEnabled  bool                        `json:"dispatcherEnabled,omitempty"`
-	DispatchDropped    uint64                      `json:"dispatchDropped,omitempty"`
-	DispatchReassigned uint64                      `json:"dispatchReassigned,omitempty"`
-	DispatchPrimary    uint64                      `json:"dispatchPrimary,omitempty"`
-	DispatchSpillover  uint64                      `json:"dispatchSpillover,omitempty"`
-	Streams            []proxyTelemetryStreamEvent `json:"streams,omitempty"`
-}
-
 func emitProxyCaps() {
 	fmt.Println(
 		"PROXY_CAPS: version=" +
@@ -172,11 +136,4 @@ func emitCaptchaStateEvent(state string) {
 		Type:  "captcha",
 		State: state,
 	})
-}
-
-func emitProxyTelemetry(event proxyTelemetryEvent) {
-	if event.Type == "" {
-		return
-	}
-	emitProxyEvent(event)
 }

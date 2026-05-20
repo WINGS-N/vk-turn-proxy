@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -35,12 +34,22 @@ const (
 	dohDialerKeepAlive = 30 * time.Second
 	appDialerTimeout   = 20 * time.Second
 	appDialerKeepAlive = 30 * time.Second
-
-	forwarderUDPBufSize = 4096
-	forwarderTCPReadDL  = 30 * time.Second
-	forwarderTCPWriteDL = 10 * time.Second
-	autoUDPBudget       = 1500 * time.Millisecond
 )
+
+const (
+	DNSModeUDP  = "udp"
+	DNSModeDoH  = "doh"
+	DNSModeAuto = "auto"
+)
+
+// udpDNSServers is the fallback list of plain UDP/53 resolvers used by
+// the user-supplied DNS bridge (see user_dns.go) when no -user-dns
+// entries respond.
+var udpDNSServers = []string{
+	"77.88.8.8:53", "77.88.8.1:53",
+	"8.8.8.8:53", "8.8.4.4:53",
+	"1.1.1.1:53", "1.0.0.1:53",
+}
 
 // DohEndpoint describes a single DNS-over-HTTPS server together with the IPs
 // we bootstrap to — so that resolving the endpoint hostname does not itself
@@ -85,11 +94,6 @@ func NewDohResolver(endpoints []DohEndpoint, bridge *protectBridge) *DohResolver
 		client:    &http.Client{Timeout: dohQueryTimeout, Transport: newBootstrapTransport(endpoints, bridge)},
 		cache:     newDohCache(),
 	}
-}
-
-// newDohResolverWithClient is a test hook that skips the bootstrap transport.
-func newDohResolverWithClient(endpoints []DohEndpoint, client *http.Client) *DohResolver {
-	return &DohResolver{endpoints: endpoints, client: client, cache: newDohCache()}
 }
 
 // newBootstrapTransport returns an http.Transport whose DialContext only
@@ -332,295 +336,4 @@ func (c *dohCache) set(host string, ips []net.IP, ttl time.Duration) {
 	c.mu.Lock()
 	c.m[host] = dohCacheEntry{ips: cp, expiry: time.Now().Add(ttl)}
 	c.mu.Unlock()
-}
-
-// Go's net.Resolver dials this stub like a regular nameserver, which avoids
-// the many edge cases of a fake-net.Conn approach (RESINFO probes, EDNS
-// handshakes, truncation, …). Whatever it reads on UDP/TCP is sent verbatim
-// to a DoH endpoint and the wire response is sent back to the client.
-
-type dohForwarder struct {
-	udpAddr string
-	tcpAddr string
-}
-
-var (
-	dohForwarderOnce sync.Once
-	dohForwarderInst *dohForwarder
-	dohForwarderErr  error
-)
-
-// sharedDohForwarder lazily starts a process-wide forwarder bound to the
-// supplied resolver. The first caller wins; subsequent callers reuse the
-// same forwarder regardless of what they pass in.
-func sharedDohForwarder(r *DohResolver) (*dohForwarder, error) {
-	dohForwarderOnce.Do(func() {
-		dohForwarderInst, dohForwarderErr = startDohForwarder(r)
-	})
-	return dohForwarderInst, dohForwarderErr
-}
-
-func startDohForwarder(r *DohResolver) (_ *dohForwarder, err error) {
-	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
-	if err != nil {
-		return nil, fmt.Errorf("doh forwarder: listen UDP: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = udpConn.Close()
-		}
-	}()
-	tcpLn, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
-	if err != nil {
-		return nil, fmt.Errorf("doh forwarder: listen TCP: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tcpLn.Close()
-		}
-	}()
-
-	fwd := &dohForwarder{
-		udpAddr: udpConn.LocalAddr().String(),
-		tcpAddr: tcpLn.Addr().String(),
-	}
-	log.Printf("[DoH] forwarder listening udp=%s tcp=%s", fwd.udpAddr, fwd.tcpAddr)
-
-	go fwd.serveUDP(udpConn, r)
-	go fwd.serveTCP(tcpLn, r)
-	return fwd, nil
-}
-
-func (f *dohForwarder) serveUDP(conn *net.UDPConn, r *DohResolver) {
-	defer func() { _ = conn.Close() }()
-	buf := make([]byte, forwarderUDPBufSize)
-	for {
-		n, client, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			log.Printf("[DoH] udp read: %v", err)
-			return
-		}
-		query := append([]byte(nil), buf[:n]...)
-		go func(q []byte, c *net.UDPAddr) {
-			ctx, cancel := context.WithTimeout(context.Background(), dohQueryTimeout)
-			defer cancel()
-			resp, _, err := r.forwardRaw(ctx, q)
-			if err != nil {
-				log.Printf("[DoH] udp forward failed: %v", err)
-				return
-			}
-			if _, err := conn.WriteToUDP(resp, c); err != nil {
-				log.Printf("[DoH] udp write: %v", err)
-			}
-		}(query, client)
-	}
-}
-
-func (f *dohForwarder) serveTCP(ln *net.TCPListener, r *DohResolver) {
-	defer func() { _ = ln.Close() }()
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Printf("[DoH] tcp accept: %v", err)
-			return
-		}
-		go handleDohForwarderTCP(conn, r)
-	}
-}
-
-func handleDohForwarderTCP(conn net.Conn, r *DohResolver) {
-	defer func() { _ = conn.Close() }()
-	for {
-		_ = conn.SetReadDeadline(time.Now().Add(forwarderTCPReadDL))
-		var lenBuf [2]byte
-		if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
-			return
-		}
-		qlen := int(lenBuf[0])<<8 | int(lenBuf[1])
-		if qlen == 0 || qlen > forwarderUDPBufSize {
-			return
-		}
-		query := make([]byte, qlen)
-		if _, err := io.ReadFull(conn, query); err != nil {
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), dohQueryTimeout)
-		resp, _, err := r.forwardRaw(ctx, query)
-		cancel()
-		if err != nil {
-			log.Printf("[DoH] tcp forward failed: %v", err)
-			return
-		}
-		out := make([]byte, 2+len(resp))
-		out[0] = byte(len(resp) >> 8)
-		out[1] = byte(len(resp))
-		copy(out[2:], resp)
-		_ = conn.SetWriteDeadline(time.Now().Add(forwarderTCPWriteDL))
-		if _, err := conn.Write(out); err != nil {
-			return
-		}
-	}
-}
-
-// dohForwarderDial returns a Resolver.Dial that connects to the local DoH
-// forwarder over UDP or TCP (whichever the resolver asked for). The
-// forwarder loopback dial does not need protect-marking since it never
-// leaves the host, but the forwarder's own outbound DoH-HTTPS does — that
-// happens through the bootstrap transport in NewDohResolver.
-func dohForwarderDial(r *DohResolver, _ *protectBridge) dialFunc {
-	return func(ctx context.Context, network, _ string) (net.Conn, error) {
-		fwd, err := sharedDohForwarder(r)
-		if err != nil {
-			return nil, err
-		}
-		var d net.Dialer
-		switch network {
-		case "tcp", "tcp4", "tcp6":
-			return d.DialContext(ctx, "tcp", fwd.tcpAddr)
-		default:
-			return d.DialContext(ctx, "udp", fwd.udpAddr)
-		}
-	}
-}
-
-const (
-	DNSModeUDP  = "udp"
-	DNSModeDoH  = "doh"
-	DNSModeAuto = "auto"
-)
-
-var udpDNSServers = []string{
-	"77.88.8.8:53", "77.88.8.1:53",
-	"8.8.8.8:53", "8.8.4.4:53",
-	"1.1.1.1:53", "1.0.0.1:53",
-}
-
-type dialFunc = func(context.Context, string, string) (net.Conn, error)
-
-// buildDialer returns a net.Dialer whose internal Go resolver uses the
-// chosen DNS transport. In "auto" mode the first total-failure of UDP/53
-// sticks the process onto DoH for the rest of its lifetime.
-func buildDialer(mode string, r *DohResolver, bridge *protectBridge) net.Dialer {
-	switch mode {
-	case DNSModeUDP:
-		return newAppDialer(udpDNSDial(bridge), bridge)
-	case DNSModeDoH:
-		return newAppDialer(dohForwarderDial(r, bridge), bridge)
-	case DNSModeAuto:
-		return newAppDialer(autoDial(r, bridge), bridge)
-	default:
-		log.Panicf("unknown DNS mode %q", mode)
-		return net.Dialer{}
-	}
-}
-
-// newAppDialer wraps a Resolver.Dial with the timeouts used everywhere in
-// the app for outbound TCP/HTTP connections. When bridge is non-nil, the
-// resulting dialer marks every TCP/UDP connection via VpnService.protect().
-func newAppDialer(dial dialFunc, bridge *protectBridge) net.Dialer {
-	d := net.Dialer{
-		Timeout:   appDialerTimeout,
-		KeepAlive: appDialerKeepAlive,
-		Resolver:  &net.Resolver{PreferGo: true, Dial: dial},
-	}
-	if bridge != nil {
-		d.Control = bridge.Control
-	}
-	return d
-}
-
-// udpDNSDial picks the first reachable UDP/53 resolver from udpDNSServers.
-// Sockets are protected via bridge.Control when bridge is non-nil so the
-// resolver doesn't recurse through our own tunnel.
-func udpDNSDial(bridge *protectBridge) dialFunc {
-	return func(ctx context.Context, _ string, _ string) (net.Conn, error) {
-		d := net.Dialer{}
-		if bridge != nil {
-			d.Control = bridge.Control
-		}
-		var lastErr error
-		for _, s := range udpDNSServers {
-			conn, err := d.DialContext(ctx, "udp", s)
-			if err == nil {
-				return conn, nil
-			}
-			lastErr = err
-		}
-		if lastErr == nil {
-			lastErr = errors.New("no UDP DNS servers available")
-		}
-		return nil, lastErr
-	}
-}
-
-// autoDial returns a Dial that probes UDP/53 once with a real DNS round-trip;
-// if the probe fails it latches onto DoH for the rest of the process. Built
-// for Android, where the network can flip between Wi-Fi (UDP/53 works) and
-// mobile (UDP/53 blocked).
-//
-// A simple dial-timeout doesn't work for UDP because UDP "dial" is
-// connectionless and always succeeds instantly. The only way to know whether
-// UDP/53 actually works is to send a real query and wait for a response.
-func autoDial(r *DohResolver, bridge *protectBridge) dialFunc {
-	var (
-		probed sync.Once
-		useDoH atomic.Bool
-		doh    = dohForwarderDial(r, bridge)
-		udp    = udpDNSDial(bridge)
-	)
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		probed.Do(func() {
-			if udpProbe(autoUDPBudget, bridge) {
-				log.Printf("[DNS] UDP/53 probe OK, using UDP")
-			} else {
-				log.Printf("[DNS] UDP/53 unreachable; sticky-switching to DoH")
-				useDoH.Store(true)
-			}
-		})
-		if useDoH.Load() {
-			return doh(ctx, network, addr)
-		}
-		return udp(ctx, network, addr)
-	}
-}
-
-// udpProbe sends a real DNS A query for a well-known domain via UDP and
-// checks whether any response arrives within the deadline. We try the first
-// two servers from udpDNSServers under a shared deadline — if neither
-// responds, UDP/53 is blocked.
-func udpProbe(timeout time.Duration, bridge *protectBridge) bool {
-	m := new(dns.Msg)
-	m.SetQuestion("dns.google.", dns.TypeA)
-	m.RecursionDesired = true
-	wire, err := m.Pack()
-	if err != nil {
-		return false
-	}
-
-	deadline := time.Now().Add(timeout)
-	buf := make([]byte, 512)
-	limit := min(len(udpDNSServers), 2)
-	for _, server := range udpDNSServers[:limit] {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			break
-		}
-		d := net.Dialer{Timeout: remaining}
-		if bridge != nil {
-			d.Control = bridge.Control
-		}
-		conn, err := d.DialContext(context.Background(), "udp", server)
-		if err != nil {
-			continue
-		}
-		_ = conn.SetDeadline(deadline)
-		_, _ = conn.Write(wire)
-		n, err := conn.Read(buf)
-		_ = conn.Close()
-		if err == nil && n > 12 {
-			return true
-		}
-	}
-	return false
 }
