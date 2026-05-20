@@ -956,14 +956,13 @@ func dtlsFunc(ctx context.Context, conn net.PacketConn, peer *net.UDPAddr) (net.
 
 	ctx1, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	config := &dtls.Config{
-		Certificates:          []tls.Certificate{certificate},
-		InsecureSkipVerify:    true,
-		ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
-		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
-		ConnectionIDGenerator: dtls.OnlySendCIDGenerator(),
-	}
-	dtlsConn, err := dtls.Client(conn, peer, config)
+	dtlsConn, err := dtls.ClientWithOptions(conn, peer,
+		dtls.WithCertificates([]tls.Certificate{certificate}...),
+		dtls.WithInsecureSkipVerify(true),
+		dtls.WithExtendedMasterSecret(dtls.RequireExtendedMasterSecret),
+		dtls.WithCipherSuites(dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256),
+		dtls.WithConnectionIDGenerator(dtls.OnlySendCIDGenerator()),
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -18,7 +18,7 @@ func newStatefulPair(t *testing.T) (*StatefulConn, *StatefulConn, net.PacketConn
 	}
 	client, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
-		server.Close()
+		_ = server.Close()
 		t.Fatalf("listen client: %v", err)
 	}
 	return NewStateful(client), NewStateful(server), client, server
@@ -26,8 +26,8 @@ func newStatefulPair(t *testing.T) (*StatefulConn, *StatefulConn, net.PacketConn
 
 func TestStatefulPassThroughBeforeEnable(t *testing.T) {
 	wc, ws, client, server := newStatefulPair(t)
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 
 	// DTLS-shaped payload (ContentType = 22 = handshake).
 	payload := append([]byte{0x16}, bytes.Repeat([]byte{0xAB}, 60)...)
@@ -52,8 +52,8 @@ func TestStatefulPassThroughBeforeEnable(t *testing.T) {
 
 func TestStatefulRoundTripAfterEnable(t *testing.T) {
 	wc, ws, client, server := newStatefulPair(t)
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 
 	key := mustKey(t)
 	factory, err := NewFactory(sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM, key)
@@ -97,8 +97,8 @@ func TestStatefulRoundTripAfterEnable(t *testing.T) {
 // packet independently and never desynchronize.
 func TestStatefulMixedReceive(t *testing.T) {
 	wc, ws, client, server := newStatefulPair(t)
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 
 	key := mustKey(t)
 	factory, err := NewFactory(sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM, key)
@@ -160,13 +160,13 @@ func TestPacketConnRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen server: %v", err)
 	}
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 
 	client, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen client: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := NewFactory(sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM, key)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestPacketConnNilCipherPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer inner.Close()
+	defer func() { _ = inner.Close() }()
 	if got := PacketConn(inner, nil); got != inner {
 		t.Fatalf("PacketConn(inner, nil) should return inner verbatim, got %T", got)
 	}

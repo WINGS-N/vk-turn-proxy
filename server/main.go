@@ -1031,11 +1031,11 @@ func main() {
 		panic(genErr)
 	}
 
-	config := &dtls.Config{
-		Certificates:          []tls.Certificate{certificate},
-		ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
-		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
-		ConnectionIDGenerator: dtls.RandomCIDGenerator(8),
+	dtlsOpts := []dtls.ServerOption{
+		dtls.WithCertificates([]tls.Certificate{certificate}...),
+		dtls.WithExtendedMasterSecret(dtls.RequireExtendedMasterSecret),
+		dtls.WithCipherSuites(dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256),
+		dtls.WithConnectionIDGenerator(dtls.RandomCIDGenerator(8)),
 	}
 
 	wrapPol, err := resolveServerWrapPolicy(opts.wrapMode, opts.wrapCipher, opts.wrapKeyHex, opts.wrapAcceptClientKeys)
@@ -1057,9 +1057,9 @@ func main() {
 			panic(listenErr)
 		}
 		wrapListener = wrap.NewListener(dtlsnet.PacketListenerFromListener(inner))
-		listener, err = dtls.NewListener(wrapListener, config)
+		listener, err = dtls.NewListenerWithOptions(wrapListener, dtlsOpts...)
 	} else {
-		listener, err = dtls.Listen("udp", addr, config)
+		listener, err = dtls.ListenWithOptions("udp", addr, dtlsOpts...)
 	}
 	if err != nil {
 		panic(err)

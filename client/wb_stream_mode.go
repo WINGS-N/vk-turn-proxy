@@ -371,13 +371,12 @@ func dialRoomExchangeDTLS(ctx context.Context, conn net.PacketConn, peer *net.UD
 	if err != nil {
 		return nil, fmt.Errorf("self-signed cert: %w", err)
 	}
-	cfg := &dtls.Config{
-		Certificates:         []tls.Certificate{cert},
-		InsecureSkipVerify:   true,
-		ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
-		CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
-	}
-	dtlsConn, err := dtls.Client(conn, peer, cfg)
+	dtlsConn, err := dtls.ClientWithOptions(conn, peer,
+		dtls.WithCertificates([]tls.Certificate{cert}...),
+		dtls.WithInsecureSkipVerify(true),
+		dtls.WithExtendedMasterSecret(dtls.RequireExtendedMasterSecret),
+		dtls.WithCipherSuites(dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256),
+	)
 	if err != nil {
 		return nil, err
 	}
