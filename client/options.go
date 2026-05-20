@@ -97,8 +97,8 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.roomExchangeDisplayName, "room-exchange-display-name", "", "display name delivered alongside the room id in the room-exchange handshake")
 	fs.BoolVar(&opts.roomExchangeE2EEnabled, "room-exchange-e2e-enabled", false, "advertise that wb-stream traffic will be E2E-encrypted")
 	fs.StringVar(&opts.roomExchangeE2ESecret, "room-exchange-e2e-secret", "", "optional base64-encoded E2E secret to share with the server")
-	fs.StringVar(&opts.wrapMode, "wrap-mode", "off", "WRAP per-packet obfuscation mode: off|preferred|required")
-	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "aes-ctr", "WRAP cipher: aes-ctr|chacha20-xor")
+	fs.StringVar(&opts.wrapMode, "wrap-mode", "off", "WRAP SRTP-mimicry mode: off|preferred|required")
+	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "srtp-aes-gcm", "WRAP AEAD: srtp-aes-gcm|srtp-chacha20-poly1305")
 	fs.StringVar(&opts.wrapKeyHex, "wrap-key", "", "WRAP key (64-char hex, 32 bytes); empty + mode!=off generates a fresh key")
 	fs.Usage = func() {
 		cliutil.Fprintf(fs.Output(), "Usage:\n  %s -peer <host:port> -vk-link <link> [flags]\n  %s -peer <host:port> -yandex-link <link> [flags]\n\n", program, program)
@@ -137,9 +137,9 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 		}
 		opts.wrapCipher = strings.ToLower(strings.TrimSpace(opts.wrapCipher))
 		switch opts.wrapCipher {
-		case "aes-ctr", "chacha20-xor":
+		case "srtp-aes-gcm", "srtp-chacha20-poly1305":
 		default:
-			opts.wrapCipher = "aes-ctr"
+			opts.wrapCipher = "srtp-aes-gcm"
 		}
 		opts.wrapKeyHex = strings.TrimSpace(opts.wrapKeyHex)
 

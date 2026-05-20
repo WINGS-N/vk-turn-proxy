@@ -24,11 +24,15 @@ func TestPacketConnRoundTrip(t *testing.T) {
 	}
 	defer client.Close()
 
-	clientCipher, err := New(sessionproto.WrapCipher_WRAP_CIPHER_AES_256_CTR, key)
+	factory, err := NewFactory(sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverCipher, err := New(sessionproto.WrapCipher_WRAP_CIPHER_AES_256_CTR, key)
+	clientCipher, err := factory.NewConn(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverCipher, err := factory.NewConn(true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +40,7 @@ func TestPacketConnRoundTrip(t *testing.T) {
 	wc := PacketConn(client, clientCipher)
 	ws := PacketConn(server, serverCipher)
 
-	payload := []byte("vk-turn obfuscation packet conn round-trip — should arrive intact")
+	payload := []byte("vk-turn SRTP-mimicry packet conn round-trip — should arrive intact")
 	if err = wc.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}

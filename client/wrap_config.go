@@ -21,10 +21,10 @@ func resolveWrapConfig(mode, cipherStr, keyHex string) (sessionproto.WrapCipher,
 
 	var selected sessionproto.WrapCipher
 	switch cipherStr {
-	case "aes-ctr":
-		selected = sessionproto.WrapCipher_WRAP_CIPHER_AES_256_CTR
-	case "chacha20-xor":
-		selected = sessionproto.WrapCipher_WRAP_CIPHER_CHACHA20_XOR
+	case "srtp-aes-gcm":
+		selected = sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM
+	case "srtp-chacha20-poly1305":
+		selected = sessionproto.WrapCipher_WRAP_CIPHER_SRTP_CHACHA20_POLY1305
 	default:
 		return 0, nil, "", fmt.Errorf("unsupported -wrap-cipher %q", cipherStr)
 	}

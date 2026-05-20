@@ -992,18 +992,18 @@ func main() {
 		ConnectionIDGenerator: dtls.RandomCIDGenerator(8),
 	}
 
-	wrapCipher, err := resolveServerWrapConfig(opts.wrapMode, opts.wrapCipher, opts.wrapKeyHex)
+	wrapFactory, err := resolveServerWrapConfig(opts.wrapMode, opts.wrapCipher, opts.wrapKeyHex)
 	if err != nil {
 		panic(err)
 	}
 	var listener net.Listener
-	if wrapCipher != nil {
+	if wrapFactory != nil {
 		log.Printf("WRAP active on listener (cipher=%s)", opts.wrapCipher)
 		inner, listenErr := pionudp.Listen("udp", addr)
 		if listenErr != nil {
 			panic(listenErr)
 		}
-		pl := wrap.PacketListener(dtlsnet.PacketListenerFromListener(inner), wrapCipher)
+		pl := wrap.PacketListener(dtlsnet.PacketListenerFromListener(inner), wrapFactory)
 		listener, err = dtls.NewListener(pl, config)
 	} else {
 		listener, err = dtls.Listen("udp", addr, config)

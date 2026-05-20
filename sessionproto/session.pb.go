@@ -174,10 +174,14 @@ func (TcpTransportFlavor) EnumDescriptor() ([]byte, []int) {
 type WrapCipher int32
 
 const (
-	WrapCipher_WRAP_CIPHER_UNSPECIFIED  WrapCipher = 0
-	WrapCipher_WRAP_CIPHER_NONE         WrapCipher = 1
-	WrapCipher_WRAP_CIPHER_AES_256_CTR  WrapCipher = 2
-	WrapCipher_WRAP_CIPHER_CHACHA20_XOR WrapCipher = 3
+	WrapCipher_WRAP_CIPHER_UNSPECIFIED WrapCipher = 0
+	WrapCipher_WRAP_CIPHER_NONE        WrapCipher = 1
+	// SRTP-mimicry AEAD. The wire packet is [12B RTP header | 12B nonce |
+	// AEAD ciphertext | 16B tag]; the RTP header makes the datagram look
+	// like opus voice traffic so VK TURN's content filter forwards it on
+	// the fast path.
+	WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM       WrapCipher = 2
+	WrapCipher_WRAP_CIPHER_SRTP_CHACHA20_POLY1305 WrapCipher = 3
 )
 
 // Enum value maps for WrapCipher.
@@ -185,14 +189,14 @@ var (
 	WrapCipher_name = map[int32]string{
 		0: "WRAP_CIPHER_UNSPECIFIED",
 		1: "WRAP_CIPHER_NONE",
-		2: "WRAP_CIPHER_AES_256_CTR",
-		3: "WRAP_CIPHER_CHACHA20_XOR",
+		2: "WRAP_CIPHER_SRTP_AES_256_GCM",
+		3: "WRAP_CIPHER_SRTP_CHACHA20_POLY1305",
 	}
 	WrapCipher_value = map[string]int32{
-		"WRAP_CIPHER_UNSPECIFIED":  0,
-		"WRAP_CIPHER_NONE":         1,
-		"WRAP_CIPHER_AES_256_CTR":  2,
-		"WRAP_CIPHER_CHACHA20_XOR": 3,
+		"WRAP_CIPHER_UNSPECIFIED":            0,
+		"WRAP_CIPHER_NONE":                   1,
+		"WRAP_CIPHER_SRTP_AES_256_GCM":       2,
+		"WRAP_CIPHER_SRTP_CHACHA20_POLY1305": 3,
 	}
 )
 
@@ -815,13 +819,13 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x12TcpTransportFlavor\x12$\n" +
 	" TCP_TRANSPORT_FLAVOR_UNSPECIFIED\x10\x00\x12(\n" +
 	"$TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX\x10\x01\x12$\n" +
-	" TCP_TRANSPORT_FLAVOR_DIRECT_SMUX\x10\x02*z\n" +
+	" TCP_TRANSPORT_FLAVOR_DIRECT_SMUX\x10\x02*\x89\x01\n" +
 	"\n" +
 	"WrapCipher\x12\x1b\n" +
 	"\x17WRAP_CIPHER_UNSPECIFIED\x10\x00\x12\x14\n" +
-	"\x10WRAP_CIPHER_NONE\x10\x01\x12\x1b\n" +
-	"\x17WRAP_CIPHER_AES_256_CTR\x10\x02\x12\x1c\n" +
-	"\x18WRAP_CIPHER_CHACHA20_XOR\x10\x03*J\n" +
+	"\x10WRAP_CIPHER_NONE\x10\x01\x12 \n" +
+	"\x1cWRAP_CIPHER_SRTP_AES_256_GCM\x10\x02\x12&\n" +
+	"\"WRAP_CIPHER_SRTP_CHACHA20_POLY1305\x10\x03*J\n" +
 	"\fRoomProvider\x12\x1d\n" +
 	"\x19ROOM_PROVIDER_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17ROOM_PROVIDER_WB_STREAM\x10\x01B=Z;github.com/cacggghp/vk-turn-proxy/sessionproto;sessionprotob\x06proto3"

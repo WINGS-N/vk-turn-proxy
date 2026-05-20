@@ -1,13 +1,34 @@
-// Package wrap implements per-packet stream-cipher obfuscation for the TURN
-// datapath. It exposes a small Cipher interface with two implementations:
+// Package wrap implements per-packet SRTP-mimicry obfuscation for the TURN
+// datapath. The wire format mimics SRTP (RFC 3550 / RFC 7714 AEAD profile)
+// so that VK TURN, which appears to forward only SRTP/DTLS-shaped
+// ChannelData payloads on the fast path, accepts the obfuscated traffic.
 //
-//   - AES-256-CTR (default; benefits from ARM AES-NI hardware acceleration).
-//   - ChaCha20 (opt-in; software-friendly fallback).
+// Wire format per datagram (40-byte overhead):
 //
-// Both write a fresh random 12-byte nonce in front of every packet and apply
-// an unauthenticated stream XOR over the payload. The MAC of the DTLS layer
-// nested inside provides authentication; the wrap layer only changes what an
-// on-path observer sees in the packet bytes.
+//	[12B RTP header | 12B explicit nonce | AEAD ciphertext | 16B tag]
+//
+// RTP header (RFC 3550):
+//
+//	byte 0:    0x80         V=2, P=0, X=0, CC=0
+//	byte 1:    0x6F         M=0, PT=111 (opus, typical voice PT)
+//	bytes 2-3: seq16 BE     monotonic, init random
+//	bytes 4-7: ts32 BE      monotonic, init random, increments by 960
+//	                        (one Opus frame = 20ms @ 48kHz)
+//	bytes 8-11: SSRC        random per conn, MSB encodes direction
+//
+// Explicit nonce (12B) = 4B sessionID || 8B counter (big-endian). sessionID
+// MSB matches SSRC MSB (direction bit: client clears, server sets) so that
+// nonces never collide across the two directions under the same key.
+// counter starts at a random uint64 to avoid reuse across process restarts.
+// AAD = first 24 bytes (RTP header || nonce) — any tampering with the RTP
+// header breaks Open.
+//
+// Each connection (each accepted listener stream and each client worker)
+// holds its own Cipher with fresh per-conn state. Use NewFactory to
+// construct a Factory that mints those per-conn ciphers.
+//
+// Original SRTP-mimicry wire format and AEAD construction adapted from
+// samosvalishe/vk-turn-proxy commit cd14d25.
 package wrap
 
 import (
@@ -17,8 +38,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
-	"golang.org/x/crypto/chacha20"
+	"golang.org/x/crypto/chacha20poly1305"
 
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 )
@@ -26,42 +48,64 @@ import (
 // KeyLen is the required key length for every supported cipher (32 bytes).
 const KeyLen = 32
 
-// NonceLen is the per-packet nonce length prefixed to every ciphertext.
-const NonceLen = 12
+// Per-packet wire-format constants.
+const (
+	rtpHdrLen  = 12
+	nonceLen   = 12
+	tagLen     = 16
+	headerLen  = rtpHdrLen + nonceLen // 24 (AAD scope)
+	overhead   = headerLen + tagLen   // 40
+	rtpVersion = 0x80                 // V=2, P=0, X=0, CC=0
+	rtpPT      = 0x6F                 // M=0, PT=111 (opus)
+	tsStep     = 960                  // 20ms @ 48kHz
+)
 
-// ErrShortCiphertext is returned by Cipher.Open when the input is shorter
-// than the nonce prefix.
-var ErrShortCiphertext = errors.New("wrap: ciphertext shorter than nonce")
+// ErrShortCiphertext is returned by Cipher.Open when the wire packet is
+// shorter than the fixed-size header + tag.
+var ErrShortCiphertext = errors.New("wrap: ciphertext shorter than overhead")
 
-// Cipher seals and opens individual datagrams. Implementations must be safe
-// for concurrent use across goroutines.
+// Cipher seals and opens individual datagrams. Each Cipher carries its own
+// RTP sequence/timestamp/SSRC and nonce counter; instances MUST NOT be
+// shared between connections.
 type Cipher interface {
-	// Seal returns nonce||stream_cipher(plaintext). The returned slice is a
-	// fresh allocation owned by the caller.
 	Seal(plaintext []byte) ([]byte, error)
-	// Open decrypts a packet previously produced by a matching Seal. It
-	// returns ErrShortCiphertext for inputs shorter than NonceLen.
 	Open(ciphertext []byte) ([]byte, error)
-	// Overhead returns the per-packet byte overhead added by Seal.
 	Overhead() int
 }
 
-// New constructs a Cipher from a wire-level cipher selection and key.
-//
-// Selecting WRAP_CIPHER_NONE or WRAP_CIPHER_UNSPECIFIED returns (nil, nil)
-// so the caller can treat "no obfuscation negotiated" uniformly.
-func New(selected sessionproto.WrapCipher, key []byte) (Cipher, error) {
+// Factory mints fresh per-connection Cipher instances under a fixed key.
+// The isServer flag drives the direction bit (MSB of sessionID/SSRC).
+type Factory interface {
+	NewConn(isServer bool) (Cipher, error)
+}
+
+// NewFactory constructs a Factory for the given wire-level cipher
+// selection and key. Selecting WRAP_CIPHER_NONE / _UNSPECIFIED returns
+// (nil, nil) so callers can treat "no obfuscation negotiated" uniformly.
+func NewFactory(selected sessionproto.WrapCipher, key []byte) (Factory, error) {
 	switch selected {
 	case sessionproto.WrapCipher_WRAP_CIPHER_UNSPECIFIED,
 		sessionproto.WrapCipher_WRAP_CIPHER_NONE:
 		return nil, nil
-	case sessionproto.WrapCipher_WRAP_CIPHER_AES_256_CTR:
-		return newAESCTR(key)
-	case sessionproto.WrapCipher_WRAP_CIPHER_CHACHA20_XOR:
-		return newChaCha20(key)
+	case sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM:
+		return newAESGCMFactory(key)
+	case sessionproto.WrapCipher_WRAP_CIPHER_SRTP_CHACHA20_POLY1305:
+		return newChaChaFactory(key)
 	default:
 		return nil, fmt.Errorf("wrap: unsupported cipher %v", selected)
 	}
+}
+
+// New is a convenience that creates a Factory and immediately mints one
+// connection Cipher under it. Server-side listeners should call
+// NewFactory and then NewConn per accept instead, so that each peer gets
+// independent RTP state and nonce counter.
+func New(selected sessionproto.WrapCipher, key []byte, isServer bool) (Cipher, error) {
+	f, err := NewFactory(selected, key)
+	if err != nil || f == nil {
+		return nil, err
+	}
+	return f.NewConn(isServer)
 }
 
 // GenerateKey returns a fresh random 32-byte key.
@@ -73,95 +117,125 @@ func GenerateKey() ([]byte, error) {
 	return key, nil
 }
 
-// AES-256-CTR ------------------------------------------------------------
+// --- AES-256-GCM factory + cipher (ARM AES-NI fast path) -----------------
 
-type aesCTRCipher struct {
-	block cipher.Block
-}
+type aesGCMFactory struct{ aead cipher.AEAD }
 
-func newAESCTR(key []byte) (Cipher, error) {
+func newAESGCMFactory(key []byte) (Factory, error) {
 	if len(key) != KeyLen {
-		return nil, fmt.Errorf("wrap/aes-ctr: key must be %d bytes (got %d)", KeyLen, len(key))
+		return nil, fmt.Errorf("wrap/aes-gcm: key must be %d bytes (got %d)", KeyLen, len(key))
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("wrap/aes-ctr: %w", err)
+		return nil, fmt.Errorf("wrap/aes-gcm: %w", err)
 	}
-	return &aesCTRCipher{block: block}, nil
-}
-
-// derive a 16-byte IV from a 12-byte nonce by appending a fresh 32-bit
-// counter (initial value 1, matching AES-GCM convention) — gives every
-// packet a unique full IV without reusing keystream blocks across packets
-// that share a nonce prefix.
-func aesCTRIV(nonce []byte) [aes.BlockSize]byte {
-	var iv [aes.BlockSize]byte
-	copy(iv[:NonceLen], nonce)
-	binary.BigEndian.PutUint32(iv[NonceLen:], 1)
-	return iv
-}
-
-func (c *aesCTRCipher) Seal(plaintext []byte) ([]byte, error) {
-	out := make([]byte, NonceLen+len(plaintext))
-	if _, err := rand.Read(out[:NonceLen]); err != nil {
-		return nil, err
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("wrap/aes-gcm: %w", err)
 	}
-	iv := aesCTRIV(out[:NonceLen])
-	stream := cipher.NewCTR(c.block, iv[:])
-	stream.XORKeyStream(out[NonceLen:], plaintext)
-	return out, nil
+	return &aesGCMFactory{aead: aead}, nil
 }
 
-func (c *aesCTRCipher) Open(ciphertext []byte) ([]byte, error) {
-	if len(ciphertext) < NonceLen {
-		return nil, ErrShortCiphertext
-	}
-	iv := aesCTRIV(ciphertext[:NonceLen])
-	plaintext := make([]byte, len(ciphertext)-NonceLen)
-	stream := cipher.NewCTR(c.block, iv[:])
-	stream.XORKeyStream(plaintext, ciphertext[NonceLen:])
-	return plaintext, nil
+func (f *aesGCMFactory) NewConn(isServer bool) (Cipher, error) {
+	return newSRTPConn(f.aead, isServer)
 }
 
-func (c *aesCTRCipher) Overhead() int { return NonceLen }
+// --- ChaCha20-Poly1305 factory + cipher ---------------------------------
 
-// ChaCha20 ---------------------------------------------------------------
+type chachaFactory struct{ aead cipher.AEAD }
 
-type chacha20Cipher struct {
-	key []byte
-}
-
-func newChaCha20(key []byte) (Cipher, error) {
+func newChaChaFactory(key []byte) (Factory, error) {
 	if len(key) != KeyLen {
-		return nil, fmt.Errorf("wrap/chacha20: key must be %d bytes (got %d)", KeyLen, len(key))
+		return nil, fmt.Errorf("wrap/chacha20-poly1305: key must be %d bytes (got %d)", KeyLen, len(key))
 	}
-	return &chacha20Cipher{key: append([]byte(nil), key...)}, nil
+	aead, err := chacha20poly1305.New(key)
+	if err != nil {
+		return nil, fmt.Errorf("wrap/chacha20-poly1305: %w", err)
+	}
+	return &chachaFactory{aead: aead}, nil
 }
 
-func (c *chacha20Cipher) Seal(plaintext []byte) ([]byte, error) {
-	out := make([]byte, NonceLen+len(plaintext))
-	if _, err := rand.Read(out[:NonceLen]); err != nil {
-		return nil, err
+func (f *chachaFactory) NewConn(isServer bool) (Cipher, error) {
+	return newSRTPConn(f.aead, isServer)
+}
+
+// --- SRTP-mimicry per-conn cipher (AEAD-agnostic) -----------------------
+
+type srtpConn struct {
+	aead      cipher.AEAD
+	sessionID [4]byte // nonce prefix; MSB encodes direction
+	ssrc      [4]byte // RTP SSRC; MSB encodes direction
+	counter   atomic.Uint64
+	seq       atomic.Uint32 // used as uint16 (RTP sequence)
+	timestamp atomic.Uint32 // RTP timestamp
+}
+
+func newSRTPConn(aead cipher.AEAD, isServer bool) (Cipher, error) {
+	c := &srtpConn{aead: aead}
+
+	var rnd [16]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return nil, fmt.Errorf("wrap: rand init: %w", err)
 	}
-	stream, err := chacha20.NewUnauthenticatedCipher(c.key, out[:NonceLen])
-	if err != nil {
-		return nil, fmt.Errorf("wrap/chacha20: %w", err)
+	copy(c.sessionID[:], rnd[0:4])
+	copy(c.ssrc[:], rnd[4:8])
+	if isServer {
+		c.sessionID[0] |= 0x80
+		c.ssrc[0] |= 0x80
+	} else {
+		c.sessionID[0] &^= 0x80
+		c.ssrc[0] &^= 0x80
 	}
-	stream.XORKeyStream(out[NonceLen:], plaintext)
+	c.seq.Store(uint32(binary.BigEndian.Uint16(rnd[8:10])))
+	c.timestamp.Store(binary.BigEndian.Uint32(rnd[10:14]))
+
+	var cb [8]byte
+	if _, err := rand.Read(cb[:]); err != nil {
+		return nil, fmt.Errorf("wrap: counter rand: %w", err)
+	}
+	c.counter.Store(binary.BigEndian.Uint64(cb[:]))
+	return c, nil
+}
+
+func (c *srtpConn) Overhead() int { return overhead }
+
+func (c *srtpConn) Seal(plaintext []byte) ([]byte, error) {
+	out := make([]byte, overhead+len(plaintext))
+
+	// RTP header.
+	out[0] = rtpVersion
+	out[1] = rtpPT
+	seq := uint16(c.seq.Add(1) - 1)
+	binary.BigEndian.PutUint16(out[2:4], seq)
+	ts := c.timestamp.Add(tsStep) - tsStep
+	binary.BigEndian.PutUint32(out[4:8], ts)
+	copy(out[8:12], c.ssrc[:])
+
+	// Explicit nonce: 4B sessionID || 8B counter.
+	copy(out[rtpHdrLen:rtpHdrLen+4], c.sessionID[:])
+	ctr := c.counter.Add(1) - 1
+	binary.BigEndian.PutUint64(out[rtpHdrLen+4:rtpHdrLen+nonceLen], ctr)
+
+	nonce := out[rtpHdrLen : rtpHdrLen+nonceLen]
+	aad := out[:headerLen]
+	ctPos := headerLen
+	copy(out[ctPos:], plaintext)
+	c.aead.Seal(out[ctPos:ctPos], nonce, out[ctPos:ctPos+len(plaintext)], aad)
+
 	return out, nil
 }
 
-func (c *chacha20Cipher) Open(ciphertext []byte) ([]byte, error) {
-	if len(ciphertext) < NonceLen {
+func (c *srtpConn) Open(wire []byte) ([]byte, error) {
+	if len(wire) < overhead {
 		return nil, ErrShortCiphertext
 	}
-	stream, err := chacha20.NewUnauthenticatedCipher(c.key, ciphertext[:NonceLen])
+	nonce := wire[rtpHdrLen : rtpHdrLen+nonceLen]
+	aad := wire[:headerLen]
+	ct := wire[headerLen:]
+	plain := make([]byte, 0, len(ct)-tagLen)
+	plain, err := c.aead.Open(plain, nonce, ct, aad)
 	if err != nil {
-		return nil, fmt.Errorf("wrap/chacha20: %w", err)
+		return nil, fmt.Errorf("wrap: AEAD open: %w", err)
 	}
-	plaintext := make([]byte, len(ciphertext)-NonceLen)
-	stream.XORKeyStream(plaintext, ciphertext[NonceLen:])
-	return plaintext, nil
+	return plain, nil
 }
-
-func (c *chacha20Cipher) Overhead() int { return NonceLen }

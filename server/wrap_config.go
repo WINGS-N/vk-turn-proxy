@@ -9,10 +9,10 @@ import (
 )
 
 // resolveServerWrapConfig validates the server-side WRAP CLI options and
-// builds the Cipher to apply to the UDP listener. Returns (nil, nil) when
+// builds the Factory to apply to the UDP listener. Returns (nil, nil) when
 // WRAP is disabled, so the caller can keep raw dtls.Listen for backward
 // compatibility with older clients.
-func resolveServerWrapConfig(mode, cipherStr, keyHex string) (wrap.Cipher, error) {
+func resolveServerWrapConfig(mode, cipherStr, keyHex string) (wrap.Factory, error) {
 	if mode != "on" {
 		return nil, nil
 	}
@@ -28,12 +28,12 @@ func resolveServerWrapConfig(mode, cipherStr, keyHex string) (wrap.Cipher, error
 	}
 	var selected sessionproto.WrapCipher
 	switch cipherStr {
-	case "aes-ctr":
-		selected = sessionproto.WrapCipher_WRAP_CIPHER_AES_256_CTR
-	case "chacha20-xor":
-		selected = sessionproto.WrapCipher_WRAP_CIPHER_CHACHA20_XOR
+	case "srtp-aes-gcm":
+		selected = sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM
+	case "srtp-chacha20-poly1305":
+		selected = sessionproto.WrapCipher_WRAP_CIPHER_SRTP_CHACHA20_POLY1305
 	default:
 		return nil, fmt.Errorf("unsupported -wrap-cipher %q", cipherStr)
 	}
-	return wrap.New(selected, key)
+	return wrap.NewFactory(selected, key)
 }

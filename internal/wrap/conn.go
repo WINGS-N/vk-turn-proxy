@@ -14,10 +14,12 @@ import (
 const readBufSize = 65535
 
 // PacketConn wraps a net.PacketConn so that every datagram is encrypted on
-// send and decrypted on receive using the supplied Cipher.
+// send and decrypted on receive using the supplied per-conn Cipher. The
+// Cipher carries SRTP-mimicry state (sequence, timestamp, nonce counter)
+// and MUST NOT be shared between connections.
 //
-// Returning nil cipher passes through to the original conn unchanged, which
-// keeps call-sites symmetric for "no obfuscation negotiated" paths.
+// Returning the original conn verbatim when cipher is nil keeps call-sites
+// symmetric for the "no obfuscation negotiated" path.
 func PacketConn(inner net.PacketConn, c Cipher) net.PacketConn {
 	if c == nil {
 		return inner
@@ -30,10 +32,10 @@ type wrappedConn struct {
 	cipher Cipher
 }
 
-// ReadFrom decrypts the next datagram. Decryption errors (currently only the
-// "shorter than nonce" case) cause the packet to be dropped silently and the
-// next packet to be read instead, so that unrelated noise on the UDP socket
-// cannot stall the read loop.
+// ReadFrom decrypts the next datagram. Decryption errors (short packet,
+// AEAD authentication failure) cause the packet to be dropped silently
+// and the next packet to be read instead, so that unrelated noise on the
+// UDP socket cannot stall the read loop.
 func (w *wrappedConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	buf := make([]byte, readBufSize)
 	for {
@@ -64,21 +66,21 @@ func (w *wrappedConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	return len(p), nil
 }
 
-// PacketListener wraps a dtls.PacketListener so every accepted connection has
-// the supplied Cipher applied to its reads/writes.
+// PacketListener wraps a dtls.PacketListener so each accepted connection
+// receives a fresh server-side Cipher minted by the supplied Factory.
 //
-// Returning the inner listener verbatim when cipher is nil keeps call-sites
-// symmetric for the "no obfuscation negotiated" path.
-func PacketListener(inner dtlsnet.PacketListener, c Cipher) dtlsnet.PacketListener {
-	if c == nil {
+// Returning the inner listener verbatim when factory is nil keeps
+// call-sites symmetric for the "no obfuscation negotiated" path.
+func PacketListener(inner dtlsnet.PacketListener, f Factory) dtlsnet.PacketListener {
+	if f == nil {
 		return inner
 	}
-	return &wrappedListener{inner: inner, cipher: c}
+	return &wrappedListener{inner: inner, factory: f}
 }
 
 type wrappedListener struct {
-	inner  dtlsnet.PacketListener
-	cipher Cipher
+	inner   dtlsnet.PacketListener
+	factory Factory
 }
 
 func (l *wrappedListener) Accept() (net.PacketConn, net.Addr, error) {
@@ -86,7 +88,12 @@ func (l *wrappedListener) Accept() (net.PacketConn, net.Addr, error) {
 	if err != nil {
 		return pc, addr, err
 	}
-	return PacketConn(pc, l.cipher), addr, nil
+	c, cipherErr := l.factory.NewConn(true)
+	if cipherErr != nil {
+		_ = pc.Close()
+		return nil, addr, cipherErr
+	}
+	return PacketConn(pc, c), addr, nil
 }
 
 func (l *wrappedListener) Close() error   { return l.inner.Close() }

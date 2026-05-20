@@ -42,8 +42,8 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", "join the given LiveKit room and forward DataPacket frames instead of the TURN data plane")
 	fs.StringVar(&opts.wbStreamDisplayName, "wb-stream-display-name", "", "display name the server uses when joining a LiveKit room (empty = random VK-style name per room)")
 	fs.StringVar(&opts.wbStreamE2ESecret, "wb-stream-e2e-secret", "", "optional base64-encoded 32-byte AES-256 key for E2E over DataPacket")
-	fs.StringVar(&opts.wrapMode, "wrap-mode", "off", "WRAP per-packet obfuscation mode: off|on")
-	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "aes-ctr", "WRAP cipher: aes-ctr|chacha20-xor")
+	fs.StringVar(&opts.wrapMode, "wrap-mode", "off", "WRAP SRTP-mimicry mode: off|on")
+	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "srtp-aes-gcm", "WRAP AEAD: srtp-aes-gcm|srtp-chacha20-poly1305")
 	fs.StringVar(&opts.wrapKeyHex, "wrap-key", "", "WRAP key (64-char hex, 32 bytes); required when -wrap-mode=on")
 	fs.Usage = func() {
 		cliutil.Fprintf(fs.Output(), "Usage:\n  %s -connect <ip:port> [flags]\n  %s -udp-connect <ip:port> [flags]\n  %s -wb-stream-room-id <id> -udp-connect <ip:port> [flags]\n\n", program, program, program)
@@ -74,9 +74,9 @@ func parseServerOptions(args []string, program string, stdout, stderr io.Writer)
 		}
 		opts.wrapCipher = strings.ToLower(strings.TrimSpace(opts.wrapCipher))
 		switch opts.wrapCipher {
-		case "aes-ctr", "chacha20-xor":
+		case "srtp-aes-gcm", "srtp-chacha20-poly1305":
 		default:
-			opts.wrapCipher = "aes-ctr"
+			opts.wrapCipher = "srtp-aes-gcm"
 		}
 		opts.wrapKeyHex = strings.TrimSpace(opts.wrapKeyHex)
 

@@ -1643,7 +1643,7 @@ func oneTurnConnection(
 			}
 		}
 	})
-	wrapCipher, err1 := wrap.New(turnParams.wrapCipher, turnParams.wrapKey)
+	wrapCipher, err1 := wrap.New(turnParams.wrapCipher, turnParams.wrapKey, false)
 	if err1 != nil {
 		err = fmt.Errorf("WRAP cipher init failed: %s", err1)
 		return
