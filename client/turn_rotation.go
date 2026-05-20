@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,12 +16,12 @@ var (
 
 func getStreamServerOffset(streamID int) uint64 {
 	v, _ := streamServerOffsets.LoadOrStore(streamID, &atomic.Uint64{})
-	return v.(*atomic.Uint64).Load()
+	return v.(*atomic.Uint64).Load() //nolint:errcheck // sync.Map value type is invariant by construction
 }
 
 func rotateStreamServer(streamID int) uint64 {
 	v, _ := streamServerOffsets.LoadOrStore(streamID, &atomic.Uint64{})
-	return v.(*atomic.Uint64).Add(1)
+	return v.(*atomic.Uint64).Add(1) //nolint:errcheck // sync.Map value type is invariant by construction
 }
 
 func markTURNServerCooldown(addr string) {
@@ -30,7 +29,7 @@ func markTURNServerCooldown(addr string) {
 		return
 	}
 	v, _ := turnServerCooldowns.LoadOrStore(addr, &atomic.Int64{})
-	v.(*atomic.Int64).Store(time.Now().Add(turnServerCooldown).UnixNano())
+	v.(*atomic.Int64).Store(time.Now().Add(turnServerCooldown).UnixNano()) //nolint:errcheck // sync.Map value type is invariant by construction
 }
 
 func isTURNServerAvailable(addr string) bool {
@@ -38,7 +37,7 @@ func isTURNServerAvailable(addr string) bool {
 	if !ok {
 		return true
 	}
-	return time.Now().UnixNano() >= v.(*atomic.Int64).Load()
+	return time.Now().UnixNano() >= v.(*atomic.Int64).Load() //nolint:errcheck // sync.Map value type is invariant by construction
 }
 
 func pickStreamServerAddr(streamID int, addrs []string) string {
@@ -77,15 +76,4 @@ func turnSetupAddr(err error) (string, bool) {
 		return setupErr.addr, true
 	}
 	return "", false
-}
-
-func shouldRotateTURNServer(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "dial TURN") ||
-		strings.Contains(errStr, "TURN allocate") ||
-		strings.Contains(errStr, "TURN listen") ||
-		strings.Contains(errStr, "DTLS handshake")
 }
