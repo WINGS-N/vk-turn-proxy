@@ -108,7 +108,7 @@ checksum:
   name_template: checksums.txt
 
 sboms:
-  - artifacts: binary
+  - artifacts: archive
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
