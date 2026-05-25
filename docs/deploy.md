@@ -1,88 +1,86 @@
 # Развёртывание сервера
 
-Для работы сервера 24/7 его необходимо настроить как службу. У вас есть два пути: **Docker** (рекомендуется) или классический **systemd**.
-
-> [!TIP]
-> **Автоматическая установка**
-> Проще всего развернуть сервер с помощью интерактивного скрипта (выполнит установку Docker/systemd, настройку файрвола и обфускации):
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install-server.sh -o install-server.sh
-> sudo bash install-server.sh
-> ```
-> Скрипт идемпотентен: **повторный запуск** обнаружит существующую установку и предложит меню — *обновить версию* (конфиг и ключ сохраняются), *переконфигурировать* или *удалить*. При установке можно выбрать конкретную версию релиза или `latest`.
->
-> Если вы хотите всё настроить руками — следуйте инструкциям ниже.
+Для работы сервера 24/7 его необходимо настроить как службу. Мы поддерживаем установку через скрипт (интерактивно или автоматически), а также ручную настройку через **Docker** или **systemd**.
 
 ---
 
-## Подготовка: Ключ обфускации
+## Автоматическая установка (Рекомендуется)
 
-Если вы настраиваете всё вручную, сгенерируйте общий 64-символьный hex-ключ. Он должен совпадать на сервере и клиенте:
+Проще всего использовать официальный скрипт. Он установит зависимости, сгенерирует ключи, настроит файрвол и запустит службу.
 
+**Интерактивный режим** (задаст вопросы в терминале):
+```bash
+curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install-server.sh | sudo bash
+```
+> Скрипт идемпотентен: при повторном запуске он предложит обновить, переконфигурировать или удалить сервер.
+
+**Неинтерактивный режим** (для автоматизации):
+```bash
+# Установка через Docker (UDP, порт бэкенда 51820)
+curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install-server.sh | \
+  sudo bash -s -- -y --method docker --mode udp --backend-port 51820
+
+# Обновление до конкретной версии
+sudo bash install-server.sh -y --update --version v1.2.3
+
+# Полное удаление
+sudo bash install-server.sh -y --uninstall --purge
+```
+*Все доступные флаги:* `sudo bash install-server.sh --help`
+
+---
+
+## Ручная установка
+
+Если вы предпочитаете контролировать каждый шаг, используйте инструкции ниже.
+Сначала сгенерируйте 64-символьный hex-ключ обфускации (он должен совпадать на сервере и клиенте):
 ```bash
 openssl rand -hex 32
 ```
-*Скопируйте ключ — далее в примерах он обозначен как `<ВАШ_КЛЮЧ>`.*
+*В примерах ниже он обозначен как `<ВАШ_КЛЮЧ>`.*
 
----
+### Способ 1: Docker Compose
 
-## Способ 1: Docker Compose (Рекомендуется)
-
-1. Установите Docker, если его еще нет:
+1. Установите Docker:
    ```bash
-   curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
+   curl -fsSL https://get.docker.com | sudo sh
    ```
-
-2. Создайте директорию проекта и файл `docker-compose.yml`:
+2. Создайте директорию и `docker-compose.yml`:
    ```bash
    mkdir -p /opt/free-turn-proxy && cd /opt/free-turn-proxy
    nano docker-compose.yml
    ```
-
-3. Вставьте конфиг (замените порты и `<ВАШ_КЛЮЧ>` на свои):
+3. Вставьте конфигурацию:
    ```yaml
    services:
      free-turn-proxy:
        image: ghcr.io/samosvalishe/free-turn-proxy:latest
        container_name: free-turn-proxy
-       network_mode: "host" # Важно для прямого доступа к локальному WireGuard (127.0.0.1:51820)
+       network_mode: "host" # Важно для доступа к локальному VPN (127.0.0.1)
        restart: unless-stopped
        environment:
          - CONNECT_ADDR=127.0.0.1:51820  # Порт ВАШЕГО VPN (WG/AmneziaWG/Xray)
-         - LISTEN_ADDR=0.0.0.0:56000     # Внешний порт, к которому будет подключаться клиент
-         - MODE=udp                      # udp для WG/Amnezia, tcp для Xray/VLESS
+         - LISTEN_ADDR=0.0.0.0:56000     # Внешний порт
+         - MODE=udp                      # udp (WG/Amnezia) или tcp (Xray/VLESS)
          - OBF_PROFILE=rtpopus           # Обязательная маскировка
-         - OBF_KEY=<ВАШ_КЛЮЧ>            # Ваш сгенерированный 64-hex ключ
-         # Раскомментируйте ниже, чтобы включить авторизацию по Client ID
-         # - CLIENTS_FILE=/opt/free-turn-proxy/clients.json
+         - OBF_KEY=<ВАШ_КЛЮЧ>            # Ваш ключ
+         # - CLIENTS_FILE=/opt/free-turn-proxy/clients.json # Для авторизации
        # volumes:
        #   - /opt/free-turn-proxy/clients.json:/opt/free-turn-proxy/clients.json
    ```
+4. Запустите: `docker compose up -d`
 
-4. Запустите контейнер:
-   ```bash
-   docker compose up -d
-   ```
-   *Посмотреть логи: `docker compose logs -f`*
+### Способ 2: systemd (Без Docker)
 
----
-
-## Способ 2: systemd (Без Docker)
-
-1. Скачайте бинарник в `/opt/free-turn-proxy`:
+1. Скачайте бинарник:
    ```bash
    sudo mkdir -p /opt/free-turn-proxy
    sudo curl -L -o /opt/free-turn-proxy/server https://github.com/samosvalishe/free-turn-proxy/releases/latest/download/server-linux-amd64
    sudo chmod +x /opt/free-turn-proxy/server
    ```
-   *(Для ARM-сервера замените `-amd64` на `-arm64`)*
-
-2. Создайте файл службы:
-   ```bash
-   sudo nano /etc/systemd/system/free-turn-proxy.service
-   ```
-
-3. Вставьте конфиг (замените порты и `<ВАШ_КЛЮЧ>` на свои):
+   *(Для ARM замените `-amd64` на `-arm64`)*
+2. Создайте службу: `sudo nano /etc/systemd/system/free-turn-proxy.service`
+3. Вставьте конфигурацию:
    ```ini
    [Unit]
    Description=Free TURN Proxy Server
@@ -90,8 +88,6 @@ openssl rand -hex 32
 
    [Service]
    Type=simple
-   # Укажите ваши порты и ключ обфускации.
-   # Для авторизации по Client ID добавьте: -clients-file /opt/free-turn-proxy/clients.json
    ExecStart=/opt/free-turn-proxy/server -listen 0.0.0.0:56000 -connect 127.0.0.1:51820 -obf-profile rtpopus -obf-key <ВАШ_КЛЮЧ>
    Restart=always
    RestartSec=5
@@ -101,60 +97,42 @@ openssl rand -hex 32
    [Install]
    WantedBy=multi-user.target
    ```
-   *(Примечание: `User=nobody` не может биндить порты < 1024 — используйте внешний порт > 1024)*
-
-4. Запустите службу и добавьте в автозагрузку:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now free-turn-proxy.service
-   ```
-   *Статус: `sudo systemctl status free-turn-proxy.service`*
+4. Запустите: `sudo systemctl daemon-reload && sudo systemctl enable --now free-turn-proxy.service`
 
 ---
 
 ## Настройка Файрвола
 
-Откройте внешний порт. Сервер слушает по **UDP** (DTLS-over-UDP), даже если вы используете `MODE=tcp` для Xray:
-
+Откройте внешний порт (сервер слушает по **UDP**, даже если `MODE=tcp`):
 ```bash
-# Для UFW (Ubuntu/Debian)
 sudo ufw allow 56000/udp
-
-# Либо через iptables напрямую
-sudo iptables -I INPUT -p udp --dport 56000 -j ACCEPT
-sudo netfilter-persistent save  # если установлен
+# Или iptables: sudo iptables -I INPUT -p udp --dport 56000 -j ACCEPT
 ```
 
 ---
 
 ## Авторизация по Client ID (Опционально)
 
-По умолчанию любой клиент с верным `-obf-key` может релеить трафик. Чтобы ограничить доступ конкретным списком клиентов, включите авторизацию.
+По умолчанию доступ открыт всем, кто знает `-obf-key`. Чтобы ограничить доступ:
 
-1. Создайте пустой список на сервере:
-   ```bash
-   echo "[]" | sudo tee /opt/free-turn-proxy/clients.json
-   ```
+1. Создайте пустой список: `echo "[]" | sudo tee /opt/free-turn-proxy/clients.json`
 2. Включите авторизацию:
-   - **В Docker:** раскомментируйте переменные `CLIENTS_FILE` и `volumes` в `docker-compose.yml`, затем выполните `docker compose up -d`.
-   - **В systemd:** добавьте флаг `-clients-file /opt/free-turn-proxy/clients.json` в `ExecStart`, затем `systemctl daemon-reload && systemctl restart free-turn-proxy`.
-3. Управляйте клиентами (см. раздел [Управление Client ID в flags.md](flags.md#управление-client-id-команды-сервера)).
-4. На клиенте задайте `-client-id <id>` (либо используйте автогенерируемый) и добавьте этот ID в `clients.json` на сервере. Клиент отправляет ID автоматически.
+   - **Docker:** раскомментируйте `CLIENTS_FILE` и `volumes` в `docker-compose.yml`, затем `docker compose up -d`.
+   - **systemd:** добавьте флаг `-clients-file /opt/free-turn-proxy/clients.json` в `ExecStart` и перезапустите службу.
+3. Добавляйте ID в `clients.json` (см. [flags.md](flags.md#управление-client-id-команды-сервера)). На клиенте используйте флаг `-client-id <id>`.
 
 ---
 
-## Справка: Переменные окружения для Docker
-
-Если вы запускаете через голый `docker run`, вам пригодятся эти переменные (аналогичны флагам бинарника):
+## Переменные окружения Docker
 
 | Переменная | По умолчанию | Описание |
 | --- | --- | --- |
 | `CONNECT_ADDR` | **обязательна** | IP и порт вашего VPN (бэкенда) |
 | `LISTEN_ADDR` | `0.0.0.0:56000` | Внешний адрес прослушивания |
-| `MODE` | `udp` | Режим туннеля: `udp` (для WG/Amnezia) \| `tcp` (для Xray/VLESS) |
-| `OBF_PROFILE` | `none` | Значение `-obf-profile`: `none` \| `rtpopus` |
-| `OBF_KEY` | пусто | Значение `-obf-key` (обязателен при `OBF_PROFILE != none`) |
-| `CLIENTS_FILE`| пусто | Путь к JSON-файлу (`/opt/free-turn-proxy/clients.json`) для авторизации |
-| `DEBUG` | `false` | Включает debug-логи (`true` / `false`) |
+| `MODE` | `udp` | Режим туннеля: `udp` \| `tcp` |
+| `OBF_PROFILE` | `none` | Маскировка: `none` \| `rtpopus` |
+| `OBF_KEY` | пусто | Ключ маскировки |
+| `CLIENTS_FILE`| пусто | Путь к JSON-файлу авторизации |
+| `DEBUG` | `false` | Включить debug-логи |
 
-> **Внимание при Bridge Mode:** Если вы уберете `network_mode: "host"` и пробросите порты через `-p 56000:56000/udp`, то `CONNECT_ADDR=127.0.0.1:51820` будет указывать **внутрь** контейнера Docker. В таком случае прокси не найдет ваш WireGuard. Используйте IP хоста в `CONNECT_ADDR` или оставляйте `network_mode: "host"`.
+> **Внимание при Bridge Mode:** Если вы уберете `network_mode: "host"` и пробросите порты (`-p 56000:56000/udp`), `CONNECT_ADDR=127.0.0.1:51820` будет указывать внутрь контейнера. В этом случае прокси не найдет VPN. Используйте IP хоста или оставляйте `network_mode: "host"`.
