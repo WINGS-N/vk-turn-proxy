@@ -28,7 +28,7 @@
   "release-search-depth": 50,
   "commit-search-depth": 500,
   "separate-pull-requests": false,
-  "pull-request-title-pattern": "chore: release ${version}",
-  "group-pull-request-title-pattern": "chore: release ${version}",
+  "pull-request-title-pattern": "chore${scope}: release${component} ${version}",
+  "group-pull-request-title-pattern": "chore${scope}: release${component} ${version}",
   "plugins": []
 }
