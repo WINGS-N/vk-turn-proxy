@@ -10,23 +10,23 @@
 
 **Интерактивный режим** (задаст вопросы в терминале):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install-server.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install.sh | sudo bash
 ```
 > Скрипт идемпотентен: при повторном запуске он предложит обновить, переконфигурировать или удалить сервер.
 
 **Неинтерактивный режим** (для автоматизации):
 ```bash
 # Установка через Docker (UDP, порт бэкенда 51820)
-curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install-server.sh | \
+curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install.sh | \
   sudo bash -s -- -y --method docker --mode udp --backend-port 51820
 
 # Обновление до конкретной версии
-sudo bash install-server.sh -y --update --version v1.2.3
+sudo bash install.sh -y --update --version v1.2.3
 
 # Полное удаление
-sudo bash install-server.sh -y --uninstall --purge
+sudo bash install.sh -y --uninstall --purge
 ```
-*Все доступные флаги:* `sudo bash install-server.sh --help`
+*Все доступные флаги:* `sudo bash install.sh --help`
 
 ---
 

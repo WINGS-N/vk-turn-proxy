@@ -11,7 +11,7 @@
 Интерактивный скрипт установит Docker или systemd, настроит файрвол и запустит сервер. Запускать от root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install-server.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/samosvalishe/free-turn-proxy/master/scripts/install.sh | sudo bash
 ```
 > Скопируйте параметры клиента, которые скрипт выдаст в конце. Для ручной установки или запуска скрипта без вопросов (non-interactive) см. [Развёртывание (deploy.md)](deploy.md).
 
