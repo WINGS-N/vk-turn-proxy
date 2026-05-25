@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.0...v1.0.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* **install:** переписать установщик сервера — TUI, надёжность, non-interactive ([1b154a2](https://github.com/samosvalishe/free-turn-proxy/commit/1b154a2e84057c07344a4d7308ca7d26f5f127ec))
+* **routes:** починить установку маршрутов в routes.ps1 на Windows ([7b0a907](https://github.com/samosvalishe/free-turn-proxy/commit/7b0a9076380bbcdc2f83d6da63ca3800b5d68412))
+* **turndial:** подавить периодический CreatePermission refresh ([98e1d7c](https://github.com/samosvalishe/free-turn-proxy/commit/98e1d7cc8e0947e91892b75ecfed6cd4a41ab0ac))
+
 ## 1.0.0 (2026-05-24)
 
 
