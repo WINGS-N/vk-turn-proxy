@@ -1,20 +1,26 @@
 # Usage: .\client.exe -debug ... 2>&1 | .\scripts\routes.ps1
 # Requires Administrator privileges.
 
-$gateway = Get-NetRoute `
+$defaultRoute = Get-NetRoute `
     -DestinationPrefix "0.0.0.0/0" `
+    -ErrorAction SilentlyContinue `
     | Sort-Object RouteMetric `
-    | Select-Object -First 1 -ExpandProperty NextHop
+    | Select-Object -First 1
 
-if (-not $gateway) {
-    Write-Error "Could not determine default gateway"
+$gateway = $defaultRoute.NextHop
+$ifIndex = $defaultRoute.InterfaceIndex
+
+if (-not $gateway -or -not $ifIndex) {
+    Write-Error "Could not determine default gateway / interface"
     exit 1
 }
 
-Write-Host "Default gateway: $gateway"
+Write-Host "Default gateway: $gateway (ifIndex $ifIndex)"
 
 $input | ForEach-Object {
-    $line = $_.Trim()
+    # 2>&1 на нативном exe оборачивает stderr-строки в ErrorRecord (нет .Trim()).
+    # "$_" приводит и String, и ErrorRecord к тексту строки лога.
+    $line = "$_".Trim()
     if ($line -eq "") { return }
 
     $prefix = $null
@@ -51,6 +57,7 @@ $input | ForEach-Object {
     New-NetRoute `
         -DestinationPrefix $prefix `
         -NextHop $gateway `
+        -InterfaceIndex $ifIndex `
         -PolicyStore ActiveStore `
         -ErrorAction Stop | Out-Null
 }
