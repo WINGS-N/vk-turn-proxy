@@ -10,7 +10,6 @@
       "bump-patch-for-minor-pre-major": false,
       "draft": false,
       "prerelease": false,
-      "skip-github-release": true,
       "changelog-path": "CHANGELOG.md",
       "changelog-sections": [
         { "type": "feat",     "section": "Features"      },
@@ -29,5 +28,6 @@
   "release-search-depth": 50,
   "commit-search-depth": 500,
   "separate-pull-requests": false,
+  "pull-request-title-pattern": "chore: release ${version}",
   "plugins": []
 }
