@@ -4,6 +4,7 @@
     ".": {
       "release-type": "go",
       "package-name": "free-turn-proxy",
+      "component": "",
       "include-component-in-tag": false,
       "include-v-in-tag": true,
       "bump-minor-pre-major": true,
