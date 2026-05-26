@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.0...v1.0.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* **release:** drop package-name so root component is empty (issue 2214) ([281dd3e](https://github.com/samosvalishe/free-turn-proxy/commit/281dd3e87ac8366d7192f014f49c97c198f76ef1))
+* **release:** set empty component for release-please tagging (issue 2214) ([e976f7d](https://github.com/samosvalishe/free-turn-proxy/commit/e976f7d8efdb93353fc7c7e978775974fae21863))
+
+
+### Refactoring
+
+* install.sh ([0f74c23](https://github.com/samosvalishe/free-turn-proxy/commit/0f74c238c5abafdb3bf5ce2f0139c41d62f07abd))
+
 ## 1.0.0 (2026-05-25)
 
 
