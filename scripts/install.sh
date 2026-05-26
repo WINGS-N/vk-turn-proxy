@@ -51,6 +51,7 @@ readonly C_RED='\033[0;31m' C_GREEN='\033[0;32m' C_YELLOW='\033[1;33m' C_CYAN='\
 # ───────────────────────────────────────────────────────────────────────────
 INSTALL_METHOD="docker"  # docker | systemd
 VERSION="latest"
+PROVIDER="vk"            # vk (источник TURN-creds на клиенте; сервер provider-agnostic)
 PROXY_MODE="udp"         # udp | tcp
 BACKEND_PORT=""
 LISTEN_PORT="56000"
@@ -251,6 +252,7 @@ pkg_install() {
     elif command -v yum >/dev/null 2>&1; then yum install -y -q "$@" >/dev/null 2>&1 || true
     fi
 }
+export -f pkg_install
 
 ensure_base_deps() {
     local missing=() b
@@ -328,6 +330,7 @@ save_config() {
     cat > "$CONF_FILE" <<EOF
 INSTALL_METHOD="$INSTALL_METHOD"
 VERSION="$VERSION"
+PROVIDER="$PROVIDER"
 PROXY_MODE="$PROXY_MODE"
 BACKEND_PORT="$BACKEND_PORT"
 LISTEN_PORT="$LISTEN_PORT"
@@ -351,6 +354,7 @@ connect_addr() { echo "127.0.0.1:${BACKEND_PORT}"; }
 
 validate_config() {
     case "$INSTALL_METHOD" in docker | systemd) ;; *) die "method: docker|systemd, а не '$INSTALL_METHOD'" ;; esac
+    case "$PROVIDER"       in vk) ;; *) die "provider: vk, а не '$PROVIDER'" ;; esac
     case "$PROXY_MODE"     in udp | tcp) ;; *) die "mode: udp|tcp, а не '$PROXY_MODE'" ;; esac
     valid_port "$LISTEN_PORT" || die "listen-port невалиден: '$LISTEN_PORT'"
     [ -z "$BACKEND_PORT" ] && { [ "$PROXY_MODE" = "udp" ] && BACKEND_PORT="51820" || BACKEND_PORT="443"; }
@@ -382,6 +386,11 @@ wizard_mode() {
     ui_menu PROXY_MODE "Режим туннеля:" "$PROXY_MODE" \
         udp "UDP-relay  ·  WireGuard / AmneziaWG" \
         tcp "TCP-forward  ·  Xray / sing-box"
+}
+
+wizard_provider() {
+    ui_menu PROVIDER "Провайдер TURN-creds (клиент):" "$PROVIDER" \
+        vk "VK Calls API"
 }
 
 wizard_ports() {
@@ -422,22 +431,22 @@ wizard_wireguard() {
 }
 
 wizard_obfuscation() {
-    local def="Y"; [ "$OBF_PROFILE" = "none" ] && def="N"
-    if ui_yesno "Включить маскировку rtpopus? (рекомендуется)" "$def"; then
-        OBF_PROFILE="rtpopus"
-        if [ -n "$OBF_KEY" ]; then
-            ui_yesno "Сгенерировать НОВЫЙ ключ? (нет — оставить текущий)" "N" && OBF_KEY="$(openssl rand -hex 32)"
-        elif ui_yesno "Сгенерировать случайный ключ?" "Y"; then
-            OBF_KEY="$(openssl rand -hex 32)"
-        else
-            while :; do
-                ui_input OBF_KEY "64-hex ключ обфускации" ""
-                valid_hex64 "$OBF_KEY" && break
-                ui_note "Ошибка" "Ключ — ровно 64 hex-символа."
-            done
-        fi
+    ui_menu OBF_PROFILE "Профиль обфускации:" "$OBF_PROFILE" \
+        rtpopus "rtpopus  ·  RTP/opus + ChaCha20-Poly1305  (рекомендуется)" \
+        none    "none  ·  без обфускации"
+    if [ "$OBF_PROFILE" = "none" ]; then
+        OBF_KEY=""; return
+    fi
+    if [ -n "$OBF_KEY" ]; then
+        ui_yesno "Сгенерировать НОВЫЙ ключ? (нет — оставить текущий)" "N" && OBF_KEY="$(openssl rand -hex 32)"
+    elif ui_yesno "Сгенерировать случайный ключ?" "Y"; then
+        OBF_KEY="$(openssl rand -hex 32)"
     else
-        OBF_PROFILE="none"; OBF_KEY=""
+        while :; do
+            ui_input OBF_KEY "64-hex ключ обфускации" ""
+            valid_hex64 "$OBF_KEY" && break
+            ui_note "Ошибка" "Ключ — ровно 64 hex-символа."
+        done
     fi
 }
 
@@ -478,7 +487,7 @@ wizard_firewall() {
 # Сводка выбранного перед применением.
 review_config() {
     local obf_line="выключена"
-    [ "$OBF_PROFILE" != "none" ] && obf_line="rtpopus"
+    [ "$OBF_PROFILE" != "none" ] && obf_line="$OBF_PROFILE"
     local auth_line="выключена"; [ -n "$CLIENTS_FILE_CONF" ] && auth_line="Client ID"
     local wg_line="нет"; [ "$WG_SETUP" = "1" ] && wg_line="установить + настроить"
 
@@ -490,6 +499,7 @@ review_config() {
 | -------------- | -------- |
 | Метод          | $INSTALL_METHOD |
 | Версия         | $VERSION |
+| Провайдер      | $PROVIDER |
 | Режим          | $PROXY_MODE |
 | Порт бэкенда   | 127.0.0.1:$BACKEND_PORT |
 | Внешний порт   | 0.0.0.0:$LISTEN_PORT |
@@ -498,7 +508,7 @@ review_config() {
 | WireGuard      | $wg_line |
 EOF
     else
-        echo; log_info "Настройки: method=$INSTALL_METHOD version=$VERSION mode=$PROXY_MODE backend=$BACKEND_PORT listen=$LISTEN_PORT obf=$obf_line auth=$auth_line wireguard=$wg_line"
+        echo; log_info "Настройки: method=$INSTALL_METHOD version=$VERSION provider=$PROVIDER mode=$PROXY_MODE backend=$BACKEND_PORT listen=$LISTEN_PORT obf=$obf_line auth=$auth_line wireguard=$wg_line"
     fi
     ui_yesno "Применить эти настройки?" "Y" || ui_abort
 }
@@ -506,6 +516,7 @@ EOF
 wizard() {
     wizard_method
     wizard_mode
+    wizard_provider
     wizard_ports
     wizard_wireguard
     wizard_obfuscation
@@ -756,6 +767,7 @@ print_summary() {
             echo "| | |"
             echo "|---|---|"
             echo "| **Сервер (peer)** | \`${ext_ip}:${LISTEN_PORT}\` |"
+            echo "| **Провайдер** | ${PROVIDER} (клиент: \`-provider ${PROVIDER}\`) |"
             echo "| **Режим** | ${PROXY_MODE} |"
             echo "| **Версия** | ${VERSION} |"
             echo "| **Метод** | ${INSTALL_METHOD} |"
@@ -782,6 +794,7 @@ print_summary() {
         echo; log_success "Готово!"
         echo "--------------------------------------------------------"
         echo "Сервер (peer): ${ext_ip}:${LISTEN_PORT}"
+        echo "Провайдер (клиент): -provider ${PROVIDER}"
         echo "Режим: ${PROXY_MODE} | Версия: ${VERSION} | Метод: ${INSTALL_METHOD}"
         [ "$OBF_PROFILE" != "none" ] && echo "Обфускация: ${OBF_PROFILE} | Ключ: ${OBF_KEY}"
         [ -n "$CLIENTS_FILE_CONF" ] && { echo "Client ID auth включён. Добавить клиента:"; echo "  $add_cmd"; }
@@ -866,6 +879,7 @@ Free Turn Proxy — установщик сервера.
 Опции:
   -y, --yes, --non-interactive   без вопросов
   --method docker|systemd        метод (default docker)
+  --provider vk                  провайдер TURN-creds для клиента (default vk)
   --mode   udp|tcp               режим (default udp)
   --backend-port N               порт бэкенда (default udp→51820 / tcp→443)
   --listen-port N                внешний порт (default 56000)
@@ -895,6 +909,11 @@ parse_args() {
                 case "${2:-}" in
                     docker | systemd) OVERRIDES+=("INSTALL_METHOD=${2}") ;;
                     *) die "--method: docker|systemd" ;;
+                esac; shift ;;
+            --provider)
+                case "${2:-}" in
+                    vk) OVERRIDES+=("PROVIDER=${2}") ;;
+                    *) die "--provider: vk" ;;
                 esac; shift ;;
             --mode)            OVERRIDES+=("PROXY_MODE=${2:-}"); shift ;;
             --backend-port)    OVERRIDES+=("BACKEND_PORT=${2:-}"); shift ;;
