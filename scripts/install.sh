@@ -208,7 +208,7 @@ ui_spin() {
         # if/else, а не `cmd; rc=$?` — иначе set -e убьёт скрипт до захвата кода.
         # shellcheck disable=SC2016  # $@/$0 должны раскрыться внутри bash -c, не здесь
         if gum spin --spinner dot --spinner.foreground "$MD_PRIMARY" --title "$title" \
-            -- bash -c 'exec "$@" >"$0" 2>&1' "$log" "$@"; then rc=0; else rc=$?; fi
+            -- bash -c '"$@" >"$0" 2>&1' "$log" "$@"; then rc=0; else rc=$?; fi
         if [ "$rc" -eq 0 ]; then log_success "$title"
         else
             log_error "$title — ошибка (код $rc)"
