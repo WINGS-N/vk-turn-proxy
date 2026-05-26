@@ -453,7 +453,7 @@ wizard_obfuscation() {
 wizard_auth() {
     local def="N"; [ -n "$CLIENTS_FILE_CONF" ] && def="Y"
     if ui_yesno "Включить авторизацию по Client ID?" "$def"; then
-        CLIENTS_FILE_CONF="${APP_DIR}/clients.json"
+        CLIENTS_FILE_CONF="${APP_DIR}/clients/clients.json"
     else
         CLIENTS_FILE_CONF=""
     fi
@@ -529,7 +529,9 @@ wizard() {
 # Применение конфигурации
 # ═══════════════════════════════════════════════════════════════════════════
 init_clients_file() {
-    [ -n "$CLIENTS_FILE_CONF" ] && [ ! -f "$CLIENTS_FILE_CONF" ] && echo "[]" > "$CLIENTS_FILE_CONF" || true
+    [ -z "$CLIENTS_FILE_CONF" ] && return 0
+    mkdir -p "$(dirname "$CLIENTS_FILE_CONF")"
+    [ ! -f "$CLIENTS_FILE_CONF" ] && echo '{"clients":{}}' > "$CLIENTS_FILE_CONF" || true
 }
 
 # ── WireGuard bootstrap (опциональный) ──────────────────────────────────────
@@ -684,9 +686,10 @@ apply_docker() {
         echo "      - OBF_PROFILE=${OBF_PROFILE}"
         [ "$OBF_PROFILE" != "none" ] && echo "      - OBF_KEY=${OBF_KEY}"
         if [ -n "$CLIENTS_FILE_CONF" ]; then
+            local cdir; cdir="$(dirname "$CLIENTS_FILE_CONF")"
             echo "      - CLIENTS_FILE=${CLIENTS_FILE_CONF}"
             echo "    volumes:"
-            echo "      - ${CLIENTS_FILE_CONF}:${CLIENTS_FILE_CONF}"
+            echo "      - ${cdir}:${cdir}"
         fi
     } > "$COMPOSE_FILE"
     chmod 600 "$COMPOSE_FILE"   # содержит OBF_KEY: не отдавать non-root
@@ -920,7 +923,7 @@ parse_args() {
             --listen-port)     OVERRIDES+=("LISTEN_PORT=${2:-}"); shift ;;
             --obf)             OVERRIDES+=("OBF_PROFILE=${2:-}"); shift ;;
             --obf-key)         OVERRIDES+=("OBF_KEY=${2:-}"); shift ;;
-            --clients-auth)    OVERRIDES+=("CLIENTS_FILE_CONF=${APP_DIR}/clients.json") ;;
+            --clients-auth)    OVERRIDES+=("CLIENTS_FILE_CONF=${APP_DIR}/clients/clients.json") ;;
             --no-clients-auth) OVERRIDES+=("CLIENTS_FILE_CONF=") ;;
             --wireguard)       OVERRIDES+=("WG_SETUP=1") ;;
             --no-wireguard)    OVERRIDES+=("WG_SETUP=0") ;;
