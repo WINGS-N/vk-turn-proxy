@@ -42,6 +42,11 @@ type Params struct {
 	ClientID     string
 }
 
+// streamStartBarrier — максимум, который стримы 2..N ждут прогрева кэша
+// credentials стримом 1 перед стартом. Защита от вечного стопора, если
+// стрим 1 не поднимается.
+const streamStartBarrier = 20 * time.Second
+
 // ErrFatal возвращается из Run, когда поток встречает условие, требующее
 // завершения всего приложения (см. provider.ErrFatalNoStreams). Вызывающий
 // должен проверить через errors.Is и вызвать os.Exit сам — udprelay не
@@ -115,19 +120,36 @@ func Run(ctx context.Context, dtlsDialer *dtlsdial.Dialer, auth AuthHandler, log
 	})
 	t := time.Tick(200 * time.Millisecond)
 
-	// Поток 1 получает okchan для сигнализации о первом успешном handshake в лог.
-	// Все потоки стартуют одновременно — нет барьера между потоком 1 и остальными,
-	// поэтому медленный DTLS handshake потока 1 не задерживает потоки 2..N.
+	// Стрим 1 стартует первым и сигналит okchan при первом успешном handshake.
+	// Остальные стримы ждут этот сигнал (или ctx/safety-timeout), чтобы не бить
+	// по VK API одновременно: стрим 1 прогревает кэш credentials
+	// (streams-per-cred), после чего 2..N переиспользуют тёплый кэш вместо N
+	// параллельных запросов к VK — это снимает thundering herd на старте
+	// (частая причина rate-limit/captcha при одновременном подъёме всех стримов).
 	okchan := make(chan struct{}, 1)
-	for i := 0; i < numStreams; i++ {
+	{
 		cchan := make(chan net.PacketConn)
-		var ok chan<- struct{}
-		if i == 0 {
-			ok = okchan
-		}
+		wg.Go(func() {
+			DTLSLoop(runCtx, deps, params, peer, listenConn, inboundChan, cchan, okchan, 1)
+		})
+		wg.Go(func() {
+			TURNLoop(runCtx, deps, params, peer, cchan, t, 1)
+		})
+	}
+
+	// Барьер: ждём первый успешный стрим, отмену ctx, либо safety-timeout —
+	// если стрим 1 не поднимается, не стопорим остальные навсегда (liveness).
+	select {
+	case <-okchan:
+	case <-runCtx.Done():
+	case <-time.After(streamStartBarrier):
+	}
+
+	for i := 1; i < numStreams; i++ {
+		cchan := make(chan net.PacketConn)
 		streamID := i + 1
 		wg.Go(func() {
-			DTLSLoop(runCtx, deps, params, peer, listenConn, inboundChan, cchan, ok, streamID)
+			DTLSLoop(runCtx, deps, params, peer, listenConn, inboundChan, cchan, nil, streamID)
 		})
 		wg.Go(func() {
 			TURNLoop(runCtx, deps, params, peer, cchan, t, streamID)
