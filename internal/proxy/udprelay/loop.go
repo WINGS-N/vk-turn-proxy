@@ -269,18 +269,28 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 		return
 	}
 
+	const maxPayload = 1600
+
 	wg.Go(func() {
 		defer turncancel()
-		buf := make([]byte, 1600)
-		var wireBuf []byte
+		// При obf читаем payload сразу в buf[HeaderLen:], чтобы WrapInPlace
+		// дописал заголовок+tag без копии payload.
+		var buf, readSlot []byte
 		if obfConn != nil {
-			wireBuf = make([]byte, rtpopus.MaxWire(len(buf)))
+			buf = make([]byte, rtpopus.MaxWire(maxPayload))
+			readSlot = buf[rtpopus.HeaderLen : rtpopus.HeaderLen+maxPayload]
+		} else {
+			buf = make([]byte, maxPayload)
+			readSlot = buf
 		}
+		// Адрес внутреннего пайпа константен; фиксируем один раз вместо
+		// atomic-записи на каждый пакет.
+		addrStored := false
 		for {
 			if turnctx.Err() != nil {
 				return
 			}
-			n, addr1, err1 := conn2.ReadFrom(buf)
+			n, addr1, err1 := conn2.ReadFrom(readSlot)
 			if err1 != nil {
 				return
 			}
@@ -288,16 +298,19 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 				return
 			}
 
-			internalPipeAddr.Store(addr1)
+			if !addrStored {
+				internalPipeAddr.Store(addr1)
+				addrStored = true
+			}
 
-			out := buf[:n]
+			out := readSlot[:n]
 			if obfConn != nil {
-				written, wErr := obfConn.WrapInto(wireBuf, out)
+				written, wErr := obfConn.WrapInPlace(buf, n)
 				if wErr != nil {
 					deps.log().Errorf("[STREAM %d] OBF wrap failed: %v", streamID, wErr)
 					return
 				}
-				out = wireBuf[:written]
+				out = buf[:written]
 			}
 
 			written, err1 := relayConn.WriteTo(out, peer)
@@ -310,12 +323,11 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 
 	wg.Go(func() {
 		defer turncancel()
-		readBufLen := 1600
+		readBufLen := maxPayload
 		if obfConn != nil {
-			readBufLen = rtpopus.MaxWire(1600)
+			readBufLen = rtpopus.MaxWire(maxPayload)
 		}
 		buf := make([]byte, readBufLen)
-		plain := make([]byte, 1600)
 		for {
 			n, _, err1 := relayConn.ReadFrom(buf)
 			if err1 != nil {
@@ -329,12 +341,12 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 			if addr, ok := addr1.(net.Addr); ok {
 				payload := buf[:n]
 				if obfConn != nil {
-					m, uErr := obfConn.Unwrap(payload, plain)
+					p, uErr := obfConn.UnwrapInPlace(buf[:n])
 					if uErr != nil {
 						deps.log().Errorf("[STREAM %d] OBF unwrap failed: %v (n=%d)", streamID, uErr, n)
 						continue
 					}
-					payload = plain[:m]
+					payload = p
 				}
 				st.AddRx(len(payload))
 				if _, err := conn2.WriteTo(payload, addr); err != nil {

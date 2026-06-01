@@ -63,6 +63,58 @@ func TestConnRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInPlaceRoundTrip(t *testing.T) {
+	key := bytes.Repeat([]byte{0x42}, KeyLen)
+	payload := []byte("dtls record bytes in-place")
+
+	client, err := NewConn(key, false)
+	if err != nil {
+		t.Fatalf("NewConn(client): %v", err)
+	}
+	server, err := NewConn(key, true)
+	if err != nil {
+		t.Fatalf("NewConn(server): %v", err)
+	}
+
+	// Клиент: payload уже в buf[HeaderLen:], WrapInPlace без копии.
+	buf := make([]byte, MaxWire(len(payload)))
+	copy(buf[HeaderLen:], payload)
+	n, err := client.WrapInPlace(buf, len(payload))
+	if err != nil {
+		t.Fatalf("WrapInPlace: %v", err)
+	}
+	if n != MaxWire(len(payload)) {
+		t.Fatalf("WrapInPlace len = %d, want %d", n, MaxWire(len(payload)))
+	}
+	if bytes.Contains(buf[:n], payload) {
+		t.Fatalf("wrapped packet contains plaintext payload")
+	}
+
+	// WrapInPlace и WrapInto должны давать совместимый wire (decode общим Unwrap).
+	dst := make([]byte, 1600)
+	m, err := server.Unwrap(buf[:n], dst)
+	if err != nil {
+		t.Fatalf("Unwrap: %v", err)
+	}
+	if !bytes.Equal(dst[:m], payload) {
+		t.Fatalf("WrapInPlace→Unwrap mismatch: got %q want %q", dst[:m], payload)
+	}
+
+	// Сервер: WrapInto → клиент UnwrapInPlace (subslice внутрь wire, без копии).
+	wire := make([]byte, MaxWire(len(payload)))
+	wn, err := server.WrapInto(wire, payload)
+	if err != nil {
+		t.Fatalf("server wrap: %v", err)
+	}
+	plain, err := client.UnwrapInPlace(wire[:wn])
+	if err != nil {
+		t.Fatalf("UnwrapInPlace: %v", err)
+	}
+	if !bytes.Equal(plain, payload) {
+		t.Fatalf("UnwrapInPlace mismatch: got %q want %q", plain, payload)
+	}
+}
+
 func TestRTPHeaderProgression(t *testing.T) {
 	key := bytes.Repeat([]byte{0x42}, KeyLen)
 	c, err := NewConn(key, false)

@@ -41,15 +41,19 @@ import (
 )
 
 const (
-	KeyLen     = 32
-	rtpHdrLen  = 12
-	nonceLen   = 12
-	tagLen     = 16
-	headerLen  = rtpHdrLen + nonceLen // 24
-	Overhead   = headerLen + tagLen   // 40
-	rtpVersion = 0x80                 // V=2, P=0, X=0, CC=0
-	rtpPT      = 0x6F                 // M=0, PT=111 (opus)
-	tsStep     = 960                  // 20ms @ 48kHz
+	KeyLen    = 32
+	rtpHdrLen = 12
+	nonceLen  = 12
+	tagLen    = 16
+	headerLen = rtpHdrLen + nonceLen // 24
+	// HeaderLen — offset, с которого начинается plaintext в wire-буфере.
+	// Экспонирован для in-place API (WrapInPlace/UnwrapInPlace): вызывающий
+	// читает payload сразу в buf[HeaderLen:], избегая копии.
+	HeaderLen  = headerLen
+	Overhead   = headerLen + tagLen // 40
+	rtpVersion = 0x80               // V=2, P=0, X=0, CC=0
+	rtpPT      = 0x6F               // M=0, PT=111 (opus)
+	tsStep     = 960                // 20ms @ 48kHz
 )
 
 func MaxWire(payloadLen int) int { return Overhead + payloadLen }
@@ -125,41 +129,65 @@ func NewConnFromState(state *State, isServer bool) (*Conn, error) {
 // WrapInto кодирует payload в dst (минимум MaxWire(len(payload)) байт)
 // и возвращает число записанных wire-байт.
 func (c *Conn) WrapInto(dst, payload []byte) (int, error) {
-	wireLen := Overhead + len(payload)
-	if len(dst) < wireLen {
+	if len(dst) < Overhead+len(payload) {
+		return 0, errors.New("rtpopus:dst buffer too small")
+	}
+	copy(dst[headerLen:], payload)
+	return c.WrapInPlace(dst, len(payload))
+}
+
+// WrapInPlace кодирует plaintext, который вызывающий уже разместил в
+// buf[HeaderLen:HeaderLen+plainLen], дописывая RTP-заголовок+nonce перед ним
+// и AEAD-tag после — без копии payload. buf должен вмещать MaxWire(plainLen).
+// Возвращает число записанных wire-байт.
+func (c *Conn) WrapInPlace(buf []byte, plainLen int) (int, error) {
+	wireLen := Overhead + plainLen
+	if len(buf) < wireLen {
 		return 0, errors.New("rtpopus:dst buffer too small")
 	}
 
 	// RTP-заголовок.
-	dst[0] = rtpVersion
-	dst[1] = rtpPT
+	buf[0] = rtpVersion
+	buf[1] = rtpPT
 	seq := uint16(c.seq.Add(1) - 1) //nolint:gosec // RTP sequence number is intentionally mod 2^16
-	binary.BigEndian.PutUint16(dst[2:4], seq)
+	binary.BigEndian.PutUint16(buf[2:4], seq)
 	ts := c.timestamp.Add(tsStep) - tsStep
-	binary.BigEndian.PutUint32(dst[4:8], ts)
-	copy(dst[8:12], c.ssrc[:])
+	binary.BigEndian.PutUint32(buf[4:8], ts)
+	copy(buf[8:12], c.ssrc[:])
 
 	// Явный nonce.
 	noncePos := rtpHdrLen
-	copy(dst[noncePos:noncePos+4], c.sessionID[:])
+	copy(buf[noncePos:noncePos+4], c.sessionID[:])
 	ctr := c.counter.Add(1) - 1
-	binary.BigEndian.PutUint64(dst[noncePos+4:noncePos+nonceLen], ctr)
+	binary.BigEndian.PutUint64(buf[noncePos+4:noncePos+nonceLen], ctr)
 
-	nonce := dst[noncePos : noncePos+nonceLen]
-	aad := dst[:headerLen]
+	nonce := buf[noncePos : noncePos+nonceLen]
+	aad := buf[:headerLen]
 	ctPos := headerLen
-	copy(dst[ctPos:], payload)
-	c.state.aead.Seal(dst[ctPos:ctPos], nonce, dst[ctPos:ctPos+len(payload)], aad)
+	c.state.aead.Seal(buf[ctPos:ctPos], nonce, buf[ctPos:ctPos+plainLen], aad)
 
 	return wireLen, nil
 }
 
 // Unwrap декодирует wire-пакет в dst и возвращает длину plaintext.
-// AEAD открывает in-place внутри wire — вызывающий должен считать wire
-// потреблённым после вызова (содержимое нельзя переиспользовать).
 func (c *Conn) Unwrap(wire, dst []byte) (int, error) {
+	plain, err := c.UnwrapInPlace(wire)
+	if err != nil {
+		return 0, err
+	}
+	if len(plain) > len(dst) {
+		return 0, errors.New("rtpopus:dst buffer too small")
+	}
+	copy(dst[:len(plain)], plain)
+	return len(plain), nil
+}
+
+// UnwrapInPlace декодирует wire-пакет на месте и возвращает subslice plaintext
+// внутри wire (без копии в отдельный буфер). AEAD открывает in-place — wire
+// после вызова считается потреблённым, результат валиден до следующей записи в wire.
+func (c *Conn) UnwrapInPlace(wire []byte) ([]byte, error) {
 	if len(wire) < Overhead {
-		return 0, errors.New("rtpopus:packet too short")
+		return nil, errors.New("rtpopus:packet too short")
 	}
 	nonce := wire[rtpHdrLen : rtpHdrLen+nonceLen]
 	aad := wire[:headerLen]
@@ -167,13 +195,9 @@ func (c *Conn) Unwrap(wire, dst []byte) (int, error) {
 
 	plain, err := c.state.aead.Open(ct[:0], nonce, ct, aad)
 	if err != nil {
-		return 0, fmt.Errorf("rtpopus:AEAD open: %w", err)
+		return nil, fmt.Errorf("rtpopus:AEAD open: %w", err)
 	}
-	if len(plain) > len(dst) {
-		return 0, errors.New("rtpopus:dst buffer too small")
-	}
-	copy(dst[:len(plain)], plain)
-	return len(plain), nil
+	return plain, nil
 }
 
 func GenKeyHex() (string, error) {
