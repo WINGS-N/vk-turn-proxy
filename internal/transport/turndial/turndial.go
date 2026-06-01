@@ -18,8 +18,6 @@ import (
 	"github.com/samosvalishe/free-turn-proxy/internal/netconn"
 )
 
-const permissionRefreshInterval = 24 * time.Hour
-
 // Config конфигурирует один вызов Open.
 type Config struct {
 	// HostOverride, если непустой, заменяет host из lookup credentials.
@@ -106,15 +104,14 @@ func Open(ctx context.Context, cfg Config, peer *net.UDPAddr, user, pass, rawAdd
 		addrFamily = turn.RequestedAddressFamilyIPv6
 	}
 	client, err := turn.NewClient(&turn.ClientConfig{
-		STUNServerAddr:            turnServerAddr,
-		TURNServerAddr:            turnServerAddr,
-		Conn:                      turnConn,
-		Net:                       netconn.New(),
-		Username:                  user,
-		Password:                  pass,
-		RequestedAddressFamily:    addrFamily,
-		PermissionRefreshInterval: permissionRefreshInterval,
-		LoggerFactory:             logging.NewDefaultLoggerFactory(),
+		STUNServerAddr:         turnServerAddr,
+		TURNServerAddr:         turnServerAddr,
+		Conn:                   turnConn,
+		Net:                    netconn.New(),
+		Username:               user,
+		Password:               pass,
+		RequestedAddressFamily: addrFamily,
+		LoggerFactory:          logging.NewDefaultLoggerFactory(),
 	})
 	if err != nil {
 		if cerr := closeConn(); cerr != nil {
