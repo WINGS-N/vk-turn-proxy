@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/pion/dtls/v3"
@@ -25,24 +24,19 @@ type Dialer struct {
 	// HandshakeSem, если non-nil, ограничивает параллельные handshake
 	// (Dial блокируется до появления слота или отмены ctx).
 	HandshakeSem chan struct{}
-
-	certOnce sync.Once
-	cert     tls.Certificate
-	certErr  error
 }
 
 // Dial захватывает опциональный handshake-слот и выполняет DTLS-handshake
 // клиента поверх pc к peer. При успехе возвращает *dtls.Conn (закрывает вызывающий).
-// Self-signed сертификат генерируется один раз на Dialer и переиспользуется
+// Self-signed сертификат генерируется заново на каждый handshake: каждая
+// TURN-сессия и каждый реконнект получают уникальный fingerprint, чтобы не
+// коррелировать N параллельных стримов с одного IP как ботный трафик
 // (DTLS здесь — для обфускации, не аутентификации; см. doc.go).
 func (d *Dialer) Dial(ctx context.Context, pc net.PacketConn, peer *net.UDPAddr) (*dtls.Conn, error) {
-	d.certOnce.Do(func() {
-		d.cert, d.certErr = GenerateSelfSignedCert()
-	})
-	if d.certErr != nil {
-		return nil, d.certErr
+	certificate, err := GenerateSelfSignedCert()
+	if err != nil {
+		return nil, err
 	}
-	certificate := d.cert
 	if d.HandshakeSem != nil {
 		select {
 		case d.HandshakeSem <- struct{}{}:
