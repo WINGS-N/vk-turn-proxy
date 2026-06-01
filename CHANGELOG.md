@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.2](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.1...v1.0.2) (2026-06-01)
+
+
+### Bug Fixes
+
+* **captcha:** обновить captchaScriptVersion до 1.1.1346 ([5fc2a09](https://github.com/samosvalishe/free-turn-proxy/commit/5fc2a09fbb6bfcb647edae106b40946a880699d4))
+* **dtlsdial:** уникальный self-signed cert на каждый handshake ([43180f0](https://github.com/samosvalishe/free-turn-proxy/commit/43180f0362d2254b5af87bccd355a89261ed39fd))
+* install.sh ([4b26d63](https://github.com/samosvalishe/free-turn-proxy/commit/4b26d6361d1c32c75bc7207aa4d6de83e4aba638))
+* install.sh ([854cab9](https://github.com/samosvalishe/free-turn-proxy/commit/854cab95c074f4df71185e3b0ee2ed4c05de86fa))
+* install.sh ([375cf55](https://github.com/samosvalishe/free-turn-proxy/commit/375cf55182100c201e4032c68128b048c1a177fa))
+* **turndial:** не переопределять PermissionRefreshInterval (дефолт pion) ([a0ea846](https://github.com/samosvalishe/free-turn-proxy/commit/a0ea846f255c5c4b13b79821a773419d60005f6b))
+* **udprelay:** барьер старта стримов для прогрева кэша creds ([a97ad6c](https://github.com/samosvalishe/free-turn-proxy/commit/a97ad6ca336e5a170b499559ecf64b7d4945f3c2))
+
+
+### Performance
+
+* **udprelay:** in-place wrap/unwrap obf без копий payload ([89c390c](https://github.com/samosvalishe/free-turn-proxy/commit/89c390cef5edf22f6856143ecbc6b6939d96cf29))
+
 ## [1.0.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.0...v1.0.1) (2026-05-26)
 
 
