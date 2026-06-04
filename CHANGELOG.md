@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.3](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.2...v1.0.3) (2026-06-04)
+
+
+### Bug Fixes
+
+* bump go toolchain ([3cb39d4](https://github.com/samosvalishe/free-turn-proxy/commit/3cb39d40f6e630b638d0ce44398da7022ceb2353))
+* **captcha:** обновить captchaScriptVersion до 1.1.1348 ([1ff8dd9](https://github.com/samosvalishe/free-turn-proxy/commit/1ff8dd9cbaaa79858aaa4be68a404d89252480db))
+* **client:** сохранять client_id в доступный для записи каталог ([3bdc8e8](https://github.com/samosvalishe/free-turn-proxy/commit/3bdc8e815af871feeea53946964917eaa3a6c0ce))
+* **udprelay:** рециклить стрим при блэкхоле TURN permission ([a337bb0](https://github.com/samosvalishe/free-turn-proxy/commit/a337bb0a634bba6783891f2c085a31123353c496))
+* **vkauth:** фрагментировать ClientHello на control plane ([56da9fe](https://github.com/samosvalishe/free-turn-proxy/commit/56da9fecdc5603c14073cd8632338d0c0f1b27f5))
+
 ## [1.0.2](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.1...v1.0.2) (2026-06-01)
 
 
