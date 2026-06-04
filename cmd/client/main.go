@@ -226,9 +226,14 @@ func resolveClientID(cliID string) string {
 		ClientID string `json:"client_id"`
 	}
 
-	path := filepath.Join(filepath.Dir(os.Args[0]), "client_config.json")
-	b, err := os.ReadFile(path) //nolint:gosec // фиксированное имя рядом с бинарём, не пользовательский ввод
-	if err == nil {
+	paths := clientConfigPaths()
+
+	// Чтение: первый файл с непустым client_id.
+	for _, path := range paths {
+		b, err := os.ReadFile(path) //nolint:gosec // фиксированное имя из clientConfigPaths, не пользовательский ввод
+		if err != nil {
+			continue
+		}
 		var lc localCfg
 		if err := json.Unmarshal(b, &lc); err == nil && lc.ClientID != "" {
 			return lc.ClientID
@@ -243,10 +248,51 @@ func resolveClientID(cliID string) string {
 	newID := hex.EncodeToString(idBytes)
 
 	lc := localCfg{ClientID: newID}
-	b, _ = json.MarshalIndent(lc, "", "  ")
-	if err := os.WriteFile(path, b, 0o600); err != nil { //nolint:gosec // path фиксирован рядом с бинарём; 0o600 для auth-токена
-		log.Printf("warning: failed to save client ID to %s: %v", path, err) //nolint:gosec // path не пользовательский ввод
+	b, _ := json.MarshalIndent(lc, "", "  ")
+
+	// Запись: первый доступный для записи путь. На Android каталог рядом с
+	// бинарём (/data/app/.../lib/arm64) read-only — падаем на UserConfigDir,
+	// затем TempDir. Иначе ID не сохраняется и ротируется на каждый запуск,
+	// ломая allowlist (-clients-file) и статистику.
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			continue
+		}
+		if err := os.WriteFile(path, b, 0o600); err == nil { //nolint:gosec // 0o600 для auth-токена
+			return newID
+		}
 	}
+	log.Printf("warning: failed to persist client ID to any writable path (%v); ID will rotate next launch", paths)
 
 	return newID
+}
+
+// clientConfigPaths возвращает кандидатов client_config.json в порядке
+// предпочтения: рядом с бинарём (desktop, переносимость), затем per-user
+// UserConfigDir и TempDir (Android, где каталог бинаря read-only).
+func clientConfigPaths() []string {
+	const name = "client_config.json"
+	seen := map[string]bool{}
+	var dirs []string
+	add := func(d string) {
+		if d == "" || seen[d] {
+			return
+		}
+		seen[d] = true
+		dirs = append(dirs, d)
+	}
+	if exe, err := os.Executable(); err == nil {
+		add(filepath.Dir(exe))
+	}
+	add(filepath.Dir(os.Args[0]))
+	if cfgDir, err := os.UserConfigDir(); err == nil {
+		add(filepath.Join(cfgDir, "free-turn-proxy"))
+	}
+	add(os.TempDir())
+
+	paths := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		paths = append(paths, filepath.Join(d, name))
+	}
+	return paths
 }
