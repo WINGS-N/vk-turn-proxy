@@ -271,6 +271,43 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 
 	const maxPayload = 1600
 
+	// Watchdog-счётчики (always-on, в отличие от st, который считает только в
+	// debug). Детектят blackhole: pion при провале CreatePermission-refresh
+	// («Fail to refresh permissions») молча роняет permission на relay — пакеты
+	// к peer дропаются без ошибки, oneTURN висит на живом, но мёртвом relay.
+	var wTx, wRx atomic.Uint64
+
+	wg.Go(func() {
+		// Стрим жив, пока tx растёт И rx идёт. Если tx растёт, а rx заморожен
+		// stallLimit подряд — relay блэкхолит: отменяем turnctx, oneTURN выходит,
+		// TURNLoop делает свежий DialTURN (новый allocate + permission).
+		const checkInterval = 5 * time.Second
+		const stallLimit = 20 * time.Second
+		ticker := time.NewTicker(checkInterval)
+		defer ticker.Stop()
+		var lastTx, lastRx uint64
+		var stalled time.Duration
+		for {
+			select {
+			case <-turnctx.Done():
+				return
+			case <-ticker.C:
+				tx, rx := wTx.Load(), wRx.Load()
+				if tx > lastTx && rx == lastRx {
+					stalled += checkInterval
+					if stalled >= stallLimit {
+						deps.log().Warnf("[STREAM %d] TURN relay stall: tx идёт, rx заморожен %v — рецикл allocation", streamID, stallLimit)
+						turncancel()
+						return
+					}
+				} else {
+					stalled = 0
+				}
+				lastTx, lastRx = tx, rx
+			}
+		}
+	})
+
 	wg.Go(func() {
 		defer turncancel()
 		// При obf читаем payload сразу в buf[HeaderLen:], чтобы WrapInPlace
@@ -315,6 +352,9 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 
 			written, err1 := relayConn.WriteTo(out, peer)
 			st.AddTx(written)
+			if written > 0 {
+				wTx.Add(uint64(written))
+			}
 			if err1 != nil {
 				return
 			}
@@ -349,6 +389,9 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 					payload = p
 				}
 				st.AddRx(len(payload))
+				if len(payload) > 0 {
+					wRx.Add(uint64(len(payload)))
+				}
 				if _, err := conn2.WriteTo(payload, addr); err != nil {
 					return
 				}
