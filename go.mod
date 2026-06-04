@@ -1,6 +1,6 @@
 module github.com/samosvalishe/free-turn-proxy
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/bogdanfinn/fhttp v0.6.8
