@@ -140,12 +140,12 @@ func main() {
 	}
 	logger.Infof("provider=%s", prov.Name())
 
-	getCreds := func(ctx context.Context, streamID int) (string, string, string, error) {
+	getCreds := func(ctx context.Context, streamID int) (string, string, []string, error) {
 		c, err := prov.GetCredentials(ctx, streamID)
 		if err != nil {
-			return "", "", "", err
+			return "", "", nil, err
 		}
-		return c.User, c.Pass, c.ServerAddr, nil
+		return c.User, c.Pass, c.ServerAddrs, nil
 	}
 
 	if cfg.Proxy.Mode != config.ProxyModeUDP {
