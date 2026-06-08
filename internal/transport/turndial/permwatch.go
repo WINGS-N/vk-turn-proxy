@@ -7,15 +7,11 @@ import (
 	"github.com/pion/logging"
 )
 
-// VK relay при дропе permission молча роняет пакеты к peer без ошибки записи.
-// pion на каждый проваленный цикл refresh пишет permFailMarker (Warnf, scope
-// "turnc"). Считаем провалы подряд — точный per-stream детект блэкхола вместо
-// трафик-эвристики (обратный путь WG привязан к endpoint, не к стриму).
 const (
-	permFailMarker = "Failed to refresh permissions"
-	permOKMarker   = "Refresh permissions successful"
+	permFailMarker = "Failed to bind channel"
+	permOKMarker   = "Channel binding successful"
 	turncScope     = "turnc"
-	// ~60s при PermissionRefreshInterval=30s, внутри 5-мин lifetime permission.
+	// ChannelBind refresh идёт ~раз в 5 мин (binding lifetime); 2 провала подряд.
 	permFailThreshold = 2
 )
 

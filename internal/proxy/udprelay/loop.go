@@ -271,13 +271,13 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 
 	const maxPayload = 1600
 
-	// PermDead закрывается при блэкхоле permission (см. turndial/permwatch.go) —
+	// PermDead закрывается при блэкхоле data-path (см. turndial/permwatch.go) —
 	// отменяем turnctx, TURNLoop делает свежий allocate.
 	wg.Go(func() {
 		select {
 		case <-turnctx.Done():
 		case <-stream.PermDead:
-			deps.log().Warnf("[STREAM %d] TURN permission refresh умер — рецикл allocation", streamID)
+			deps.log().Warnf("[STREAM %d] TURN channel-bind умер — рецикл allocation", streamID)
 			turncancel()
 		}
 	})

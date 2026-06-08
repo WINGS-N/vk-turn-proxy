@@ -37,8 +37,8 @@ type Stream struct {
 	Relay net.PacketConn
 	// ServerUDPAddr — резолвнутый UDP-адрес TURN-сервера (host:port).
 	ServerUDPAddr *net.UDPAddr
-	// PermDead закрывается при стойком провале refresh permission (relay
-	// блэкхолит) — вызывающий рециклит allocation. См. permwatch.go.
+	// PermDead закрывается при стойком провале ChannelBind refresh (relay
+	// блэкхолит data-path) - вызывающий рециклит allocation. См. permwatch.go.
 	PermDead <-chan struct{}
 	close    func() error
 }
@@ -108,7 +108,9 @@ func Open(ctx context.Context, cfg Config, peer *net.UDPAddr, user, pass, rawAdd
 		addrFamily = turn.RequestedAddressFamilyIPv6
 	}
 
-	// RefreshInterval 120s→30s: быстрее ловим блэкхол, внутри 5-мин lifetime.
+	// Standalone CreatePermission refresh VK реджектит 400 — глушим (24h).
+	// Permission держится живым через ChannelBind refresh (RFC 8656 §11);
+	// блэкхол ловим по провалу этого байнда (см. permwatch.go).
 	permDead := make(chan struct{})
 	var permOnce sync.Once
 	loggerFactory := &permWatchFactory{
@@ -124,7 +126,7 @@ func Open(ctx context.Context, cfg Config, peer *net.UDPAddr, user, pass, rawAdd
 		Username:                  user,
 		Password:                  pass,
 		RequestedAddressFamily:    addrFamily,
-		PermissionRefreshInterval: 30 * time.Second,
+		PermissionRefreshInterval: 24 * time.Hour,
 		LoggerFactory:             loggerFactory,
 	})
 	if err != nil {
