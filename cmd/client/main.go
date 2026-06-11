@@ -37,54 +37,35 @@ var version = "dev"
 const dtlsHandshakeConcurrency = 3
 
 func main() {
-	cfg, err := config.ParseClient(os.Args[1:], os.Stderr)
+	args := os.Args[1:]
+
+	// -sub: тянем список серверов до парсинга и подсовываем URI первой ноды
+	// (Nodes[0], без failover) позиционным freeturn:// - ParseClient применит его
+	// тем же путём, что и URI из CLI. Подписка должна стоять до парсинга: она даёт
+	// peer, без которого ParseClient падает на валидации.
+	if subURL := config.PeekSubURL(args); subURL != "" {
+		s, ferr := sub.Fetch(context.Background(), subURL)
+		if ferr != nil {
+			log.Fatalf("failed to fetch subscription: %v", ferr)
+		}
+		if len(s.Nodes) == 0 || s.Nodes[0].URI == nil {
+			log.Fatalf("no nodes found in subscription")
+		}
+		args = append(args, s.Nodes[0].URI.String())
+	}
+
+	cfg, err := config.ParseClient(args, os.Stderr)
 	if err != nil {
 		// -help/-h: usage уже напечатан в ParseClient, выходим штатно.
 		if errors.Is(err, flag.ErrHelp) {
 			os.Exit(0)
 		}
-		// логгер ещё не создан — единственный fatal до его инициализации.
+		// логгер ещё не создан - единственный fatal до его инициализации.
 		log.Fatalf("%v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	if cfg.SubURL != "" {
-		s, ferr := sub.Fetch(ctx, cfg.SubURL)
-		if ferr != nil {
-			log.Fatalf("failed to fetch subscription: %v", ferr)
-		}
-		if len(s.Nodes) == 0 {
-			log.Fatalf("no nodes found in subscription")
-		}
-
-		// Берем первый сервер из подписки
-		node := s.Nodes[0]
-		ucfg := node.URI
-		if ucfg.Provider != "" {
-			cfg.Provider.Name = ucfg.Provider
-		}
-		if ucfg.Transport != "" {
-			cfg.TURN.TransportUDP = ucfg.Transport == "udp"
-		}
-		if ucfg.Mode != "" {
-			cfg.Proxy.Mode = config.ClientProxyMode(ucfg.Mode, ucfg.Bond)
-		}
-		if ucfg.ObfProfile != "" {
-			cfg.Obf.Profile = config.ObfProfile(ucfg.ObfProfile)
-		}
-		if ucfg.ObfKey != "" {
-			if k, derr := hex.DecodeString(ucfg.ObfKey); derr == nil {
-				cfg.Obf.Key = k
-			} else {
-				log.Fatalf("invalid hex in obf-key: %v", derr)
-			}
-		}
-		if ucfg.Peer != "" {
-			cfg.Proxy.Peer = ucfg.Peer
-		}
-	}
 
 	cfg.ClientID = resolveClientID(cfg.ClientID)
 
