@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.1.0...v1.1.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* **dnsdial:** убрать динамический фоллбэк на DoH ([40796b4](https://github.com/samosvalishe/free-turn-proxy/commit/40796b48449e184d8eea31d822b6461f206cd815))
+
 ## [1.1.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.3...v1.1.0) (2026-06-11)
 
 
