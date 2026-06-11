@@ -58,6 +58,70 @@ func readWire(t *testing.T, r io.Reader) []byte {
 	return b
 }
 
+func TestAutoDial_DynamicFallbackOnUDPDialError(t *testing.T) {
+	// DoH backend всегда отвечает валидным wire-ответом.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := readWire(t, r.Body)
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write(dohAnswer(t, body, net.ParseIP("9.9.9.9"), 300)) //nolint:errcheck
+	}))
+	defer srv.Close()
+	resolver := newDohResolverWithClient(
+		[]DohEndpoint{{URL: srv.URL, Hostname: "mock", BootstrapIPs: []string{"127.0.0.1"}}},
+		srv.Client(),
+	)
+
+	// Локальный UDP DNS-ответчик: проба (udpProbe) пройдёт.
+	pc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer func() { _ = pc.Close() }()
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			n, from, rerr := pc.ReadFromUDP(buf)
+			if rerr != nil {
+				return
+			}
+			_, _ = pc.WriteToUDP(dohAnswer(t, buf[:n], net.ParseIP("1.2.3.4"), 60), from) //nolint:errcheck
+		}
+	}()
+
+	old := udpDNSServersPtr.Load()
+	good := []string{pc.LocalAddr().String()}
+	udpDNSServersPtr.Store(&good)
+	defer func() { udpDNSServersPtr.Store(old) }()
+
+	dial := autoDial(resolver)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Первый вызов: проба OK + реальный UDP-dial OK.
+	conn1, err := dial(ctx, "udp", "unused")
+	if err != nil {
+		t.Fatalf("first dial (UDP): %v", err)
+	}
+	_ = conn1.Close()
+
+	// Сеть "сменилась": UDP/53 серверы недостижимы → dial должен упасть и
+	// динамически переключиться на DoH.
+	bad := []string{"not-a-valid-host-port"}
+	udpDNSServersPtr.Store(&bad)
+	conn2, err := dial(ctx, "udp", "unused")
+	if err != nil {
+		t.Fatalf("second dial must fall back to DoH, got: %v", err)
+	}
+	_ = conn2.Close()
+
+	// После фоллбэка процесс залип на DoH: третий вызов с битыми UDP проходит.
+	conn3, err := dial(ctx, "udp", "unused")
+	if err != nil {
+		t.Fatalf("third dial must stay on DoH, got: %v", err)
+	}
+	_ = conn3.Close()
+}
+
 func TestAutoDial_StickyAfterUDPFailure(t *testing.T) {
 	// DoH backend: always responds with a valid wire-format reply.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

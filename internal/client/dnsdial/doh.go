@@ -468,6 +468,10 @@ func udpDNSDial(ctx context.Context, _ string, _ string) (net.Conn, error) {
 //
 // Просто dial-timeout не годится: UDP "dial" безсоединительный и всегда успешен
 // мгновенно. Единственный способ узнать — реально отправить запрос и ждать ответ.
+//
+// Проба one-shot: если сеть сменилась после неё (Wi-Fi→мобилка, UDP/53 серверы
+// стали недостижимы), ловим это по ошибке udpDNSDial и динамически залипаем на
+// DoH — иначе процесс навсегда застрял бы на мёртвом UDP.
 func autoDial(r *DohResolver) dialFunc {
 	var (
 		probed sync.Once
@@ -486,7 +490,23 @@ func autoDial(r *DohResolver) dialFunc {
 		if useDoH.Load() {
 			return doh(ctx, network, addr)
 		}
-		return udpDNSDial(ctx, network, addr)
+		conn, err := udpDNSDial(ctx, network, addr)
+		if err == nil {
+			return conn, nil
+		}
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		// UDP/53 отвалился (смена сети) — пробуем DoH; залипаем только если он
+		// реально поднялся, иначе отдаём исходную UDP-ошибку.
+		dohConn, dohErr := doh(ctx, network, addr)
+		if dohErr != nil {
+			return nil, err
+		}
+		if useDoH.CompareAndSwap(false, true) {
+			Log.Warnf("[DNS] UDP/53 dial failed (%v); sticky-switching to DoH", err)
+		}
+		return dohConn, nil
 	}
 }
 
