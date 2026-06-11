@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.1.1...v1.2.0) (2026-06-11)
+
+
+### Features
+
+* **uri:** переход на base64url(json), расширенные параметры ([402606e](https://github.com/samosvalishe/free-turn-proxy/commit/402606e4f747c9c78d0c8389815f9e320c0480b1))
+
 ## [1.1.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.1.0...v1.1.1) (2026-06-11)
 
 
