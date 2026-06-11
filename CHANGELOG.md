@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.3...v1.1.0) (2026-06-11)
+
+
+### Features
+
+* **turn:** фоллбэк по нескольким relay-адресам при allocate ([40000fd](https://github.com/samosvalishe/free-turn-proxy/commit/40000fde5d82023f8552e2a0255b6ca50324b8ed))
+
+
+### Bug Fixes
+
+* **dnsdial:** динамический фоллбэк на DoH при отказе UDP/53 после пробы ([f24c541](https://github.com/samosvalishe/free-turn-proxy/commit/f24c5416de91349fd6a0332cb4e4744da4ca95fc))
+* **install:** неинтерактивный apt, чтобы needrestart/debconf не вешали установку ([b518dc4](https://github.com/samosvalishe/free-turn-proxy/commit/b518dc40b23f34942d684cbb7422fef9ddda28b3))
+* **turndial:** детект блэкхола по ChannelBind, не CreatePermission refresh ([2534bbe](https://github.com/samosvalishe/free-turn-proxy/commit/2534bbe96ae22af9fc17c322b337aa37ae77f086))
+* **udprelay:** детект блэкхола permission по логу pion вместо трафик-эвристики ([106a485](https://github.com/samosvalishe/free-turn-proxy/commit/106a48533cfab863c09e08ff7cbac4868736e69e))
+
 ## [1.0.3](https://github.com/samosvalishe/free-turn-proxy/compare/v1.0.2...v1.0.3) (2026-06-04)
 
 
