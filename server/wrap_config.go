@@ -72,8 +72,16 @@ func resolveServerWrapPolicy(mode, allowedCipher, keyHex string, acceptClientKey
 }
 
 // pickServerWrapCipher intersects the server's accepted suites with the
-// client's offered list. Returns the first server-accepted suite that
-// the client also offers, or WRAP_CIPHER_NONE if no overlap.
+// client's offered list, honoring the client's preference order: the
+// first cipher from clientOffered that the server also allows wins.
+// Returns WRAP_CIPHER_NONE on no overlap.
+//
+// This matches the TLS-style convention where the client expresses
+// intent ("I prefer ChaCha but will accept AES") and the server only
+// vetoes when something is forbidden. Without this, an explicit user
+// pick on the client (e.g. ChaCha) silently downgrades to whatever the
+// server has at the top of its own allowlist (typically AES under
+// -wrap-cipher=any).
 func pickServerWrapCipher(
 	allowed []sessionproto.WrapCipher,
 	clientOffered []sessionproto.WrapCipher,
@@ -81,12 +89,12 @@ func pickServerWrapCipher(
 	if len(allowed) == 0 || len(clientOffered) == 0 {
 		return sessionproto.WrapCipher_WRAP_CIPHER_NONE
 	}
-	clientSet := make(map[sessionproto.WrapCipher]struct{}, len(clientOffered))
-	for _, c := range clientOffered {
-		clientSet[c] = struct{}{}
-	}
+	allowedSet := make(map[sessionproto.WrapCipher]struct{}, len(allowed))
 	for _, c := range allowed {
-		if _, ok := clientSet[c]; ok {
+		allowedSet[c] = struct{}{}
+	}
+	for _, c := range clientOffered {
+		if _, ok := allowedSet[c]; ok {
 			return c
 		}
 	}
