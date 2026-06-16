@@ -163,7 +163,7 @@ func ParseClient(args []string, errOut io.Writer) (*Client, error) {
 	port := fs.String("port", "", "порт TURN-сервера; override creds провайдера")
 	listen := fs.String("listen", "127.0.0.1:9000", "локальный ip:port для WireGuard/Xray клиента")
 	provider := fs.String("provider", ProviderVK, "источник TURN-creds: vk")
-	link := fs.String("link", "", "ссылка VK Calls https://vk.com/call/join/...; обязательно для -provider vk")
+	link := fs.String("link", "", "ссылка VK Calls https://vk.ru/call/join/...; обязательно для -provider vk")
 	peer := fs.String("peer", "", "адрес сервера на VPS, host:port; обязательно")
 	n := fs.Int("n", 10, "число параллельных TURN-потоков")
 	transport := fs.String("transport", "tcp", "транспорт до TURN-реле: tcp | udp")

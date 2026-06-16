@@ -24,7 +24,7 @@ func (c *Client) fetchCallToken(
 	creds VKCredentials,
 ) (string, error) {
 	urlAddr := fmt.Sprintf("https://api.vk.ru/method/calls.getAnonymousToken?v=5.275&client_id=%s", creds.ClientID)
-	data := fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s",
+	data := fmt.Sprintf("vk_join_link=https://vk.ru/call/join/%s&name=%s&access_token=%s",
 		link, escapedName, token1)
 
 	for attempt := 0; ; attempt++ {
@@ -171,12 +171,12 @@ func (c *Client) solveCaptcha(
 func buildCaptchaRetryData(link, escapedName, token1 string, captchaErr *captcha.Error, successToken, captchaKey string) string {
 	if captchaKey != "" {
 		return fmt.Sprintf(
-			"vk_join_link=https://vk.com/call/join/%s&name=%s&captcha_key=%s&captcha_sid=%s&access_token=%s",
+			"vk_join_link=https://vk.ru/call/join/%s&name=%s&captcha_key=%s&captcha_sid=%s&access_token=%s",
 			link, escapedName, neturl.QueryEscape(captchaKey), captchaErr.CaptchaSid, token1,
 		)
 	}
 	return fmt.Sprintf(
-		"vk_join_link=https://vk.com/call/join/%s&name=%s&captcha_key=&captcha_sid=%s&is_sound_captcha=0&success_token=%s&captcha_ts=%s&captcha_attempt=%s&access_token=%s",
+		"vk_join_link=https://vk.ru/call/join/%s&name=%s&captcha_key=&captcha_sid=%s&is_sound_captcha=0&success_token=%s&captcha_ts=%s&captcha_attempt=%s&access_token=%s",
 		link, escapedName, captchaErr.CaptchaSid, neturl.QueryEscape(successToken),
 		captchaErr.CaptchaTs, captchaErr.CaptchaAttempt, token1,
 	)

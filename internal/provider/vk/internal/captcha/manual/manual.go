@@ -68,7 +68,7 @@ func localCaptchaHosts() []string {
 
 func isAllowedProxyHost(hostname string) bool {
 	allowed := []string{
-		".vk.com", ".vk.ru", ".vkontakte.ru",
+		".vk.ru", ".vk.ru", ".vkontakte.ru",
 		".userapi.com", ".okcdn.ru", ".mycdn.me",
 		".api.vk.ru",
 	}
@@ -218,7 +218,7 @@ var htmlStyleContentRe = regexp.MustCompile(`(?is)(<style[^>]*>)(.*?)(</style>)`
 // rewriteHTMLAttrsServerSide переписывает абсолютные и protocol-relative URL
 // в src/href/action HTML на стороне сервера. URL, совпадающие с upstream origin,
 // идут на localhost; остальные — через /generic_proxy, чтобы cross-domain
-// ресурсы (st.vk.com, userapi.com и т.д.) грузились через прокси.
+// ресурсы (st.vk.ru, userapi.com и т.д.) грузились через прокси.
 func rewriteHTMLAttrsServerSide(html string, targetURL *neturl.URL) string {
 	localOrigin := localCaptchaOrigin()
 	upstreamOrigin := targetOrigin(targetURL)
@@ -837,7 +837,7 @@ func SolveViaProxy(ctx context.Context, redirectURI string, dialer net.Dialer) (
 				res.Header.Set("Access-Control-Allow-Origin", "*")
 
 				// captchaNotRobot.check уходит на api.vk.ru (другой хост, чем
-				// upstream vk.com), поэтому идёт через /generic_proxy. Извлекаем
+				// upstream vk.ru), поэтому идёт через /generic_proxy. Извлекаем
 				// success_token здесь — серверный путь работает на iOS даже если
 				// JS-callback в браузере не сработал.
 				if strings.Contains(targetAuthURL, "captchaNotRobot.check") {

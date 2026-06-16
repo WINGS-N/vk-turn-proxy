@@ -54,7 +54,7 @@ Payload - JSON-объект, закодированный `base64url` (без pa
 ## Пример использования
 
 ```bash
-./client "freeturn://eyJ2IjoxLCJwcm92aWRlciI6InZrIiwicGVlciI6..." -link "https://vk.com/call/join/..."
+./client "freeturn://eyJ2IjoxLCJwcm92aWRlciI6InZrIiwicGVlciI6..." -link "https://vk.ru/call/join/..."
 ```
 
 Параметры из URI переопределяют базовые флаги (`-peer`, `-mode`, `-obf-key`, `-n` ...).

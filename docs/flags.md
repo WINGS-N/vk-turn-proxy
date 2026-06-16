@@ -7,7 +7,7 @@
 | `-listen` | `127.0.0.1:9000` | локальный адрес `ip:port`, куда подключается WireGuard или Xray клиент |
 | `-peer` | **обязательный** | адрес сервера на VPS, `host:port` |
 | `-provider` | `vk` | источник TURN-creds: `vk` (см. `docs/providers.md`) |
-| `-link` | **обязательный для `-provider vk`** | ссылка VK Calls `https://vk.com/call/join/...` |
+| `-link` | **обязательный для `-provider vk`** | ссылка VK Calls `https://vk.ru/call/join/...` |
 | `-n` | `10` | параллельных TURN-потоков |
 | `-transport` | `tcp` | транспорт до TURN-реле: `tcp` (TCP/TLS) \| `udp` |
 | `-mode` | `udp` | режим туннеля: `udp` (UDP-релей для WireGuard) \| `tcp` (TCP-форвардер для Xray/sing-box) |
