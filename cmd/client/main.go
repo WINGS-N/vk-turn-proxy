@@ -92,11 +92,6 @@ func main() {
 		dnsdial.SetUDPDNSServers(cfg.DNS.Servers)
 		logger.Infof("[DNS] using custom UDP servers: %v", cfg.DNS.Servers)
 	}
-	if cfg.Provider.Name == config.ProviderVK {
-		// auto-проба валидирует резолв реального control-plane хоста VK, а не
-		// нейтрального домена: ТСПУ режет login.vk.ru выборочно.
-		dnsdial.SetProbeHost("login.vk.ru")
-	}
 	appDialer := dnsdial.AppDialer(cfg.DNS.Mode)
 	dnsdial.InstallGlobalResolver(cfg.DNS.Mode)
 	if cfg.Obf.GenKey {
