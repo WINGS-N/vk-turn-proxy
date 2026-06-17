@@ -47,7 +47,6 @@ const (
 	forwarderTCPReadDL  = 30 * time.Second
 	forwarderTCPWriteDL = 10 * time.Second
 	autoUDPProbeBudget  = 1500 * time.Millisecond
-	autoDoHProbeBudget  = 6 * time.Second
 
 	autoReevalInterval   = 30 * time.Second // мин. интервал авто-перепроб (recovery)
 	autoUDPFailThreshold = 2                // подряд неудачных UDP-резолвов -> перепроба
@@ -525,9 +524,11 @@ func autoDial(r *DohResolver) dialFunc {
 
 // decide пробует резолвить цель и обновляет useDoH:
 //  1. UDP оператора резолвит цель в валидный адрес -> UDP;
-//  2. уже на DoH и цель по UDP всё ещё недоступна -> остаёмся (без лишней DoH-пробы);
-//  3. иначе DoH резолвит цель -> DoH;
-//  4. ни то ни другое -> DoH (больше шансов на recovery).
+//  2. иначе -> DoH (последний резерв).
+//
+// Валидационную DoH-пробу тут НЕ делаем: решение от неё не зависит (при провале
+// UDP уходим на DoH в любом случае), а её бюджет вешал старт на синхронном пути
+// (once.Do первого dial). Восстановление UDP проверяет фоновый maybeReeval.
 //
 // quiet подавляет лог перехода - для стартового решения, логируемого в dial().
 func (a *autoState) decide(quiet bool) {
@@ -541,19 +542,8 @@ func (a *autoState) decide(quiet bool) {
 		}
 		return
 	}
-	if a.useDoH.Load() {
-		return // уже на DoH, цель по UDP всё ещё недоступна
-	}
-	if probeResolves(a.dohDial, host, autoDoHProbeBudget) {
-		a.useDoH.Store(true)
-		if !quiet {
-			Log.Warnf("[DNS] auto: UDP/53 failed to resolve %s, DoH works - switching to DoH", host)
-		}
-		return
-	}
-	a.useDoH.Store(true)
-	if !quiet {
-		Log.Warnf("[DNS] auto: neither UDP/53 nor DoH resolved %s - defaulting to DoH", host)
+	if !a.useDoH.Swap(true) && !quiet {
+		Log.Warnf("[DNS] auto: UDP/53 can't resolve %s - switching to DoH", host)
 	}
 }
 
