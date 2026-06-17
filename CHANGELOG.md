@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.3.0...v1.3.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **dnsdial:** не вешать старт auto на DoH-пробу ([1ec4fd4](https://github.com/samosvalishe/free-turn-proxy/commit/1ec4fd463dbdd2312ccfdd2caf1e9b5e4dc98c0c))
+
 ## [1.3.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.2.0...v1.3.0) (2026-06-17)
 
 
