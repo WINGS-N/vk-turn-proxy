@@ -75,11 +75,22 @@ type ProxyOpts struct {
 	Peer    string    // -peer: адрес серверного прокси, куда дозванивается клиент (только клиент)
 }
 
+// Browser выбирает браузерный профиль (UA + TLS JA3 + client hints) для
+// control-plane запросов VK-провайдера. firefox несёт меньше client hints
+// (sec-ch-ua* - Chromium-only), chrome даёт herd-cover.
+type Browser string
+
+const (
+	BrowserChrome  Browser = "chrome"
+	BrowserFirefox Browser = "firefox"
+)
+
 // VKOpts - опции VK-учёток и captcha (только клиент, провайдер "vk").
 type VKOpts struct {
-	Link           string // -link (нормализован до join-кода)
-	StreamsPerCred int    // -streams-per-cred
-	ManualCaptcha  bool   // -manual-captcha
+	Link           string  // -link (нормализован до join-кода)
+	StreamsPerCred int     // -streams-per-cred
+	ManualCaptcha  bool    // -manual-captcha
+	Browser        Browser // -browser: chrome | firefox
 }
 
 // ProviderOpts выбирает реализацию provider.Provider.
@@ -176,6 +187,7 @@ func ParseClient(args []string, errOut io.Writer) (*Client, error) {
 	streamsPerCred := fs.Int("streams-per-cred", defaultStreamsPerCache, "TURN-потоков на один кеш VK-creds; только -provider vk")
 	debug := fs.Bool("debug", false, "подробные debug-логи")
 	manualCaptcha := fs.Bool("manual-captcha", false, "ручная VK captcha в браузере вместо авто; только -provider vk")
+	browser := fs.String("browser", string(BrowserFirefox), "браузерный профиль VK-auth: chrome | firefox; только -provider vk")
 	dnsMode := fs.String("dns-mode", dnsModeAuto, "резолвер клиента: plain | doh | auto")
 	dnsServers := fs.String("dns-servers", "", "свои UDP/53 DNS через запятую: ip[:port][,ip[:port]...]")
 	clientID := fs.String("client-id", "", "уникальный ID клиента (автогенерация если не задан)")
@@ -207,6 +219,7 @@ func ParseClient(args []string, errOut io.Writer) (*Client, error) {
 		VK: VKOpts{
 			StreamsPerCred: *streamsPerCred,
 			ManualCaptcha:  *manualCaptcha,
+			Browser:        Browser(*browser),
 		},
 		DNS: DNSOpts{
 			Mode: *dnsMode,
@@ -315,6 +328,11 @@ func ParseClient(args []string, errOut io.Writer) (*Client, error) {
 		}
 		if c.VK.StreamsPerCred <= 0 {
 			return nil, fmt.Errorf("-streams-per-cred must be positive")
+		}
+		switch c.VK.Browser {
+		case BrowserChrome, BrowserFirefox:
+		default:
+			return nil, fmt.Errorf("invalid -browser value %q: must be %s | %s", c.VK.Browser, BrowserChrome, BrowserFirefox)
 		}
 		parts := strings.Split(*link, "join/")
 		link := parts[len(parts)-1]

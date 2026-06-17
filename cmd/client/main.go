@@ -195,6 +195,7 @@ func buildProvider(cfg *config.Client, dialer net.Dialer, connected *atomic.Int3
 			Link:            cfg.VK.Link,
 			Dialer:          dialer,
 			ManualOnly:      cfg.VK.ManualCaptcha,
+			Browser:         string(cfg.VK.Browser),
 			StreamsPerCache: cfg.VK.StreamsPerCred,
 			StreamsAlive:    connected.Load,
 			Log:             logger,
@@ -239,7 +240,7 @@ func resolveClientID(cliID string) string {
 	b, _ := json.MarshalIndent(lc, "", "  ")
 
 	// Запись: первый доступный для записи путь. На Android каталог рядом с
-	// бинарём (/data/app/.../lib/arm64) read-only — падаем на UserConfigDir,
+	// бинарём (/data/app/.../lib/arm64) read-only - падаем на UserConfigDir,
 	// затем TempDir. Иначе ID не сохраняется и ротируется на каждый запуск,
 	// ломая allowlist (-clients-file) и статистику.
 	for _, path := range paths {

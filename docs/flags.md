@@ -19,6 +19,7 @@
 | `-gen-obf-key` | `false` | напечатать новый ключ и выйти |
 | `-manual-captcha` | `false` | сразу ручной режим captcha (только `-provider vk`) |
 | `-streams-per-cred` | `10` | потоков на один кеш VK-учёток (только `-provider vk`) |
+| `-browser` | `firefox` | браузерный профиль VK-auth (UA + TLS JA3 + client hints): `chrome` \| `firefox` (только `-provider vk`) |
 | `-dns-mode` | `auto` | `plain` (UDP/53) \| `doh` \| `auto` |
 | `-dns-servers` | пусто | свои UDP/53 резолверы, `ip[:port][,ip[:port]...]` |
 | `-client-id` | авто | уникальный ID клиента (автогенерация если не задан) |
