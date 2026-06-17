@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/samosvalishe/free-turn-proxy/compare/v1.3.1...v1.3.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* **dnsdial:** вернуть простую UDP-пробу auto до auto-пробы реального хоста ([7d1ae10](https://github.com/samosvalishe/free-turn-proxy/commit/7d1ae10a473dcd030a2e9b3261a559038fda8bbd))
+
 ## [1.3.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.3.0...v1.3.1) (2026-06-17)
 
 
