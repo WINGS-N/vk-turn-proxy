@@ -37,6 +37,7 @@ type Params struct {
 	Host         string
 	Port         string
 	TransportUDP bool
+	Profile      string
 	ObfKey       []byte
 	GetCreds     GetCredsFunc
 	ClientID     string

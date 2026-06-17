@@ -52,13 +52,14 @@ type TURNOpts struct {
 type ObfProfile string
 
 const (
-	ObfProfileNone    ObfProfile = "none"    // обфускация отключена
-	ObfProfileRTPOpus ObfProfile = "rtpopus" // RTP/opus + ChaCha20-Poly1305 AEAD
+	ObfProfileNone     ObfProfile = "none"     // обфускация отключена
+	ObfProfileRTPOpus  ObfProfile = "rtpopus"  // RTP/opus + ChaCha20-Poly1305 AEAD
+	ObfProfileRTPOpus2 ObfProfile = "rtpopus2" // rtpopus + RTP header extension (мимикрия под современный WebRTC)
 )
 
 // ObfOpts - опции обфускации TURN-payload.
 type ObfOpts struct {
-	Profile ObfProfile // -obf-profile: none (default) | rtpopus
+	Profile ObfProfile // -obf-profile: none (default) | rtpopus | rtpopus2
 	Key     []byte     // -obf-key (декодированный): 32-байтовый общий ключ; nil если Profile=none
 	GenKey  bool       // -gen-obf-key: напечатать новый ключ и выйти
 }
@@ -169,7 +170,7 @@ func ParseClient(args []string, errOut io.Writer) (*Client, error) {
 	transport := fs.String("transport", "tcp", "транспорт до TURN-реле: tcp | udp")
 	mode := fs.String("mode", "udp", "режим туннеля: udp (WireGuard) | tcp (Xray/sing-box)")
 	bond := fs.Bool("bond", false, "страйпинг TCP по smux-сессиям; только с -mode tcp")
-	obfProfile := fs.String("obf-profile", string(ObfProfileNone), "wire-профиль обфускации: none | rtpopus; должен совпадать с сервером")
+	obfProfile := fs.String("obf-profile", string(ObfProfileNone), "wire-профиль обфускации: none | rtpopus | rtpopus2; должен совпадать с сервером")
 	obfKey := fs.String("obf-key", "", "ключ для -obf-profile != none: 32 байта hex (64 символа)")
 	genObfKey := fs.Bool("gen-obf-key", false, "напечатать новый -obf-key и выйти")
 	streamsPerCred := fs.Int("streams-per-cred", defaultStreamsPerCache, "TURN-потоков на один кеш VK-creds; только -provider vk")
@@ -349,7 +350,7 @@ func ParseServer(args []string, errOut io.Writer) (*Server, error) {
 	listen := fs.String("listen", "0.0.0.0:56000", "локальный адрес прослушивания ip:port")
 	connect := fs.String("connect", "", "локальный бэкенд host:port; обязательно: WG 127.0.0.1:51820 | Xray 127.0.0.1:443")
 	mode := fs.String("mode", "udp", "режим туннеля: udp (WireGuard) | tcp (Xray/sing-box; bond авто)")
-	obfProfile := fs.String("obf-profile", string(ObfProfileNone), "wire-профиль обфускации: none | rtpopus; должен совпадать с клиентом")
+	obfProfile := fs.String("obf-profile", string(ObfProfileNone), "wire-профиль обфускации: none | rtpopus | rtpopus2; должен совпадать с клиентом")
 	obfKey := fs.String("obf-key", "", "ключ для -obf-profile != none: 32 байта hex (64 символа)")
 	genObfKey := fs.Bool("gen-obf-key", false, "напечатать новый -obf-key и выйти")
 	debug := fs.Bool("debug", false, "подробные debug-логи")
@@ -407,10 +408,10 @@ func ParseServer(args []string, errOut io.Writer) (*Server, error) {
 // validateObfProfile проверяет что -obf-profile содержит известное значение.
 func validateObfProfile(p ObfProfile) error {
 	switch p {
-	case ObfProfileNone, ObfProfileRTPOpus:
+	case ObfProfileNone, ObfProfileRTPOpus, ObfProfileRTPOpus2:
 		return nil
 	default:
-		return fmt.Errorf("invalid -obf-profile value %q: must be %s | %s", p, ObfProfileNone, ObfProfileRTPOpus)
+		return fmt.Errorf("invalid -obf-profile value %q: must be %s | %s | %s", p, ObfProfileNone, ObfProfileRTPOpus, ObfProfileRTPOpus2)
 	}
 }
 

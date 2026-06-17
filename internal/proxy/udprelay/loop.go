@@ -15,7 +15,6 @@ import (
 	"github.com/samosvalishe/free-turn-proxy/internal/proxy/common"
 	"github.com/samosvalishe/free-turn-proxy/internal/randx"
 	"github.com/samosvalishe/free-turn-proxy/internal/stats"
-	"github.com/samosvalishe/free-turn-proxy/internal/wire/rtpopus"
 )
 
 // DTLSLoop поддерживает единственное DTLS-подключение для streamID, перезапуская
@@ -262,7 +261,7 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 		}
 	})
 	var internalPipeAddr atomic.Value
-	obfConn, obfErr := common.NewClientObf(params.ObfKey)
+	obfConn, obfErr := common.NewClientObf(params.Profile, params.ObfKey)
 	if obfErr != nil {
 		deps.log().Errorf("[STREAM %d] OBF init failed: %v", streamID, obfErr)
 		turncancel()
@@ -288,8 +287,8 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 		// дописал заголовок+tag без копии payload.
 		var buf, readSlot []byte
 		if obfConn != nil {
-			buf = make([]byte, rtpopus.MaxWire(maxPayload))
-			readSlot = buf[rtpopus.HeaderLen : rtpopus.HeaderLen+maxPayload]
+			buf = make([]byte, obfConn.MaxWire(maxPayload))
+			readSlot = buf[obfConn.HeaderLen() : obfConn.HeaderLen()+maxPayload]
 		} else {
 			buf = make([]byte, maxPayload)
 			readSlot = buf
@@ -336,7 +335,7 @@ func oneTURN(ctx context.Context, deps *Deps, params *Params, peer *net.UDPAddr,
 		defer turncancel()
 		readBufLen := maxPayload
 		if obfConn != nil {
-			readBufLen = rtpopus.MaxWire(maxPayload)
+			readBufLen = obfConn.MaxWire(maxPayload)
 		}
 		buf := make([]byte, readBufLen)
 		for {

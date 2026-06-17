@@ -126,6 +126,12 @@ func NewConnFromState(state *State, isServer bool) (*Conn, error) {
 	return c, nil
 }
 
+// HeaderLen, Overhead, MaxWire — методы под интерфейс wire.Codec; значения
+// совпадают с пакетными HeaderLen/Overhead/MaxWire.
+func (*Conn) HeaderLen() int    { return headerLen }
+func (*Conn) Overhead() int     { return Overhead }
+func (*Conn) MaxWire(n int) int { return Overhead + n }
+
 // WrapInto кодирует payload в dst (минимум MaxWire(len(payload)) байт)
 // и возвращает число записанных wire-байт.
 func (c *Conn) WrapInto(dst, payload []byte) (int, error) {
