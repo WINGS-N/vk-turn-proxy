@@ -27,7 +27,7 @@ Payload - JSON-объект, закодированный `base64url` (без pa
 | `transport` | `-transport` | транспорт до TURN-реле: `tcp` \| `udp`. |
 | `mode` | `-mode` | режим туннеля: `udp` \| `tcp`. |
 | `bond` | `-bond` | bonding TCP (`true`), только с `mode=tcp`. |
-| `obf` | `-obf-profile` | профиль обфускации (`rtpopus`); `none` опускается. |
+| `obf` | `-obf-profile` | профиль обфускации (`rtpopus` \| `rtpopus2`); `none` опускается. |
 | `key` | `-obf-key` | ключ обфускации (hex), только при заданном `obf`. |
 | `n` | `-n` | число TURN-потоков. |
 | `spc` | `-streams-per-cred` | потоков на один кеш VK-учёток. |
