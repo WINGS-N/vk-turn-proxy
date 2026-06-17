@@ -1,6 +1,6 @@
 // Package dnsdial владеет DNS-резолвингом и net.Dialer'ом, прокинутым во все
 // outbound HTTP/TLS клиенты. По Mode выбирает UDP/53, DNS-over-HTTPS или auto
-// (UDP-probe → sticky DoH fallback).
+// (UDP-probe -> sticky DoH fallback).
 package dnsdial
 
 import (
@@ -50,12 +50,12 @@ const (
 	autoDoHProbeBudget  = 6 * time.Second
 
 	autoReevalInterval   = 30 * time.Second // мин. интервал авто-перепроб (recovery)
-	autoUDPFailThreshold = 2                // подряд неудачных UDP-резолвов → перепроба
+	autoUDPFailThreshold = 2                // подряд неудачных UDP-резолвов -> перепроба
 	dnsMinResponseBytes  = 12               // размер DNS-заголовка; меньше = не ответ
 
 	// defaultProbeHost - нейтральный дефолт auto-пробы, если провайдер не задал
 	// свой через SetProbeHost. Провайдеру стоит указывать реальную control-plane
-	// цель (VK → login.vk.ru), чтобы проба мерила резолв нужного домена.
+	// цель (VK -> login.vk.ru), чтобы проба мерила резолв нужного домена.
 	defaultProbeHost = "dns.google"
 )
 
@@ -496,7 +496,7 @@ func SetProbeHost(host string) {
 // рантайме (не one-shot): на UDP серия неудачных резолвов уводит на DoH; на DoH
 // периодическая перепроба возвращает на UDP, когда цель снова резолвится. Решение
 // принимается по резолву реального control-plane хоста (probeHost), а не
-// нейтрального домена: ТСПУ фильтрует выборочно, «UDP жив на постороннем домене»
+// нейтрального домена: ТСПУ фильтрует выборочно, "UDP жив на постороннем домене"
 // ничего не гарантирует.
 type autoState struct {
 	udpDial dialFunc
@@ -524,10 +524,10 @@ func autoDial(r *DohResolver) dialFunc {
 }
 
 // decide пробует резолвить цель и обновляет useDoH:
-//  1. UDP оператора резолвит цель в валидный адрес → UDP;
-//  2. уже на DoH и цель по UDP всё ещё недоступна → остаёмся (без лишней DoH-пробы);
-//  3. иначе DoH резолвит цель → DoH;
-//  4. ни то ни другое → DoH (больше шансов на recovery).
+//  1. UDP оператора резолвит цель в валидный адрес -> UDP;
+//  2. уже на DoH и цель по UDP всё ещё недоступна -> остаёмся (без лишней DoH-пробы);
+//  3. иначе DoH резолвит цель -> DoH;
+//  4. ни то ни другое -> DoH (больше шансов на recovery).
 //
 // quiet подавляет лог перехода - для стартового решения, логируемого в dial().
 func (a *autoState) decide(quiet bool) {

@@ -104,7 +104,7 @@ func TestAutoDial_StickyAfterUDPFailure(t *testing.T) {
 }
 
 // startFakeUDPDNS поднимает локальный UDP DNS, отвечающий на A-запрос фиксированным
-// answer (nil → NOERROR без записей). Возвращает адрес ip:port.
+// answer (nil -> NOERROR без записей). Возвращает адрес ip:port.
 func startFakeUDPDNS(t *testing.T, answer net.IP) string {
 	t.Helper()
 	pc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
@@ -146,7 +146,7 @@ func startFakeUDPDNS(t *testing.T, answer net.IP) string {
 func TestProbeResolves(t *testing.T) {
 	cases := []struct {
 		name   string
-		answer net.IP // nil → NOERROR без A-записей (домен дропнут/отфильтрован)
+		answer net.IP // nil -> NOERROR без A-записей (домен дропнут/отфильтрован)
 		want   bool
 	}{
 		{"valid public A", net.ParseIP("93.184.216.34"), true},
@@ -172,7 +172,7 @@ func failDial(context.Context, string, string) (net.Conn, error) {
 	return nil, errors.New("dial unavailable")
 }
 
-// UDP не резолвит цель и DoH-проба тоже падает → auto залипает на DoH.
+// UDP не резолвит цель и DoH-проба тоже падает -> auto залипает на DoH.
 func TestAutoState_FailsOverToDoH(t *testing.T) {
 	a := &autoState{udpDial: udpDNSDial, dohDial: failDial, host: func() string { return "login.vk.ru" }}
 
@@ -187,7 +187,7 @@ func TestAutoState_FailsOverToDoH(t *testing.T) {
 	}
 }
 
-// Залипли на DoH, UDP снова резолвит цель → перепроба возвращает на UDP (recovery).
+// Залипли на DoH, UDP снова резолвит цель -> перепроба возвращает на UDP (recovery).
 func TestAutoState_RecoversToUDP(t *testing.T) {
 	a := &autoState{udpDial: udpDNSDial, dohDial: failDial, host: func() string { return "login.vk.ru" }}
 	a.useDoH.Store(true) // имитируем залипание на DoH

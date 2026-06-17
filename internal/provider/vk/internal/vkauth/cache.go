@@ -15,7 +15,7 @@ type StreamCredentialsCache struct {
 	lastErrorTime atomic.Int64
 }
 
-// Store отображает cache-id ((streamID-1) / streamsPerCache) → StreamCredentialsCache.
+// Store отображает cache-id ((streamID-1) / streamsPerCache) -> StreamCredentialsCache.
 type Store struct {
 	mu              sync.RWMutex
 	caches          map[int]*StreamCredentialsCache

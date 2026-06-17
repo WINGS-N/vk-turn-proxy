@@ -40,7 +40,7 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			os.Exit(0)
 		}
-		// логгер ещё не создан — единственный fatal до его инициализации.
+		// логгер ещё не создан - единственный fatal до его инициализации.
 		log.Fatalf("%v", err)
 	}
 	logger := logx.New(cfg.Log.Debug)
@@ -180,7 +180,7 @@ func handleAccepted(ctx context.Context, logger logx.Logger, registry *bondserve
 	}
 	logger.Debugf("Handshake done")
 
-	// Client ID читается всегда (клиент всегда шлёт его первой app-record) —
+	// Client ID читается всегда (клиент всегда шлёт его первой app-record) -
 	// wire-контракт симметричен. -clients-file включает только enforce по allowlist.
 	clientID, err := clientsdb.ReadClientID(dtlsConn)
 	if err != nil {

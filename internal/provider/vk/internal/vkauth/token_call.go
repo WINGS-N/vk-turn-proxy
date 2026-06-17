@@ -13,7 +13,7 @@ import (
 	tlsclient "github.com/bogdanfinn/tls-client"
 )
 
-// fetchCallToken — шаг 2 цепочки: вызывает calls.getAnonymousToken и ведёт
+// fetchCallToken - шаг 2 цепочки: вызывает calls.getAnonymousToken и ведёт
 // цикл retry captcha до получения call-токена или исчерпания всех режимов решения.
 func (c *Client) fetchCallToken(
 	ctx context.Context,
@@ -104,7 +104,7 @@ func (c *Client) solveCaptcha(
 			break
 		}
 		c.log.Infof("[STREAM %d] [Captcha] Triggering manual captcha fallback", streamID)
-		// Ручной решалке выделяется свой 3-минутный бюджет — жёсткий parent-deadline
+		// Ручной решалке выделяется свой 3-минутный бюджет - жёсткий parent-deadline
 		// не обрезает время пользователя. Отмена parent (завершение приложения)
 		// всё равно propagate, горутина не переживает процесс.
 		manualCtx, manualCancel := context.WithTimeout(ctx, 3*time.Minute)

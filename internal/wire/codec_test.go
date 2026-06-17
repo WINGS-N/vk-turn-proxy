@@ -12,7 +12,7 @@ func TestNewClientCodec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// none/"" → обфускация выключена (nil codec, без ошибки).
+	// none/"" -> обфускация выключена (nil codec, без ошибки).
 	for _, p := range []string{ProfileNone, ""} {
 		c, err := NewClientCodec(p, nil)
 		if err != nil || c != nil {
@@ -20,7 +20,7 @@ func TestNewClientCodec(t *testing.T) {
 		}
 	}
 
-	// rtpopus / rtpopus2 → валидный codec с осмысленными размерами.
+	// rtpopus / rtpopus2 -> валидный codec с осмысленными размерами.
 	for _, p := range []string{ProfileRTPOpus, ProfileRTPOpus2} {
 		c, err := NewClientCodec(p, key)
 		if err != nil || c == nil {
@@ -34,7 +34,7 @@ func TestNewClientCodec(t *testing.T) {
 		}
 	}
 
-	// rtpopus2 несёт RTP extension → заголовок больше, чем у v1.
+	// rtpopus2 несёт RTP extension -> заголовок больше, чем у v1.
 	v1, _ := NewClientCodec(ProfileRTPOpus, key)
 	v2, _ := NewClientCodec(ProfileRTPOpus2, key)
 	if v2.HeaderLen() <= v1.HeaderLen() {

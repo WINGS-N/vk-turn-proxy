@@ -25,7 +25,7 @@ import (
 	"github.com/samosvalishe/free-turn-proxy/internal/randx"
 )
 
-// Log — пакетный логгер. По умолчанию no-op; main устанавливает его через
+// Log - пакетный логгер. По умолчанию no-op; main устанавливает его через
 // SetLogger, чтобы captcha-вывод подчинялся глобальному -debug. Solve также
 // принимает logger параметром для DI.
 var Log logx.Logger = logx.Nop()
@@ -125,7 +125,7 @@ func (s *captchaSession) logger() logx.Logger {
 }
 
 // Solve запускает авторешение captcha против VK captchaNotRobot API
-// и возвращает success-токен при успехе. log может быть nil — тогда
+// и возвращает success-токен при успехе. log может быть nil - тогда
 // используется пакетный Log.
 func Solve(
 	ctx context.Context,
@@ -479,7 +479,7 @@ func solveCaptchaPoW(ctx context.Context, input string, difficulty int) string {
 		return ""
 	}
 	target := strings.Repeat("0", difficulty)
-	// ctx-check каждые 1024 итерации — задержка отмены в пределах нескольких мс
+	// ctx-check каждые 1024 итерации - задержка отмены в пределах нескольких мс
 	// даже на слабом ARM (было 4096).
 	buf := make([]byte, 0, len(input)+20)
 	buf = append(buf, input...)

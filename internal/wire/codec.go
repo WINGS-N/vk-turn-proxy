@@ -35,7 +35,7 @@ type Codec interface {
 	MaxWire(payloadLen int) int
 }
 
-// NewClientCodec строит клиентский Codec для профиля. profile none/"" → (nil, nil)
+// NewClientCodec строит клиентский Codec для профиля. profile none/"" -> (nil, nil)
 // (обфускация выключена). Длину ключа проверяет конструктор профиля.
 func NewClientCodec(profile string, key []byte) (Codec, error) {
 	switch profile {

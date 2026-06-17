@@ -33,7 +33,7 @@ func DialTURN(ctx context.Context, host, port string, udp bool, peer *net.UDPAdd
 	if len(rawURLs) == 0 {
 		return nil, fmt.Errorf("no TURN candidates")
 	}
-	// HostOverride (-turn) принудительно задаёт host → все кандидаты резолвятся
+	// HostOverride (-turn) принудительно задаёт host -> все кандидаты резолвятся
 	// в одну цель, гонять их нет смысла; пробуем только первого.
 	if host != "" {
 		rawURLs = rawURLs[:1]
