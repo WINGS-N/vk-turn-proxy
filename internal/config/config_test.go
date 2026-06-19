@@ -36,8 +36,8 @@ func TestParseClient_Defaults(t *testing.T) {
 	if c.VK.StreamsPerCred != defaultStreamsPerCache {
 		t.Errorf("VK.StreamsPerCred default: %d", c.VK.StreamsPerCred)
 	}
-	if c.VK.Link != "abcdef" {
-		t.Errorf("VK.Link: %q (expected abcdef)", c.VK.Link)
+	if len(c.VK.Links) != 1 || c.VK.Links[0] != "abcdef" {
+		t.Errorf("VK.Links: %v (expected [abcdef])", c.VK.Links)
 	}
 	if c.Obf.Key != nil {
 		t.Errorf("Obf.Key should be nil when -obf-profile absent")
@@ -62,8 +62,8 @@ func TestParseClient_VKLinkStrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.VK.Link != "CODE123" {
-		t.Errorf("VK.Link: %q (expected CODE123)", c.VK.Link)
+	if len(c.VK.Links) != 1 || c.VK.Links[0] != "CODE123" {
+		t.Errorf("VK.Links: %v (expected [CODE123])", c.VK.Links)
 	}
 }
 
@@ -74,9 +74,32 @@ func TestParseClient_MissingPeer(t *testing.T) {
 	}
 }
 
+func TestParseClient_MultiLinks(t *testing.T) {
+	args := []string{
+		"-peer", "1.2.3.4:5000",
+		"-links", "https://vk.ru/call/join/LINK1,https://vk.ru/call/join/LINK2?foo=bar,https://vk.ru/call/join/LINK3/extra",
+	}
+	c, err := ParseClient(args, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.VK.Links) != 3 {
+		t.Fatalf("expected 3 links, got %d: %v", len(c.VK.Links), c.VK.Links)
+	}
+	if c.VK.Links[0] != "LINK1" {
+		t.Errorf("VK.Links[0]: %q (expected LINK1)", c.VK.Links[0])
+	}
+	if c.VK.Links[1] != "LINK2" {
+		t.Errorf("VK.Links[1]: %q (expected LINK2)", c.VK.Links[1])
+	}
+	if c.VK.Links[2] != "LINK3" {
+		t.Errorf("VK.Links[2]: %q (expected LINK3)", c.VK.Links[2])
+	}
+}
+
 func TestParseClient_MissingVKLink(t *testing.T) {
 	_, err := ParseClient([]string{"-peer", "1.2.3.4:5000"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "-link") {
+	if err == nil || !(strings.Contains(err.Error(), "-links") || strings.Contains(err.Error(), "-link")) {
 		t.Errorf("expected vk-link error, got %v", err)
 	}
 }

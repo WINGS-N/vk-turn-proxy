@@ -34,6 +34,9 @@ var DefaultCredentials = []VKCredentials{
 	{ClientID: "52461373", ClientSecret: "o557NLIkAErNhakXrQ7A"}, // VK_WEB_VKVIDEO_APP_ID
 	{ClientID: "52649896", ClientSecret: "WStp4ihWG4l3nmXZgIbC"}, // VK_MVK_VKVIDEO_APP_ID
 	{ClientID: "51781872", ClientSecret: "IjjCNl4L4Tf5QZEXIHKK"}, // VK_ID_AUTH_APP
+	{ClientID: "2274003", ClientSecret: "hHbZxrka2uZ6jB1inYsH"},  // VK_ANDROID_APP (danyadev/vk-desktop)
+	{ClientID: "6717234", ClientSecret: "KoSS8uGa3RrU081ucgvO"},  // VK_INTERNAL_APP (danyadev/vk-desktop)
+	{ClientID: "51453752", ClientSecret: "4UyuCUsdK8pVCNoeQuGi"}, // VK_MESSENGER_DESKTOP (danyadev/vk-desktop)
 }
 
 const (

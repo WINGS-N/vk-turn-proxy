@@ -22,6 +22,7 @@ import (
 	"github.com/samosvalishe/free-turn-proxy/internal/config"
 	"github.com/samosvalishe/free-turn-proxy/internal/logx"
 	"github.com/samosvalishe/free-turn-proxy/internal/provider"
+	"github.com/samosvalishe/free-turn-proxy/internal/provider/multi"
 	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk"
 	"github.com/samosvalishe/free-turn-proxy/internal/proxy/bondclient"
 	"github.com/samosvalishe/free-turn-proxy/internal/proxy/tcpfwd"
@@ -129,6 +130,15 @@ func main() {
 		return c.User, c.Pass, c.ServerAddrs, nil
 	}
 
+	// При нескольких звонках (links) расширяем пул: каждый звонок даёт
+	// cfg.TURN.N стримов, все объединяются в общий SessionPool.
+	// Это даёт больше TURN-соединений → выше aggregate пропускная способность.
+	numLinks := len(cfg.VK.Links)
+	if numLinks < 1 {
+		numLinks = 1
+	}
+	totalStreams := cfg.TURN.N * numLinks
+
 	if cfg.Proxy.Mode != config.ProxyModeUDP {
 		tcpDtlsDialer := &dtlsdial.Dialer{
 			HandshakeTimeout: 30 * time.Second,
@@ -151,7 +161,7 @@ func main() {
 			KCPFEC:       cfg.KCP.FEC,
 			ClientID:     cfg.ClientID,
 		}
-		if err := tcpfwd.Run(ctx, tcpDeps, tcpParams, peer, cfg.Proxy.Listen, cfg.TURN.N, cfg.Proxy.Mode == config.ProxyModeTCPFwdBond); err != nil {
+		if err := tcpfwd.Run(ctx, tcpDeps, tcpParams, peer, cfg.Proxy.Listen, totalStreams, cfg.Proxy.Mode == config.ProxyModeTCPFwdBond); err != nil {
 			logger.Errorf("tcpfwd: %v", err)
 			os.Exit(1)
 		}
@@ -168,10 +178,11 @@ func main() {
 		TransportUDP: cfg.TURN.TransportUDP,
 		Profile:      string(cfg.Obf.Profile),
 		ObfKey:       cfg.Obf.Key,
+		ObfTiming:    cfg.Obf.Timing,
 		GetCreds:     udprelay.GetCredsFunc(getCreds),
 		ClientID:     cfg.ClientID,
 	}
-	if err := udprelay.Run(ctx, udpDtlsDialer, prov, logger, &connectedStreams, udpParams, peer, cfg.Proxy.Listen, cfg.TURN.N); err != nil {
+	if err := udprelay.Run(ctx, udpDtlsDialer, prov, logger, &connectedStreams, udpParams, peer, cfg.Proxy.Listen, totalStreams); err != nil {
 		if errors.Is(err, udprelay.ErrFatal) {
 			logger.Errorf("udprelay: fatal: %v", err)
 		} else {
@@ -182,20 +193,47 @@ func main() {
 }
 
 // buildProvider выбирает реализацию provider.Provider по cfg.Provider.Name.
-// Валидация имени уже выполнена в config.ParseClient.
+// При нескольких -links создаёт MultiProvider с одним vk.Provider на каждый link.
 func buildProvider(cfg *config.Client, dialer net.Dialer, connected *atomic.Int32, logger logx.Logger) (provider.Provider, error) {
 	switch cfg.Provider.Name {
 	case config.ProviderVK:
-		return vk.New(vk.Config{
-			Link:            cfg.VK.Link,
-			Dialer:          dialer,
-			ManualOnly:      cfg.VK.ManualCaptcha,
-			Browser:         string(cfg.VK.Browser),
-			StreamsPerCache: cfg.VK.StreamsPerCred,
-			StreamsAlive:    connected.Load,
-			Log:             logger,
-			Debug:           cfg.Log.Debug,
-		}, vk.DefaultManualSolver)
+		if len(cfg.VK.Links) == 0 {
+			return nil, fmt.Errorf("vk: no links configured")
+		}
+		// Одна ссылка — обычный vk.Provider (backward compat).
+		if len(cfg.VK.Links) == 1 {
+			return vk.New(vk.Config{
+				Link:            cfg.VK.Links[0],
+				Dialer:          dialer,
+				ManualOnly:      cfg.VK.ManualCaptcha,
+				Browser:         string(cfg.VK.Browser),
+				StreamsPerCache: cfg.VK.StreamsPerCred,
+				StreamsAlive:    connected.Load,
+				Log:             logger,
+				Debug:           cfg.Log.Debug,
+			}, vk.DefaultManualSolver)
+		}
+		// Несколько ссылок — MultiProvider. Каждый звонок даёт свой пул
+		// TURN-реквизитов → больше параллельных стримов.
+		providers := make([]provider.Provider, 0, len(cfg.VK.Links))
+		for i, link := range cfg.VK.Links {
+			p, err := vk.New(vk.Config{
+				Link:            link,
+				Dialer:          dialer,
+				ManualOnly:      cfg.VK.ManualCaptcha,
+				Browser:         string(cfg.VK.Browser),
+				StreamsPerCache: cfg.VK.StreamsPerCred,
+				StreamsAlive:    connected.Load,
+				Log:             logger,
+				Debug:           cfg.Log.Debug,
+			}, vk.DefaultManualSolver)
+			if err != nil {
+				return nil, fmt.Errorf("vk provider [%d]: %w", i, err)
+			}
+			providers = append(providers, p)
+		}
+		logger.Infof("created MultiProvider with %d VK links (%d total streams)", len(providers), cfg.TURN.N*len(providers))
+		return multi.New(providers), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", cfg.Provider.Name)
 	}
