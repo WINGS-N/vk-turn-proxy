@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.4.0...v1.4.1) (2026-06-19)
+
+
+### Bug Fixes
+
+* оставлены только VK app_id с доступом к calls.getAnonymousToken ([ebb1f6b](https://github.com/samosvalishe/free-turn-proxy/commit/ebb1f6bf0702217aca2ae54ab8d2115d93f85a95))
+
+
+### Refactoring
+
+* единая константа версии VK API для calls.* ([b76e212](https://github.com/samosvalishe/free-turn-proxy/commit/b76e21266d3a8bb457ad40263da2404089a2b7d6))
+
 ## [1.4.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.3.2...v1.4.0) (2026-06-19)
 
 
