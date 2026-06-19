@@ -37,6 +37,10 @@ var DefaultCredentials = []VKCredentials{
 	{ClientID: "3140623", ClientSecret: "VeWdmVclDCtn6ihuP1nt"},  // VK_IPHONE_APP
 }
 
+// APIVersion - версия VK API во всех calls.* запросах. Держать единой и близкой
+// к версии живого web-клиента звонка (рассинхрон = fingerprint-аномалия).
+const APIVersion = "5.282"
+
 const (
 	CredentialLifetime = 10 * time.Minute
 	CacheSafetyMargin  = 60 * time.Second
