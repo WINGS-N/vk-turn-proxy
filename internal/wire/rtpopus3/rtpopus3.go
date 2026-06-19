@@ -40,7 +40,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -86,6 +86,7 @@ const (
 	stateSpeech
 )
 
+// State хранит AEAD-экземпляр из общего ключа; разделяется многими Conn.
 type State struct {
 	aead cipher.AEAD
 }
@@ -101,22 +102,26 @@ func NewState(key []byte) (*State, error) {
 	return &State{aead: aead}, nil
 }
 
+// Conn несёт per-stream RTP-состояние. WrapInPlace/WrapInto могут зваться
+// конкурентно (net.PacketConn-контракт), поэтому send-поля под mu;
+// Unwrap* только читают AEAD.
 type Conn struct {
 	state     *State
-	sessionID [4]byte
-	ssrc      [4]byte
-	counter   atomic.Uint64
-	seq       atomic.Uint32
-	timestamp atomic.Uint32
-	tcc       atomic.Uint32
-	startTime time.Time
+	sessionID [4]byte   // префикс nonce; MSB кодирует направление
+	ssrc      [4]byte   // SSRC для RTP header; полностью random
+	startTime time.Time // база для abs-send-time; immutable после init
+
+	mu        sync.Mutex
+	counter   uint64
+	seq       uint16
+	timestamp uint32
+	tcc       uint16
 
 	audioState      audioState
 	pktsInState     int
 	nextStateSwitch int
-
-	nextGapAt int
-	gapSize   int
+	nextGapAt       int
+	gapSize         int
 }
 
 func NewConn(key []byte, isServer bool) (*Conn, error) {
@@ -150,15 +155,15 @@ func NewConnFromState(state *State, isServer bool) (*Conn, error) {
 	} else {
 		c.sessionID[0] &^= 0x80
 	}
-	c.seq.Store(uint32(binary.BigEndian.Uint16(rnd[8:10])))
-	c.timestamp.Store(binary.BigEndian.Uint32(rnd[10:14]))
-	c.tcc.Store(uint32(binary.BigEndian.Uint16(rnd[14:16])))
+	c.seq = binary.BigEndian.Uint16(rnd[8:10])
+	c.timestamp = binary.BigEndian.Uint32(rnd[10:14])
+	c.tcc = binary.BigEndian.Uint16(rnd[14:16])
 
 	var cb [8]byte
 	if _, err := rand.Read(cb[:]); err != nil {
 		return nil, fmt.Errorf("rtpopus3:counter rand: %w", err)
 	}
-	c.counter.Store(binary.BigEndian.Uint64(cb[:]))
+	c.counter = binary.BigEndian.Uint64(cb[:])
 	return c, nil
 }
 
@@ -189,51 +194,50 @@ func pickTsStep() uint32 {
 	}
 }
 
+// updateAudioState возвращает true на переходе silence->speech (RTP marker).
 func (c *Conn) updateAudioState() bool {
 	c.pktsInState++
 	if c.pktsInState < c.nextStateSwitch {
 		return false
 	}
+	c.pktsInState = 0
 	if c.audioState == stateSilence {
 		c.audioState = stateSpeech
 		c.nextStateSwitch = speechMinPkts + randRange(speechMaxPkts-speechMinPkts+1)
-		c.pktsInState = 0
 		return true
 	}
 	c.audioState = stateSilence
 	c.nextStateSwitch = silenceMinPkts + randRange(silenceMaxPkts-silenceMinPkts+1)
-	c.pktsInState = 0
 	return false
 }
 
+// audioLevel: speech несёт V-бит и низкий -dBov, silence наоборот.
 func (c *Conn) audioLevel() byte {
 	if c.audioState == stateSpeech {
-		return 0x80 | byte(20+randRange(31))
+		return 0x80 | byte(20+randRange(31)) //nolint:gosec // level 20..50, fits byte
 	}
-	return byte(100 + randRange(28))
+	return byte(100 + randRange(28)) //nolint:gosec // level 100..127, fits byte
 }
 
+// computeSeq возвращает текущий seq, периодически пропуская gapSize (имитация потерь).
 func (c *Conn) computeSeq() uint16 {
-	seq := uint16(c.seq.Add(1) - 1)
+	seq := c.seq
+	c.seq++
 	c.nextGapAt--
 	if c.nextGapAt > 0 {
 		return seq
 	}
-	skip := uint32(c.gapSize)
-	c.seq.Add(skip)
+	c.seq += uint16(c.gapSize) //nolint:gosec // gapSize 1..3
 	c.nextGapAt = gapIntervalMin + randRange(gapIntervalMax-gapIntervalMin+1)
 	c.gapSize = gapSizeMin + randRange(gapSizeMax-gapSizeMin+1)
 	return seq
 }
 
 func (c *Conn) absSendTime() uint32 {
-	ms := time.Since(c.startTime).Milliseconds()
-	if ms < 0 {
-		ms = 0
-	}
+	ms := max(time.Since(c.startTime).Milliseconds(), 0)
 	sec := (ms / 1000) % 64
 	frac := (ms % 1000) << 18 / 1000
-	return uint32(sec)<<18 | uint32(frac)
+	return uint32(sec)<<18 | uint32(frac) //nolint:gosec // sec<64, frac<2^18: укладывается в 24 бита
 }
 
 func (c *Conn) WrapInto(dst, payload []byte) (int, error) {
@@ -244,22 +248,33 @@ func (c *Conn) WrapInto(dst, payload []byte) (int, error) {
 	return c.WrapInPlace(dst, len(payload))
 }
 
+// WrapInPlace кодирует plaintext из buf[HeaderLen:HeaderLen+plainLen] на месте.
+// Send-поля берутся под mu; запись в buf и Seal - без блокировки.
 func (c *Conn) WrapInPlace(buf []byte, plainLen int) (int, error) {
 	wireLen := overhead + plainLen
 	if len(buf) < wireLen {
 		return 0, errors.New("rtpopus3:dst buffer too small")
 	}
 
+	c.mu.Lock()
+	marker := c.updateAudioState()
+	level := c.audioLevel()
+	seq := c.computeSeq()
+	ts := c.timestamp
+	c.timestamp += pickTsStep()
+	tcc := c.tcc
+	c.tcc++
+	ctr := c.counter
+	c.counter++
+	c.mu.Unlock()
+
 	buf[0] = rtpVerExt
 	pt := byte(rtpPT)
-	if c.updateAudioState() && c.audioState == stateSpeech {
+	if marker {
 		pt |= rtpMarker
 	}
 	buf[1] = pt
-	seq := c.computeSeq()
 	binary.BigEndian.PutUint16(buf[2:4], seq)
-	step := pickTsStep()
-	ts := c.timestamp.Add(step) - step
 	binary.BigEndian.PutUint32(buf[4:8], ts)
 	copy(buf[8:12], c.ssrc[:])
 
@@ -267,19 +282,15 @@ func (c *Conn) WrapInPlace(buf []byte, plainLen int) (int, error) {
 	buf[13] = 0xDE
 	binary.BigEndian.PutUint16(buf[14:16], 3)
 	buf[16] = extAudioLevelHdr
-	buf[17] = c.audioLevel()
+	buf[17] = level
 	buf[18] = extTransportHdr
-	tcc := uint16(c.tcc.Add(1) - 1)
 	binary.BigEndian.PutUint16(buf[19:21], tcc)
 	buf[21] = extAbsSendTimeHdr
 	ast := c.absSendTime()
-	buf[22] = byte(ast >> 16)
-	buf[23] = byte(ast >> 8)
-	buf[24] = byte(ast)
+	buf[22], buf[23], buf[24] = byte(ast>>16), byte(ast>>8), byte(ast) //nolint:gosec // 24-bit abs-send-time
 	buf[25], buf[26], buf[27] = 0, 0, 0
 
 	copy(buf[28:32], c.sessionID[:])
-	ctr := c.counter.Add(1) - 1
 	binary.BigEndian.PutUint64(buf[32:headerLen], ctr)
 
 	nonce := buf[28:headerLen]
@@ -300,6 +311,7 @@ func (c *Conn) Unwrap(wire, dst []byte) (int, error) {
 	return len(plain), nil
 }
 
+// UnwrapInPlace декодирует wire на месте, возвращая subslice plaintext внутри него.
 func (c *Conn) UnwrapInPlace(wire []byte) ([]byte, error) {
 	if len(wire) < overhead {
 		return nil, errors.New("rtpopus3:packet too short")
