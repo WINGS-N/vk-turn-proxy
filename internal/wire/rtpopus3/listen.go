@@ -59,7 +59,7 @@ type packetConn struct {
 }
 
 func (c *packetConn) ReadFrom(p []byte) (int, net.Addr, error) {
-	bp := bufPool.Get().(*[]byte)
+	bp := bufPool.Get().(*[]byte) //nolint:errcheck // pool New always returns *[]byte
 	buf := *bp
 	need := len(p) + overhead
 	if cap(buf) < need {
@@ -86,7 +86,7 @@ func (c *packetConn) ReadFrom(p []byte) (int, net.Addr, error) {
 func (c *packetConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	wireLen := overhead + len(p)
 
-	bp := bufPool.Get().(*[]byte)
+	bp := bufPool.Get().(*[]byte) //nolint:errcheck // pool New always returns *[]byte
 	out := *bp
 	if cap(out) < wireLen {
 		out = make([]byte, wireLen)

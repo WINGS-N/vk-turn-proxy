@@ -130,14 +130,9 @@ func main() {
 		return c.User, c.Pass, c.ServerAddrs, nil
 	}
 
-	// При нескольких звонках (links) расширяем пул: каждый звонок даёт
-	// cfg.TURN.N стримов, все объединяются в общий SessionPool.
-	// Это даёт больше TURN-соединений → выше aggregate пропускная способность.
-	numLinks := len(cfg.VK.Links)
-	if numLinks < 1 {
-		numLinks = 1
-	}
-	totalStreams := cfg.TURN.N * numLinks
+	// Несколько -links расширяют пул: каждый звонок даёт cfg.TURN.N стримов,
+	// все объединяются в общий пул (больше параллельных TURN-аллокаций).
+	totalStreams := cfg.TURN.N * max(len(cfg.VK.Links), 1)
 
 	if cfg.Proxy.Mode != config.ProxyModeUDP {
 		tcpDtlsDialer := &dtlsdial.Dialer{
@@ -192,32 +187,16 @@ func main() {
 	}
 }
 
-// buildProvider выбирает реализацию provider.Provider по cfg.Provider.Name.
-// При нескольких -links создаёт MultiProvider с одним vk.Provider на каждый link.
+// buildProvider строит provider.Provider по cfg.Provider.Name. Одна -links даёт
+// обычный vk.Provider; несколько - multi.Provider (один vk.Provider на ссылку).
 func buildProvider(cfg *config.Client, dialer net.Dialer, connected *atomic.Int32, logger logx.Logger) (provider.Provider, error) {
 	switch cfg.Provider.Name {
 	case config.ProviderVK:
 		if len(cfg.VK.Links) == 0 {
 			return nil, fmt.Errorf("vk: no links configured")
 		}
-		// Одна ссылка — обычный vk.Provider (backward compat).
-		if len(cfg.VK.Links) == 1 {
+		newVK := func(link string) (provider.Provider, error) {
 			return vk.New(vk.Config{
-				Link:            cfg.VK.Links[0],
-				Dialer:          dialer,
-				ManualOnly:      cfg.VK.ManualCaptcha,
-				Browser:         string(cfg.VK.Browser),
-				StreamsPerCache: cfg.VK.StreamsPerCred,
-				StreamsAlive:    connected.Load,
-				Log:             logger,
-				Debug:           cfg.Log.Debug,
-			}, vk.DefaultManualSolver)
-		}
-		// Несколько ссылок — MultiProvider. Каждый звонок даёт свой пул
-		// TURN-реквизитов → больше параллельных стримов.
-		providers := make([]provider.Provider, 0, len(cfg.VK.Links))
-		for i, link := range cfg.VK.Links {
-			p, err := vk.New(vk.Config{
 				Link:            link,
 				Dialer:          dialer,
 				ManualOnly:      cfg.VK.ManualCaptcha,
@@ -227,12 +206,19 @@ func buildProvider(cfg *config.Client, dialer net.Dialer, connected *atomic.Int3
 				Log:             logger,
 				Debug:           cfg.Log.Debug,
 			}, vk.DefaultManualSolver)
+		}
+		if len(cfg.VK.Links) == 1 {
+			return newVK(cfg.VK.Links[0])
+		}
+		providers := make([]provider.Provider, 0, len(cfg.VK.Links))
+		for i, link := range cfg.VK.Links {
+			p, err := newVK(link)
 			if err != nil {
 				return nil, fmt.Errorf("vk provider [%d]: %w", i, err)
 			}
 			providers = append(providers, p)
 		}
-		logger.Infof("created MultiProvider with %d VK links (%d total streams)", len(providers), cfg.TURN.N*len(providers))
+		logger.Infof("multi-provider: %d VK links, %d total streams", len(providers), cfg.TURN.N*len(providers))
 		return multi.New(providers), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", cfg.Provider.Name)
