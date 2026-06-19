@@ -373,6 +373,9 @@ func ParseClient(args []string, errOut io.Writer) (*Client, error) {
 		return nil, err
 	}
 	c.Obf.Key = key
+	if err := validateObfTiming(c.Obf, c.Proxy.Mode); err != nil {
+		return nil, err
+	}
 	if c.TURN.N <= 0 {
 		c.TURN.N = 10
 	}
@@ -443,8 +446,26 @@ func ParseServer(args []string, errOut io.Writer) (*Server, error) {
 		return nil, err
 	}
 	s.Obf.Key = key
+	if err := validateObfTiming(s.Obf, s.Proxy.Mode); err != nil {
+		return nil, err
+	}
 
 	return s, nil
+}
+
+// validateObfTiming ограничивает -obf-timing UDP-релеем с включённой обфускацией:
+// без RTP-профиля паковать нечего, а в tcp-режиме pacing ломает RTT/конгешн KCP.
+func validateObfTiming(o ObfOpts, mode ProxyMode) error {
+	if o.Timing <= 0 {
+		return nil
+	}
+	if !o.Enabled() {
+		return errors.New("-obf-timing requires -obf-profile != none")
+	}
+	if mode != ProxyModeUDP {
+		return errors.New("-obf-timing supported only with -mode udp")
+	}
+	return nil
 }
 
 // validateObfProfile проверяет что -obf-profile содержит известное значение.
