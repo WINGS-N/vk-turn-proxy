@@ -36,7 +36,7 @@ func resolveWrapConfig(mode, cipherStr, keyHex string) (sessionproto.WrapCipher,
 			return 0, nil, "", fmt.Errorf("WRAP key generation: %w", err)
 		}
 		key = gen
-		log.Printf("WRAP: auto-generated key (set -wrap-key=%s on both ends to fix it)", hex.EncodeToString(key))
+		log.Printf("WRAP: auto-generated key %s (pass -wrap-key=... to pin a fixed one)", hex.EncodeToString(key))
 	} else {
 		decoded, err := hex.DecodeString(keyHex)
 		if err != nil {
