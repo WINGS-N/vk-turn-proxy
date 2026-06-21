@@ -812,15 +812,12 @@ func getYandexCreds(link string, resolver *protectedResolver) (string, string, s
 	defer cancel()
 
 	dialer := resolver.newWebsocketDialer(15 * time.Second)
-	conn, _, err := dialer.DialContext(ctx, data.Wss, h)
-	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return "", "", "", fmt.Errorf("ws dial: %w", err)
+	conn, wsResp, err := dialer.DialContext(ctx, data.Wss, h)
+	if wsResp != nil && wsResp.Body != nil {
+		_ = wsResp.Body.Close()
 	}
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
+	if err != nil {
+		return "", "", "", fmt.Errorf("ws dial: %w", err)
 	}
 	defer func() {
 		if closeErr := conn.Close(); closeErr != nil {
@@ -1188,7 +1185,7 @@ func oneDtlsConnection(
 	statusEnabled bool,
 ) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
-	var err error = nil
+	var err error
 	defer func() { c <- err }()
 	if runtime != nil {
 		runtime.EnsureStream(streamID)
