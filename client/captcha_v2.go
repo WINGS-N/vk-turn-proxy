@@ -107,6 +107,10 @@ func dispatchAutoVkCaptcha(
 	resolver *protectedResolver,
 	profile Profile,
 ) (string, error) {
+	// Surface auto-captcha solving to the app so it shows the same "(captcha)"
+	// connect stage as the interactive flow. The stage is cleared by auth_ready
+	// (or the next state change) once solving finishes.
+	emitCaptchaStateEvent("solving")
 	if strings.EqualFold(captchaSolverVersion, "v1") {
 		log.Printf("Using captcha solver v1 (legacy)")
 		return solveVkCaptcha(ctx, captchaErr, resolver, profile)
