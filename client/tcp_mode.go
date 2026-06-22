@@ -334,8 +334,10 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 		return nil, nil, newTurnSetupError(turnServerAddr, fmt.Errorf("TURN allocate: %w", err))
 	}
 	connectedStreams.Add(1)
+	emitProxyStreamsTelemetry(int(connectedStreams.Load()))
 	cleanupFns = append(cleanupFns, func() {
 		connectedStreams.Add(-1)
+		emitProxyStreamsTelemetry(int(connectedStreams.Load()))
 		_ = relayConn.Close()
 	})
 	log.Printf("TCP relayed-address=%s", relayConn.LocalAddr().String())

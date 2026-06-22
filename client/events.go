@@ -45,6 +45,21 @@ type proxyCapsEvent struct {
 	Capabilities []string `json:"capabilities"`
 }
 
+type proxyTelemetryEvent struct {
+	Type             string `json:"type"`
+	ConnectedStreams int    `json:"connectedStreams"`
+}
+
+// emitProxyStreamsTelemetry reports the current number of connected TURN
+// streams so the app can show connect progress (connected/total) while
+// connecting instead of jumping straight to fully connected.
+func emitProxyStreamsTelemetry(connected int) {
+	emitProxyEvent(proxyTelemetryEvent{
+		Type:             "telemetry",
+		ConnectedStreams: connected,
+	})
+}
+
 func emitProxyCaps() {
 	fmt.Println(
 		"PROXY_CAPS: version=" +

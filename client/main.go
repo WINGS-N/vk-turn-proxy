@@ -1632,8 +1632,10 @@ func oneTurnConnection(
 		return
 	}
 	connectedStreams.Add(1)
+	emitProxyStreamsTelemetry(int(connectedStreams.Load()))
 	defer func() {
 		connectedStreams.Add(-1)
+		emitProxyStreamsTelemetry(int(connectedStreams.Load()))
 		if err1 := relayConn.Close(); err1 != nil {
 			err = fmt.Errorf("failed to close TURN allocated connection: %s", err1)
 		}
