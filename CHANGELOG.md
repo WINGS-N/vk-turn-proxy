@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/samosvalishe/free-turn-proxy/compare/v1.4.1...v1.4.2) (2026-06-22)
+
+
+### Bug Fixes
+
+* captcha ([d73f426](https://github.com/samosvalishe/free-turn-proxy/commit/d73f42603aacefa3ec08d43771a073393ae0500b))
+
 ## [1.4.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.4.0...v1.4.1) (2026-06-19)
 
 
