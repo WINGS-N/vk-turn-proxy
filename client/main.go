@@ -783,7 +783,10 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 					captchaErr.CaptchaAttempt = "1"
 				}
 
-				if captchaKey != "" {
+				if captchaErr.CaptchaSid == "" {
+					data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&success_token=%s&access_token=%s",
+						link, escapedName, neturl.QueryEscape(successToken), token1)
+				} else if captchaKey != "" {
 					data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&captcha_key=%s&captcha_sid=%s&access_token=%s",
 						link, escapedName, neturl.QueryEscape(captchaKey), captchaErr.CaptchaSid, token1)
 				} else {
