@@ -520,7 +520,8 @@ func renderStatsTab(
 	var b strings.Builder
 	b.WriteString("\x1b[2J\x1b[H")
 	b.WriteString(renderHeader(t, tuiTabStats))
-	b.WriteString(fmt.Sprintf(
+	fmt.Fprintf(
+		&b,
 		"uptime=%s  mu_sessions=%d  active_streams=%d  clients=%d  rx=%s/s  tx=%s/s  total_rx=%s  total_tx=%s\n\n",
 		time.Since(t.startedAt).Round(time.Second),
 		sessionCount,
@@ -530,7 +531,7 @@ func renderStatsTab(
 		humanRate(serverTxRate),
 		humanBytes(serverRx),
 		humanBytes(serverTx),
-	))
+	)
 
 	b.WriteString(t.colorize("STREAMS", ansiGreenBold))
 	b.WriteString("\n")
