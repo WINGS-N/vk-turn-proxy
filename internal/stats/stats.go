@@ -23,40 +23,14 @@ func New(enabled bool) *Stats {
 	return &Stats{enabled: enabled}
 }
 
-// Сессионные глобальные счётчики суммарного трафика. Инкремент идёт только
-// между StartGlobalCount и StopGlobalCount — этим явно управляет вызывающий
-// (mobile-биндинг на старте/дисконнекте сессии). Рассчитаны на одну активную
-// сессию в процессе; вне сессии учёта нет.
-var (
-	globalTx    atomic.Uint64
-	globalRx    atomic.Uint64
-	trackGlobal atomic.Bool
-)
-
-// StartGlobalCount включает учёт суммарного трафика в глобальных счётчиках.
-func StartGlobalCount() {
-	trackGlobal.Store(true)
-}
-
-// StopGlobalCount выключает учёт и обнуляет глобальные счётчики.
-func StopGlobalCount() {
-	trackGlobal.Store(false)
-	globalTx.Store(0)
-	globalRx.Store(0)
-}
-
-// GlobalCounters возвращает накопленные суммарные tx/rx байт текущей сессии.
-func GlobalCounters() (tx, rx uint64) {
-	return globalTx.Load(), globalRx.Load()
+func (s *Stats) Counters() (tx, rx uint64) {
+	return s.tx.Load(), s.rx.Load()
 }
 
 // AddTx учитывает n переданных байт.
 func (s *Stats) AddTx(n int) {
 	if n <= 0 {
 		return
-	}
-	if trackGlobal.Load() {
-		globalTx.Add(uint64(n))
 	}
 	if !s.enabled {
 		return
@@ -68,9 +42,6 @@ func (s *Stats) AddTx(n int) {
 func (s *Stats) AddRx(n int) {
 	if n <= 0 {
 		return
-	}
-	if trackGlobal.Load() {
-		globalRx.Add(uint64(n))
 	}
 	if !s.enabled {
 		return
