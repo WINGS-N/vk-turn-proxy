@@ -156,7 +156,7 @@ dockers_v2:
       - server
     dockerfile: Dockerfile.goreleaser
     images:
-      - "ghcr.io/samosvalishe/{{ .Env.GITHUB_REPOSITORY }}"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY }}"
     tags:
       - "{{ .Version }}"
       - '{{ if not .Prerelease }}latest{{ end }}'
@@ -164,7 +164,7 @@ dockers_v2:
       - linux/amd64
       - linux/arm64
     labels:
-      org.opencontainers.image.source: "https://github.com/samosvalishe/{{ .Env.GITHUB_REPOSITORY }}"
+      org.opencontainers.image.source: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
       org.opencontainers.image.created: "{{ .Date }}"
