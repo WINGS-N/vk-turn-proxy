@@ -423,8 +423,10 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 	}()
 
 	cred := nextVkCred()
-	// VK replaced the old token_type=messages param with an anonymous scopes list.
-	data := fmt.Sprintf("client_secret=%s&client_id=%s&scopes=audio_anonymous,video_anonymous,photos_anonymous,profile_anonymous&isApiOauthAnonymEnabled=false&version=1&app_id=%s", cred.clientSecret, cred.clientID, cred.clientID)
+	// The call flow uses the token_type=messages anonymous token. VK's scopes variant
+	// of get_anonym_token mints an OAuth-only token that getAnonymousToken rejects with
+	// anonym_token.not_found, so only the host moved to vk.com, not the params.
+	data := fmt.Sprintf("client_id=%s&token_type=messages&client_secret=%s&version=1&app_id=%s", cred.clientID, cred.clientSecret, cred.clientID)
 	url := "https://login.vk.com/?act=get_anonym_token"
 
 	resp, err = doRequest(data, url)
