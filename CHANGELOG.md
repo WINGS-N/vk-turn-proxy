@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.4](https://github.com/samosvalishe/free-turn-proxy/compare/v1.4.3...v1.4.4) (2026-06-24)
+
+
+### Bug Fixes
+
+* заменить устаревший token_type=messages на анонимные скоупы в VK авторизации ([384c350](https://github.com/samosvalishe/free-turn-proxy/commit/384c350e7d9f1fbefa643cbfc352975c5bd7d263))
+
 ## [1.4.3](https://github.com/samosvalishe/free-turn-proxy/compare/v1.4.2...v1.4.3) (2026-06-22)
 
 
