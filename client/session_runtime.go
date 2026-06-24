@@ -28,13 +28,23 @@ type sessionRuntime struct {
 	leaderStreamValid         bool
 	controlHeartbeatSupported atomic.Bool
 
-	dispatchMu     sync.Mutex
-	dispatchSlots  []dispatchSlot
-	dispatchRRIdx  int
-	dispatchActive bool
+	dispatchMu        sync.Mutex
+	dispatchSlots     []dispatchSlot
+	dispatchRRIdx     int
+	dispatchChunkLeft int
+	dispatchActive    bool
 
 	credsManager *groupedCredsManager
 }
+
+// dispatchChunkSize is the number of consecutive WireGuard packets sent to one
+// relay before advancing. Per-packet round-robin (chunk=1) scatters a single
+// tunneled TCP flow's packets across relays with differing latency, which the
+// peer reads as reorder/loss and collapses the congestion window. A chunk of 8
+// fits inside one initial TCP congestion window, so reorder only happens at
+// chunk boundaries, which WireGuard's replay window absorbs. Multi-flow
+// aggregate is unaffected since chunks are small relative to total volume.
+const dispatchChunkSize = 8
 
 type dispatchSlot struct {
 	streamID byte
@@ -114,6 +124,7 @@ func (runtime *sessionRuntime) UnbindDispatchChannel(streamID byte) {
 			} else {
 				runtime.dispatchRRIdx %= len(runtime.dispatchSlots)
 			}
+			runtime.dispatchChunkLeft = 0
 			return
 		}
 	}
@@ -150,7 +161,19 @@ func (runtime *sessionRuntime) dispatchPacket(pkt *UDPPacket) bool {
 		idx := (start + i) % count
 		select {
 		case runtime.dispatchSlots[idx].sendCh <- pkt:
-			runtime.dispatchRRIdx = (idx + 1) % count
+			if idx != start {
+				// Current relay was full; switch to this free one and start a
+				// fresh chunk on it.
+				runtime.dispatchRRIdx = idx
+				runtime.dispatchChunkLeft = 0
+			}
+			if runtime.dispatchChunkLeft <= 0 {
+				runtime.dispatchChunkLeft = dispatchChunkSize
+			}
+			runtime.dispatchChunkLeft--
+			if runtime.dispatchChunkLeft <= 0 {
+				runtime.dispatchRRIdx = (idx + 1) % count
+			}
 			return true
 		default:
 		}
