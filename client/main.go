@@ -385,8 +385,8 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 		applyBrowserProfileFhttp(req, profile)
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "*/*")
-		req.Header.Set("Origin", "https://vk.ru")
-		req.Header.Set("Referer", "https://vk.ru/")
+		req.Header.Set("Origin", "https://vk.com")
+		req.Header.Set("Referer", "https://vk.com/")
 		req.Header.Set("Sec-Fetch-Site", "same-site")
 		req.Header.Set("Sec-Fetch-Mode", "cors")
 		req.Header.Set("Sec-Fetch-Dest", "empty")
@@ -423,8 +423,9 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 	}()
 
 	cred := nextVkCred()
-	data := fmt.Sprintf("client_id=%s&token_type=messages&client_secret=%s&version=1&app_id=%s", cred.clientID, cred.clientSecret, cred.clientID)
-	url := "https://login.vk.ru/?act=get_anonym_token"
+	// VK replaced the old token_type=messages param with an anonymous scopes list.
+	data := fmt.Sprintf("client_secret=%s&client_id=%s&scopes=audio_anonymous,video_anonymous,photos_anonymous,profile_anonymous&isApiOauthAnonymEnabled=false&version=1&app_id=%s", cred.clientSecret, cred.clientID, cred.clientID)
+	url := "https://login.vk.com/?act=get_anonym_token"
 
 	resp, err = doRequest(data, url)
 	if err != nil {
@@ -442,7 +443,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	vkDelayRandom(100, 150)
 	previewData := fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&fields=photo_200&access_token=%s", link, token1)
-	_, _ = doRequest(previewData, "https://api.vk.ru/method/calls.getCallPreview?v=5.275&client_id="+cred.clientID)
+	_, _ = doRequest(previewData, "https://api.vk.com/method/calls.getCallPreview?v=5.282&client_id="+cred.clientID)
 	vkDelayRandom(200, 400)
 
 	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s", link, escapedName, token1)
@@ -450,7 +451,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 		log.Printf("Reusing cached VK success_token for auth warmup")
 		data += fmt.Sprintf("&success_token=%s", neturl.QueryEscape(cachedSuccessToken))
 	}
-	url = "https://api.vk.ru/method/calls.getAnonymousToken?v=5.275&client_id=" + cred.clientID
+	url = "https://api.vk.com/method/calls.getAnonymousToken?v=5.282&client_id=" + cred.clientID
 
 	var token2 string
 	const maxCaptchaAttempts = 3
