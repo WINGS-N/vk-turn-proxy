@@ -351,10 +351,11 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	cleanupFns = append(cleanupFns, func() { _ = dtlsConn.Close() })
 	emitProxyStatus("dtls_ready")
 
-	flavor := sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX
 	if !skipMainlineTCPNegotiation.Load() {
-		negotiated, err := negotiateMainlineTCPTransport(dtlsConn)
-		if err != nil {
+		// Negotiation is kept to validate the server speaks mu/v1 TCP and to stay wire
+		// compatible with deployed peers; the selected flavor is ignored because the only
+		// supported transport is KCP+smux (see below).
+		if _, err := negotiateMainlineTCPTransport(dtlsConn); err != nil {
 			if !looksLikePlainTCPServerError(err) {
 				cleanup()
 				return nil, nil, err
@@ -364,41 +365,30 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 				err,
 			)
 			skipMainlineTCPNegotiation.Store(true)
-		} else {
-			flavor = negotiated
 		}
 	}
 
-	switch flavor {
-	case sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX:
-		smuxSession, err := smux.Client(dtlsConn, tcputil.DefaultSmuxConfig())
-		if err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("direct smux client: %w", err)
-		}
-		cleanupFns = append(cleanupFns, func() { _ = smuxSession.Close() })
-		emitProxyStatus("smux_ready")
-		log.Printf("TCP session ready (transport flavor: direct-smux)")
-		return smuxSession, cleanup, nil
-	default:
-		kcpSession, err := tcputil.NewKCPOverDTLS(dtlsConn, false)
-		if err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("KCP session: %w", err)
-		}
-		cleanupFns = append(cleanupFns, func() { _ = kcpSession.Close() })
-		emitProxyStatus("kcp_ready")
-
-		smuxSession, err := smux.Client(kcpSession, tcputil.DefaultSmuxConfig())
-		if err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("smux client: %w", err)
-		}
-		cleanupFns = append(cleanupFns, func() { _ = smuxSession.Close() })
-		emitProxyStatus("smux_ready")
-		log.Printf("TCP session ready (transport flavor: legacy KCP+smux)")
-		return smuxSession, cleanup, nil
+	// smux requires a reliable, ordered byte stream; the DTLS relay is a lossy, record
+	// oriented datagram transport. KCP bridges the two. Running smux directly over DTLS
+	// (the old DIRECT_SMUX flavor) tripped pion/dtls "buffer is too small" on smux's
+	// sub-record reads, so it was removed. Matches the reference upstream (Moroka8).
+	kcpSession, err := tcputil.NewKCPOverDTLS(dtlsConn, false)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("KCP session: %w", err)
 	}
+	cleanupFns = append(cleanupFns, func() { _ = kcpSession.Close() })
+	emitProxyStatus("kcp_ready")
+
+	smuxSession, err := smux.Client(kcpSession, tcputil.DefaultSmuxConfig())
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("smux client: %w", err)
+	}
+	cleanupFns = append(cleanupFns, func() { _ = smuxSession.Close() })
+	emitProxyStatus("smux_ready")
+	log.Printf("TCP session ready (transport: KCP+smux)")
+	return smuxSession, cleanup, nil
 }
 
 func looksLikePlainTCPServerError(err error) bool {
@@ -416,7 +406,6 @@ func looksLikePlainTCPServerError(err error) bool {
 
 func negotiateMainlineTCPTransport(dtlsConn net.Conn) (sessionproto.TcpTransportFlavor, error) {
 	supportedFlavors := []sessionproto.TcpTransportFlavor{
-		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX,
 		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX,
 	}
 	preferred := preferredFlavorFromOverride(supportedFlavors)

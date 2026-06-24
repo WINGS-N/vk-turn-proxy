@@ -64,20 +64,10 @@ func handleTCPConnection(ctx context.Context, dtlsConn net.Conn, connectAddr str
 	}
 }
 
-func openTCPSmuxServer(dtlsConn net.Conn, flavor sessionproto.TcpTransportFlavor) (*smux.Session, func(), error) {
-	if flavor == sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX {
-		smuxSession, err := smux.Server(dtlsConn, tcputil.DefaultSmuxConfig())
-		if err != nil {
-			return nil, nil, fmt.Errorf("direct smux server error: %w", err)
-		}
-		log.Printf("TCP server session ready (transport flavor: direct-smux)")
-		return smuxSession, func() {
-			if closeErr := smuxSession.Close(); closeErr != nil {
-				log.Printf("failed to close smux session: %v", closeErr)
-			}
-		}, nil
-	}
-
+func openTCPSmuxServer(dtlsConn net.Conn, _ sessionproto.TcpTransportFlavor) (*smux.Session, func(), error) {
+	// Always KCP+smux. DIRECT_SMUX (smux directly over the datagram DTLS conn) was removed:
+	// it tripped pion/dtls "buffer is too small" on smux's sub-record reads. KCP supplies the
+	// reliable ordered stream smux needs. Matches the reference upstream (Moroka8).
 	kcpSession, err := tcputil.NewKCPOverDTLS(dtlsConn, true)
 	if err != nil {
 		return nil, nil, fmt.Errorf("KCP session error: %w", err)

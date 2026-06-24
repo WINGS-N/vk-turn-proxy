@@ -147,8 +147,11 @@ func firstSupportedTransport(supported []sessionproto.TransportMode) sessionprot
 }
 
 func supportedTcpFlavorsForServer() []sessionproto.TcpTransportFlavor {
+	// Only KCP+smux is supported. DIRECT_SMUX (smux straight over DTLS) was removed: smux
+	// needs a reliable ordered byte stream, while the DTLS relay is a lossy, record-oriented
+	// datagram transport, so smux's sub-record reads tripped pion/dtls "buffer is too small".
+	// KCP is the required datagram-to-stream adapter. Matches the reference upstream (Moroka8).
 	return []sessionproto.TcpTransportFlavor{
-		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX,
 		sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX,
 	}
 }
@@ -168,9 +171,8 @@ func selectTcpFlavorForHello(hello *sessionproto.ClientHello) (sessionproto.TcpT
 		sessionproto.HasSupportedTcpFlavor(supported, preferred) {
 		return preferred, supported
 	}
-	if sessionproto.HasSupportedTcpFlavor(clientSupported, sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX) {
-		return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_DIRECT_SMUX, supported
-	}
+	// DIRECT_SMUX is no longer selectable (removed as a broken transport); always fall back
+	// to KCP+smux, including for older clients that still advertise DIRECT_SMUX.
 	return sessionproto.TcpTransportFlavor_TCP_TRANSPORT_FLAVOR_LEGACY_KCP_SMUX, supported
 }
 
