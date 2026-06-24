@@ -341,6 +341,22 @@ func vkDelayRandom(minMs, maxMs int) {
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
 
+type vkCred struct {
+	clientID     string
+	clientSecret string
+}
+
+var vkCreds = []vkCred{
+	{clientID: "6287487", clientSecret: "QbYic1K3lEV5kTGiqlq2"},
+	{clientID: "8202606", clientSecret: "lMRsTiMCyPnp5vfoldmn"},
+}
+
+var vkCredRotation atomic.Uint64
+
+func nextVkCred() vkCred {
+	return vkCreds[int(vkCredRotation.Add(1)-1)%len(vkCreds)]
+}
+
 func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInteractiveFallback bool) (string, string, []string, time.Duration, error) {
 	if remaining := captchaLockoutRemaining(); remaining > 0 {
 		emitCaptchaLockoutStatus(remaining)
@@ -406,7 +422,8 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 		}
 	}()
 
-	data := "client_id=6287487&token_type=messages&client_secret=QbYic1K3lEV5kTGiqlq2&version=1&app_id=6287487"
+	cred := nextVkCred()
+	data := fmt.Sprintf("client_id=%s&token_type=messages&client_secret=%s&version=1&app_id=%s", cred.clientID, cred.clientSecret, cred.clientID)
 	url := "https://login.vk.ru/?act=get_anonym_token"
 
 	resp, err = doRequest(data, url)
@@ -425,7 +442,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 
 	vkDelayRandom(100, 150)
 	previewData := fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&fields=photo_200&access_token=%s", link, token1)
-	_, _ = doRequest(previewData, "https://api.vk.ru/method/calls.getCallPreview?v=5.275&client_id=6287487")
+	_, _ = doRequest(previewData, "https://api.vk.ru/method/calls.getCallPreview?v=5.275&client_id="+cred.clientID)
 	vkDelayRandom(200, 400)
 
 	data = fmt.Sprintf("vk_join_link=https://vk.com/call/join/%s&name=%s&access_token=%s", link, escapedName, token1)
@@ -433,7 +450,7 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 		log.Printf("Reusing cached VK success_token for auth warmup")
 		data += fmt.Sprintf("&success_token=%s", neturl.QueryEscape(cachedSuccessToken))
 	}
-	url = "https://api.vk.ru/method/calls.getAnonymousToken?v=5.275&client_id=6287487"
+	url = "https://api.vk.ru/method/calls.getAnonymousToken?v=5.275&client_id=" + cred.clientID
 
 	var token2 string
 	const maxCaptchaAttempts = 3
