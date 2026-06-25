@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.4.4...v1.5.0) (2026-06-25)
+
+
+### Features
+
+* **mobile:** переименование ios -&gt; mobile, универсальный движок для iOS/Android ([575f278](https://github.com/samosvalishe/free-turn-proxy/commit/575f278a9a8090b356e5315bb8c8b545a1be6f6b))
+
+
+### Bug Fixes
+
+* ci ([bfaabcd](https://github.com/samosvalishe/free-turn-proxy/commit/bfaabcdc80c3f50c6bf53b76f3d010278274049b))
+* ci ([b42924e](https://github.com/samosvalishe/free-turn-proxy/commit/b42924e3603d6327993bec7e9b9aac11aa9e9165))
+
 ## [1.4.4](https://github.com/samosvalishe/free-turn-proxy/compare/v1.4.3...v1.4.4) (2026-06-24)
 
 
