@@ -149,6 +149,9 @@ release:
   mode: replace
   draft: false
   name_template: "{{ .ProjectName }} {{ .Version }}"
+  extra_files:
+    - glob: mobile-dist/mobile.aar
+    - glob: mobile-dist/Mobile.xcframework.zip
 
 dockers_v2:
   - id: server
