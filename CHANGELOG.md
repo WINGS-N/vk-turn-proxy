@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.5.0...v1.5.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* ci ([7eb33da](https://github.com/samosvalishe/free-turn-proxy/commit/7eb33da28a3ea1b0773ed633b90fbdb12764b032))
+
 ## [1.5.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.4.4...v1.5.0) (2026-06-25)
 
 
