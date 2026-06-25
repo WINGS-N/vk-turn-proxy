@@ -17,3 +17,4 @@ clients.json
 client_config.json
 node_modules
 dist
+/mobile-dist/
