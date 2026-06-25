@@ -1961,6 +1961,12 @@ func main() { //nolint:cyclop
 	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
 	manualCaptcha = opts.manualCaptcha
 	captchaSolverVersion = opts.captchaSolver
+	setVkAuthMode(opts.vkAuth)
+	if getVkAuthMode() == "account" {
+		log.Printf("[VK Auth] account mode: relay emits PROXY_EVENT vk_account_auth_required with the VK join URL; the host app opens it in a WebView, signs in, intercepts the VK turn_server creds, and delivers them back on a vk_account_creds stdin line")
+		// Read account creds delivered by the host app on stdin (account mode only).
+		StartAccountCredsStdinReader(ctx)
+	}
 	setTcpFlavorOverride(opts.tcpFlavor)
 	_ = strings.TrimSpace(opts.protoFingerprint)
 	emitProxyCaps()
@@ -2022,6 +2028,10 @@ func main() { //nolint:cyclop
 				opts.n = 10
 			}
 		}
+		if getVkAuthMode() == "account" && opts.n > accountMaxWorkers {
+			log.Printf("[VK Auth] account mode: capping workers from %d to %d (account TURN quota is small)", opts.n, accountMaxWorkers)
+			opts.n = accountMaxWorkers
+		}
 
 		tracker, err := newLinkHealthTracker(extracted, secondaryHash)
 		if err != nil {
@@ -2030,6 +2040,13 @@ func main() { //nolint:cyclop
 		credsGroupSize := max(1, opts.credsGroupSize)
 		numGroups := max(1, ceilDiv(opts.n, credsGroupSize))
 		vkFetch := func(fctx context.Context, hash string, allowInteractive bool) (turnCred, error) {
+			if getVkAuthMode() == "account" {
+				user, pass, addrs, err := fetchAccountVkCreds(fctx, hash, peerResolver, getRandomProfile().UserAgent, 0)
+				if err != nil {
+					return turnCred{}, err
+				}
+				return turnCred{user: user, pass: pass, addrs: addrs, lifetime: 0}, nil
+			}
 			user, pass, addrs, lifetime, err := getVkCredsWithFallback(hash, peerResolver, allowInteractive)
 			if err != nil {
 				return turnCred{}, err

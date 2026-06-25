@@ -303,6 +303,12 @@ func resolveSessionID(sessionMode sessionproto.Mode, sessionIDFlag string) []byt
 	return sessionID
 }
 
+// waitForReady blocks until the session signals ready (okchan), the context is
+// cancelled, or the timeout elapses. While a captcha or a VK account sign-in is
+// pending (isCaptchaPending / isAccountAuthPending) the timeout deadline is
+// continuously pushed back: those flows block creds fetch on a human in the
+// WebView for up to minutes, and that wait must never be counted as a session
+// failure that tears the tunnel down mid-auth.
 func waitForReady(ctx context.Context, okchan <-chan struct{}, timeout time.Duration) bool {
 	if okchan == nil {
 		return false
@@ -318,7 +324,7 @@ func waitForReady(ctx context.Context, okchan <-chan struct{}, timeout time.Dura
 		case <-ctx.Done():
 			return false
 		case <-ticker.C:
-			if isCaptchaPending() {
+			if isCaptchaPending() || isAccountAuthPending() {
 				deadline = time.Now().Add(timeout)
 				continue
 			}
@@ -344,7 +350,7 @@ func waitForProbeVersion(ctx context.Context, probeResult <-chan uint32, timeout
 		case <-ctx.Done():
 			return muProtocolNone
 		case <-ticker.C:
-			if isCaptchaPending() {
+			if isCaptchaPending() || isAccountAuthPending() {
 				deadline = time.Now().Add(timeout)
 				continue
 			}
@@ -374,7 +380,7 @@ func waitForMainlineControlHandle(
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if isCaptchaPending() {
+			if isCaptchaPending() || isAccountAuthPending() {
 				deadline = time.Now().Add(timeout)
 				continue
 			}
