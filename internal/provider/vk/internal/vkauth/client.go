@@ -257,7 +257,9 @@ func (c *Client) fetch(ctx context.Context, link string, streamID int) (string, 
 		lastErr = err
 		c.log.Warnf("[STREAM %d] [VK Auth] Failed with client_id=%s: %v", streamID, creds.ClientID, err)
 
-		if errors.Is(err, ErrCaptchaWaitRequired) || errors.Is(err, ErrFatalCaptchaNoStreams) {
+		if errors.Is(err, ErrCaptchaWaitRequired) || errors.Is(err, ErrFatalCaptchaNoStreams) ||
+			errors.Is(err, ErrInvalidJoinLink) || errors.Is(err, ErrAnonymousBlocked) ||
+			errors.Is(err, ErrCallFull) {
 			return "", "", nil, err
 		}
 		es := err.Error()
