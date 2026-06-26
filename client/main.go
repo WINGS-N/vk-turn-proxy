@@ -1963,7 +1963,7 @@ func main() { //nolint:cyclop
 	captchaSolverVersion = opts.captchaSolver
 	setVkAuthMode(opts.vkAuth)
 	if getVkAuthMode() == "account" {
-		log.Printf("[VK Auth] account mode: relay emits PROXY_EVENT vk_account_auth_required with the VK join URL; the host app opens it in a WebView, signs in, intercepts the VK turn_server creds, and delivers them back on a vk_account_creds stdin line")
+		log.Printf("[VK Auth] account mode armed")
 		// Read account creds delivered by the host app on stdin (account mode only).
 		StartAccountCredsStdinReader(ctx)
 	}
@@ -2041,11 +2041,11 @@ func main() { //nolint:cyclop
 		numGroups := max(1, ceilDiv(opts.n, credsGroupSize))
 		vkFetch := func(fctx context.Context, hash string, allowInteractive bool) (turnCred, error) {
 			if getVkAuthMode() == "account" {
-				user, pass, addrs, err := fetchAccountVkCreds(fctx, hash, peerResolver, getRandomProfile().UserAgent, 0)
+				user, pass, addrs, lifetime, err := getAccountVkCreds(fctx, hash, peerResolver)
 				if err != nil {
 					return turnCred{}, err
 				}
-				return turnCred{user: user, pass: pass, addrs: addrs, lifetime: 0}, nil
+				return turnCred{user: user, pass: pass, addrs: addrs, lifetime: lifetime}, nil
 			}
 			user, pass, addrs, lifetime, err := getVkCredsWithFallback(hash, peerResolver, allowInteractive)
 			if err != nil {

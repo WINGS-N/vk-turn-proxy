@@ -58,6 +58,8 @@ type vkAccountCredsLine struct {
 	Credential string   `json:"credential"`
 	URLs       []string `json:"urls"`
 	Cancel     bool     `json:"cancel"`
+	Cookies    string   `json:"cookies"`
+	UA         string   `json:"ua"`
 }
 
 const (
@@ -73,6 +75,23 @@ const vkAccountJoinHost = "vk.com"
 // vkJoinURLForHash builds the canonical VK call-join page URL for a join hash.
 func vkJoinURLForHash(hash string) string {
 	return "https://" + vkAccountJoinHost + "/call/join/" + hash
+}
+
+// vkHashFromLink extracts the bare join hash from a VK call-join URL, returning
+// the input unchanged when it is already a hash. Account-auth state is keyed by
+// hash (acquireAccountAuth/injectTurnCreds), but the host app echoes back the
+// full join URL it received in the vk_account_auth_required event when it
+// delivers creds on stdin, so the reader must normalize to the hash or the
+// resolve/cache miss the leader's waiter and it blocks until the auth timeout.
+func vkHashFromLink(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndex(s, "/call/join/"); i >= 0 {
+		s = s[i+len("/call/join/"):]
+	}
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.Trim(strings.TrimSpace(s), "/")
 }
 
 // vkAuthMode is the active VK auth mode: "account" or "anonymous".
@@ -298,10 +317,17 @@ func StartAccountCredsStdinReader(ctx context.Context) {
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				continue
 			}
+			if msg.Type == "vk_cookies" {
+				setVkCookies(msg.Cookies, msg.UA)
+				if strings.TrimSpace(msg.Cookies) != "" {
+					log.Printf("[VK Auth] VK session cookies updated (%d chars, ua=%t)", len(strings.TrimSpace(msg.Cookies)), strings.TrimSpace(msg.UA) != "")
+				}
+				continue
+			}
 			if msg.Type != "vk_account_creds" {
 				continue
 			}
-			link := strings.TrimSpace(msg.Link)
+			link := vkHashFromLink(msg.Link)
 			if link == "" {
 				continue
 			}
