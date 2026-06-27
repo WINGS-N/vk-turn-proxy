@@ -32,6 +32,7 @@ type credGroup struct {
 	assignedIdx    int
 	prefetching    bool
 	retryAfter     time.Time
+	generation     uint64
 }
 
 type groupedCredsManager struct {
@@ -92,6 +93,18 @@ func (m *groupedCredsManager) GetCredsForWorker(workerID int) (string, string, s
 		return "", "", "", err
 	}
 	return cred.user, cred.pass, pickStreamServerAddr(workerID, cred.addrs), nil
+}
+
+// WorkerCredGeneration returns a counter that increments every time the
+// worker's credential group fetches fresh TURN credentials. A worker captures
+// it at allocate time and recycles its TURN allocation when it changes, so the
+// new pion client re-auths CreatePermission with the rotated username/password
+// instead of failing the periodic permission refresh with a 400.
+func (m *groupedCredsManager) WorkerCredGeneration(workerID int) uint64 {
+	g := m.groupForWorker(workerID)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.generation
 }
 
 // ReportSetupFailure advances the rotation offset for the worker and marks the
@@ -218,6 +231,7 @@ func (g *credGroup) acquire(mgr *groupedCredsManager, allowInteractive bool) (tu
 		g.bornAt = time.Now()
 		g.lifetime = cred.lifetime
 		g.valid = true
+		g.generation++
 		g.assignedIdx = link.indexHint
 		g.lastRefreshErr = nil
 		g.retryAfter = time.Time{}
@@ -244,6 +258,7 @@ func (g *credGroup) runPrefetch(mgr *groupedCredsManager) {
 	g.bornAt = time.Now()
 	g.lifetime = cred.lifetime
 	g.valid = true
+	g.generation++
 	g.assignedIdx = link.indexHint
 	g.lastRefreshErr = nil
 	g.retryAfter = time.Time{}

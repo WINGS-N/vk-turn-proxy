@@ -32,7 +32,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
-	"github.com/pion/logging"
 	"github.com/pion/transport/v4"
 	"github.com/pion/turn/v5"
 )
@@ -1519,7 +1518,31 @@ type turnParams struct {
 	// streamID so the mu/v1 SessionHello handler in oneDtlsConnection
 	// can Enable wrap after the server's selected_wrap_cipher arrives.
 	wrapStates *sync.Map // map[int]*wrap.StatefulConn
+	// recycleGate serializes credential-rotation recycles across workers (cap 1)
+	// so they roll out one stream at a time instead of all dropping at once.
+	recycleGate chan struct{}
 }
+
+const (
+	// credsRotationWatchInterval is how often a running TURN worker checks
+	// whether its credential group rotated (TTL refresh).
+	credsRotationWatchInterval = 3 * time.Second
+	// recycleSettleWindow is how long a worker holds the shared rollout slot
+	// after recycling, giving its replacement time to re-Allocate and finish the
+	// DTLS handshake before the next worker is allowed to recycle. This keeps the
+	// rollout strictly one-stream-at-a-time so the session never loses every
+	// stream at once.
+	recycleSettleWindow = 5 * time.Second
+	// accountStreamMaxAge recycles each VK ID (account-mode) stream before its TURN
+	// permission lapses. The OK server rejects pion's periodic CreatePermission
+	// refresh (400), so a permission silently dies ~300s after allocation while
+	// DTLS still reports alive; recycling well under that installs a fresh
+	// allocation + permission. Anonymous mode refreshes fine and is left alone.
+	accountStreamMaxAge = 150 * time.Second
+	// accountStreamAgeJitter spreads the first recycle wave so streams do not all
+	// hit max age in the same tick.
+	accountStreamAgeJitter = 6 * time.Second
+)
 
 func oneTurnConnection(
 	ctx context.Context,
@@ -1626,7 +1649,7 @@ func oneTurnConnection(
 		Username:               user,
 		Password:               pass,
 		RequestedAddressFamily: addrFamily,
-		LoggerFactory:          logging.NewDefaultLoggerFactory(),
+		LoggerFactory:          newTurnLoggerFactory(),
 	}
 
 	client, err1 := turn.NewClient(cfg)
@@ -1698,6 +1721,63 @@ func oneTurnConnection(
 	}
 	if turnParams.wrapMode != "" && turnParams.wrapMode != "off" {
 		log.Printf("[STREAM %d] WRAP mode=%s; waiting for mu/v1 SessionHello to install cipher", streamID, turnParams.wrapMode)
+	}
+	// Recycle this allocation when the credential group rotates its TURN
+	// username/password (TTL refresh). Otherwise the pion client keeps refreshing
+	// CreatePermission with the stale credentials, the server rejects it (400 Bad
+	// Request), and the stream silently dies once the permission lifetime ends.
+	// turncancel() arms the relay/upstream deadlines, both I/O loops unwind, and
+	// oneTurnConnectionLoop re-fetches fresh creds and re-Allocates. The per-stream
+	// stagger recycles one stream at a time so the group is not dropped at once.
+	if turnParams.credsManager != nil {
+		accountMode := getVkAuthMode() == "account"
+		startGen := turnParams.credsManager.WorkerCredGeneration(streamID)
+		var ageDeadline time.Time
+		if accountMode {
+			// VK ID mode only: recycle before the TURN permission lapses (see
+			// accountStreamMaxAge). Jitter per stream so the first wave does not all
+			// age out in the same tick.
+			ageDeadline = time.Now().Add(accountStreamMaxAge + time.Duration(streamID)*accountStreamAgeJitter)
+		}
+		go func() {
+			ticker := time.NewTicker(credsRotationWatchInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-turnctx.Done():
+					return
+				case <-ticker.C:
+					rotated := turnParams.credsManager.WorkerCredGeneration(streamID) != startGen
+					aged := accountMode && time.Now().After(ageDeadline)
+					if !rotated && !aged {
+						continue
+					}
+					// Roll the recycle across the group one stream at a time so the
+					// session always keeps other streams live: take the shared
+					// rollout slot, recycle this stream, and release the slot only
+					// after a settle window long enough for the replacement to
+					// re-Allocate and finish its DTLS handshake. Other workers block
+					// on the slot until then, so they recycle strictly in sequence.
+					if turnParams.recycleGate != nil {
+						select {
+						case turnParams.recycleGate <- struct{}{}:
+						case <-turnctx.Done():
+							return
+						}
+						time.AfterFunc(recycleSettleWindow, func() {
+							<-turnParams.recycleGate
+						})
+					}
+					reason := "credentials rotated"
+					if aged && !rotated {
+						reason = "max stream age reached"
+					}
+					log.Printf("[STREAM %d] recycling TURN allocation (%s) for fresh permission auth", streamID, reason)
+					turncancel()
+					return
+				}
+			}
+		}()
 	}
 	var addr atomic.Value
 	// Start read-loop on conn2 (output of DTLS)
@@ -1964,6 +2044,10 @@ func main() { //nolint:cyclop
 	setVkAuthMode(opts.vkAuth)
 	if getVkAuthMode() == "account" {
 		log.Printf("[VK Auth] account mode armed")
+		// Persist + restore the VK session across relay restarts so a restart does
+		// not force the host app to re-deliver cookies.
+		setVkSessionFile(opts.vkSessionFile)
+		loadVkSessionFromFile()
 		// Read account creds delivered by the host app on stdin (account mode only).
 		StartAccountCredsStdinReader(ctx)
 	}
@@ -2119,6 +2203,7 @@ func main() { //nolint:cyclop
 		wrapMode:     wrapMode,
 		wrapSendKey:  opts.wrapSendKey,
 		wrapStates:   &sync.Map{},
+		recycleGate:  make(chan struct{}, 1),
 	}
 	sessionID := []byte(nil)
 

@@ -14,7 +14,6 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	sessionmuv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/mu/v1"
 	"github.com/cacggghp/vk-turn-proxy/tcputil"
-	"github.com/pion/logging"
 	"github.com/pion/turn/v5"
 	"github.com/xtaci/smux"
 )
@@ -316,7 +315,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 		Username:               user,
 		Password:               pass,
 		RequestedAddressFamily: addrFamily,
-		LoggerFactory:          logging.NewDefaultLoggerFactory(),
+		LoggerFactory:          newTurnLoggerFactory(),
 	})
 	if err != nil {
 		cleanup()
