@@ -10,11 +10,13 @@ import (
 )
 
 const (
-	groupRefreshSlackDuration   = 2 * time.Minute
-	groupFallbackLifetime       = 10 * time.Minute
-	groupProactiveRefreshFactor = 4
-	groupProactiveRefreshDiv    = 5
-	groupRetryCooldown          = 90 * time.Second
+	groupRefreshSlackDuration      = 2 * time.Minute
+	groupFallbackLifetime          = 10 * time.Minute
+	groupProactiveRefreshFactor    = 4
+	groupProactiveRefreshDiv       = 5
+	groupRetryCooldown             = 90 * time.Second
+	groupSoftRetryCooldown         = 10 * time.Second
+	groupBackgroundRefreshInterval = 15 * time.Second
 )
 
 type credFetcher func(ctx context.Context, link string, allowInteractive bool) (turnCred, error)
@@ -70,7 +72,36 @@ func newGroupedCredsManager(ctx context.Context, numGroups, groupSize int, track
 		mgr.groups[i] = g
 	}
 	tracker.start(mgrCtx)
+	go mgr.runBackgroundRefresh()
 	return mgr
+}
+
+// runBackgroundRefresh keeps every group's creds warm independently of worker
+// recycling. The only other refresh trigger is a worker re-allocating (acquire),
+// so without this a quiet or stalled recycle cadence lets a group's creds lapse
+// and all of its workers die. Groups are refreshed one at a time to avoid hitting
+// the VK token chain with a simultaneous wave.
+func (m *groupedCredsManager) runBackgroundRefresh() {
+	ticker := time.NewTicker(groupBackgroundRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			for _, g := range m.groups {
+				g.mu.Lock()
+				due := g.dueForBackgroundRefresh()
+				if due {
+					g.prefetching = true
+				}
+				g.mu.Unlock()
+				if due {
+					g.runPrefetch(m)
+				}
+			}
+		}
+	}
 }
 
 func (m *groupedCredsManager) Stop() {
@@ -186,6 +217,30 @@ func (g *credGroup) shouldPrefetch() bool {
 	return time.Now().After(threshold)
 }
 
+// trulyExpired reports whether the cred is past its usable life. effectiveLifetime
+// already subtracts a safety margin from the server's stated expiry, so the cred
+// stays usable right up to bornAt+effectiveLifetime; expired() trips earlier (minus
+// the refresh slack) only to schedule a proactive refresh, not to stop serving.
+func (g *credGroup) trulyExpired() bool {
+	if !g.valid {
+		return true
+	}
+	return time.Now().After(g.bornAt.Add(g.effectiveLifetime()))
+}
+
+// dueForBackgroundRefresh reports whether a valid, idle group has aged enough to
+// refresh proactively (at the prefetch threshold or the conservative expiry,
+// whichever comes first) and is not inside a retry cooldown.
+func (g *credGroup) dueForBackgroundRefresh() bool {
+	if !g.valid || g.prefetching || g.refreshing {
+		return false
+	}
+	if !g.retryAfter.IsZero() && time.Now().Before(g.retryAfter) {
+		return false
+	}
+	return g.shouldPrefetch() || g.expired()
+}
+
 func (g *credGroup) acquire(mgr *groupedCredsManager, allowInteractive bool) (turnCred, error) {
 	g.mu.Lock()
 	for {
@@ -206,6 +261,14 @@ func (g *credGroup) acquire(mgr *groupedCredsManager, allowInteractive bool) (tu
 			continue
 		}
 		if !g.retryAfter.IsZero() && time.Now().Before(g.retryAfter) {
+			// Keep serving the existing cred while it is still genuinely usable
+			// instead of erroring the worker out: a transient fetch failure must not
+			// black-hole the whole group and kill its allocations.
+			if g.valid && !g.trulyExpired() {
+				cred := g.cred
+				g.mu.Unlock()
+				return cred, nil
+			}
 			err := g.lastRefreshErr
 			if err == nil {
 				err = errors.New("creds fetch backoff active")
@@ -222,6 +285,16 @@ func (g *credGroup) acquire(mgr *groupedCredsManager, allowInteractive bool) (tu
 		g.refreshing = false
 		if err != nil {
 			g.lastRefreshErr = err
+			// Soft path: if the previous cred is still usable, keep handing it out
+			// and retry soon rather than locking the group out for the full cooldown
+			// (which black-holes every worker until the cred actually lapses).
+			if g.valid && !g.trulyExpired() {
+				g.retryAfter = time.Now().Add(groupSoftRetryCooldown)
+				cred := g.cred
+				g.cond.Broadcast()
+				g.mu.Unlock()
+				return cred, nil
+			}
 			g.retryAfter = time.Now().Add(groupRetryCooldown)
 			g.cond.Broadcast()
 			g.mu.Unlock()
