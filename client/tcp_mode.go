@@ -255,7 +255,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 	if err != nil {
 		return nil, nil, fmt.Errorf("get TURN creds: %w", err)
 	}
-	emitProxyStatus("auth_ready")
+	emitProxyStreamStatus("auth_ready", workerID)
 
 	urlHost, urlPort, err := net.SplitHostPort(rawURL)
 	if err != nil {
@@ -340,7 +340,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 		_ = relayConn.Close()
 	})
 	log.Printf("TCP relayed-address=%s", relayConn.LocalAddr().String())
-	emitProxyStatus("turn_ready")
+	emitProxyStreamStatus("turn_ready", workerID)
 
 	dtlsConn, err := dtlsFunc(ctx, &relayPacketConn{relay: relayConn, peer: peer}, peer)
 	if err != nil {
@@ -348,7 +348,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 		return nil, nil, newTurnSetupError(turnServerAddr, fmt.Errorf("DTLS handshake: %w", err))
 	}
 	cleanupFns = append(cleanupFns, func() { _ = dtlsConn.Close() })
-	emitProxyStatus("dtls_ready")
+	emitProxyStreamStatus("dtls_ready", workerID)
 
 	if !skipMainlineTCPNegotiation.Load() {
 		// Negotiation is kept to validate the server speaks mu/v1 TCP and to stay wire
@@ -377,7 +377,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 		return nil, nil, fmt.Errorf("KCP session: %w", err)
 	}
 	cleanupFns = append(cleanupFns, func() { _ = kcpSession.Close() })
-	emitProxyStatus("kcp_ready")
+	emitProxyStreamStatus("kcp_ready", workerID)
 
 	smuxSession, err := smux.Client(kcpSession, tcputil.DefaultSmuxConfig())
 	if err != nil {
@@ -385,7 +385,7 @@ func createTCPSmuxSession(ctx context.Context, turnConfig *turnParams, peer *net
 		return nil, nil, fmt.Errorf("smux client: %w", err)
 	}
 	cleanupFns = append(cleanupFns, func() { _ = smuxSession.Close() })
-	emitProxyStatus("smux_ready")
+	emitProxyStreamStatus("smux_ready", workerID)
 	log.Printf("TCP session ready (transport: KCP+smux)")
 	return smuxSession, cleanup, nil
 }

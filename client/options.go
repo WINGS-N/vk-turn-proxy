@@ -27,6 +27,7 @@ type clientOptions struct {
 	captchaSolver    string
 	vkAuth           string
 	vkSessionFile    string
+	vkCookieFilePoll bool
 	tcpFlavor        string
 	credsGroupSize   int
 	protectSock      string
@@ -80,6 +81,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.IntVar(&opts.credsGroupSize, "creds-group-size", 12, "workers per TURN identity (smaller = more identities, less per-identity rate limit; larger = fewer auth calls)")
 	fs.StringVar(&opts.protectSock, "protect-sock", "", "unix socket used for VpnService.protect fd bridge")
 	fs.StringVar(&opts.vkSessionFile, "vk-session-file", "", "path to persist VK session cookies across relay restarts (account mode)")
+	fs.BoolVar(&opts.vkCookieFilePoll, "vk-cookie-file-poll", false, "poll vk-session-file for live cookie updates written by the host app (root/no-stdin path where the vk_account_creds stdin line cannot be delivered)")
 	fs.StringVar(&opts.protoFingerprint, "proto-fp", "", "deprecated; ignored")
 	fs.StringVar(&opts.sessionMode, "session-mode", string(sessionproto.ModeMainline), "TURN session mode: mainline|mu|auto")
 	fs.StringVar(&opts.sessionID, "session-id", "", "override session ID (hex, 32 chars) for mu mode")

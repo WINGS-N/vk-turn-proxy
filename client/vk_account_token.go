@@ -55,6 +55,11 @@ func setVkCookies(cookies, ua string) {
 // vkSessionFile persists the session across relay restarts; set once at startup.
 var vkSessionFile string
 
+// vkSessionReadOnly is set on the root/file-poll path: the host app owns the
+// session file there (the relay runs as root, so its own write would create a
+// root-owned file the app could no longer overwrite), so the relay only reads it.
+var vkSessionReadOnly bool
+
 func setVkSessionFile(path string) {
 	vkSessionFile = strings.TrimSpace(path)
 }
@@ -93,7 +98,7 @@ func loadVkSessionFromFile() {
 // persistVkSession atomically writes the current session to disk for the next
 // relay start to restore. Safe to call without holding vkSessionMu.
 func persistVkSession() {
-	if vkSessionFile == "" {
+	if vkSessionFile == "" || vkSessionReadOnly {
 		return
 	}
 	vkSessionMu.RLock()
@@ -111,6 +116,68 @@ func persistVkSession() {
 		return
 	}
 	_ = os.Rename(tmp, vkSessionFile)
+}
+
+const vkSessionFilePollInterval = 3 * time.Second
+
+// startVkSessionFilePoll watches the session file for cookies written by the host
+// app on the root/kernel-WG path, where the relay's stdin is not writable so the
+// usual vk_account_creds stdin line cannot be delivered. It adopts a changed
+// session live and wakes any fetch blocked waiting for cookies.
+func startVkSessionFilePoll(ctx context.Context) {
+	if vkSessionFile == "" {
+		return
+	}
+	vkSessionReadOnly = true
+	go func() {
+		ticker := time.NewTicker(vkSessionFilePollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				adoptVkSessionFromFileIfWaiting()
+			}
+		}
+	}()
+}
+
+func adoptVkSessionFromFileIfWaiting() {
+	if vkSessionFile == "" {
+		return
+	}
+	data, err := os.ReadFile(vkSessionFile)
+	if err != nil {
+		return
+	}
+	var s vkSessionPersist
+	if json.Unmarshal(data, &s) != nil {
+		return
+	}
+	fresh := strings.TrimSpace(s.Cookies)
+	if fresh == "" {
+		return
+	}
+	vkSessionMu.Lock()
+	// Only adopt while the relay is waiting (empty jar). The relay clears vkCookies
+	// before asking the app to sign in, so an empty jar means the file holds a fresh
+	// delivery. A non-empty jar means the relay already has a session -- possibly
+	// one it just rotated from a Set-Cookie response that the app has not yet
+	// mirrored to the file -- and overwriting it from the stale file would revert
+	// that rotation.
+	if vkCookies != "" {
+		vkSessionMu.Unlock()
+		return
+	}
+	vkCookies = fresh
+	if strings.TrimSpace(s.UA) != "" {
+		vkUA = strings.TrimSpace(s.UA)
+	}
+	close(vkCookieReadyCh)
+	vkCookieReadyCh = make(chan struct{})
+	vkSessionMu.Unlock()
+	log.Printf("[VK Auth] adopted VK session from disk (%d cookie chars)", len(fresh))
 }
 
 func getVkSession() (string, string, <-chan struct{}) {

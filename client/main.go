@@ -1330,7 +1330,7 @@ func oneDtlsConnection(
 		)
 	}
 	if !probeOnly && statusEnabled {
-		emitProxyStatus("dtls_ready")
+		emitProxyStreamStatus("dtls_ready", int(streamID))
 	}
 	if okchan != nil {
 		go func() {
@@ -1412,7 +1412,7 @@ func oneDtlsConnection(
 				if _, parseErr := sessionproto.ParseHeartbeatMessage(payload); parseErr != nil {
 					log.Printf("Failed to parse control heartbeat response: %s", parseErr)
 				} else if !probeOnly && (statusEnabled || proxyDtlsReadyState.Load()) {
-					emitProxyDtlsAliveStatus()
+					emitProxyDtlsAliveStatus(int(streamID))
 				}
 				continue
 			}
@@ -1441,7 +1441,7 @@ func oneDtlsConnection(
 				runtime.NoteInbound(streamID, n)
 			}
 			if statusEnabled || proxyDtlsReadyState.Load() {
-				emitProxyDtlsAliveStatus()
+				emitProxyDtlsAliveStatus(int(streamID))
 			}
 			addr1, ok := activeLocalPeer.Load().(net.Addr)
 			if !ok {
@@ -1580,7 +1580,7 @@ func oneTurnConnection(
 		return
 	}
 	if !probeOnly && statusEnabled {
-		emitProxyStatus("auth_ready")
+		emitProxyStreamStatus("auth_ready", int(streamID))
 	}
 	urlhost, urlport, err1 := net.SplitHostPort(url)
 	if err1 != nil {
@@ -1699,7 +1699,7 @@ func oneTurnConnection(
 	// address assigned on the TURN server.
 	log.Printf("[STREAM %d] relayed-address=%s", streamID, relayConn.LocalAddr().String())
 	if !probeOnly && statusEnabled {
-		emitProxyStatus("turn_ready")
+		emitProxyStreamStatus("turn_ready", int(streamID))
 	}
 
 	wg := sync.WaitGroup{}
@@ -2057,6 +2057,11 @@ func main() { //nolint:cyclop
 		// not force the host app to re-deliver cookies.
 		setVkSessionFile(opts.vkSessionFile)
 		loadVkSessionFromFile()
+		if opts.vkCookieFilePoll {
+			// Root/kernel-WG path: the host app delivers cookies by writing the
+			// session file (stdin is not writable under su -c), so watch it live.
+			startVkSessionFilePoll(ctx)
+		}
 		// Read account creds delivered by the host app on stdin (account mode only).
 		StartAccountCredsStdinReader(ctx)
 	}

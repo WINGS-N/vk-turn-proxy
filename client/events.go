@@ -26,6 +26,14 @@ type proxyStatusEvent struct {
 	Phase string `json:"phase"`
 }
 
+// proxyStreamStatusEvent is a stream-scoped status: it attributes a phase
+// (auth_ready / turn_ready / dtls_ready / ...) to the originating stream.
+type proxyStreamStatusEvent struct {
+	Type     string `json:"type"`
+	Phase    string `json:"phase"`
+	StreamID int    `json:"stream_id"`
+}
+
 type proxyLockoutEvent struct {
 	Type    string `json:"type"`
 	Seconds int    `json:"seconds"`
@@ -47,7 +55,7 @@ type proxyCapsEvent struct {
 
 type proxyTelemetryEvent struct {
 	Type             string `json:"type"`
-	ConnectedStreams int    `json:"connectedStreams"`
+	ConnectedStreams int    `json:"connected_streams"`
 }
 
 // emitProxyStreamsTelemetry reports the current number of connected TURN
@@ -83,10 +91,7 @@ func emitProxyEvent(payload any) {
 	fmt.Println("PROXY_EVENT: " + string(encoded))
 }
 
-func emitProxyStatus(marker string) {
-	if marker == "" {
-		return
-	}
+func applyProxyStatusState(marker string) {
 	switch marker {
 	case "auth_ready":
 		proxyAuthReadyState.Store(true)
@@ -96,14 +101,44 @@ func emitProxyStatus(marker string) {
 		proxyTurnReadyState.Store(true)
 		proxyDtlsReadyState.Store(true)
 	}
-	fmt.Println("PROXY_STATUS: " + marker)
+}
+
+func emitProxyStatus(marker string) {
+	if marker == "" {
+		return
+	}
+	applyProxyStatusState(marker)
 	emitProxyEvent(proxyStatusEvent{
 		Type:  "status",
 		Phase: marker,
 	})
 }
 
-func emitProxyDtlsAliveStatus() {
+// emitProxyStreamStatus is emitProxyStatus for a stream-scoped phase: it carries
+// the originating stream id so consumers can attribute the phase to a stream.
+func emitProxyStreamStatus(marker string, streamID int) {
+	if marker == "" {
+		return
+	}
+	applyProxyStatusState(marker)
+	emitProxyEvent(proxyStreamStatusEvent{
+		Type:     "status",
+		Phase:    marker,
+		StreamID: streamID,
+	})
+}
+
+// proxyDtlsAliveEvent enriches the dtls_alive heartbeat with which stream
+// emitted it and how many streams are currently connected, for diagnostics.
+// type/phase stay identical to the plain status event for backward compatibility.
+type proxyDtlsAliveEvent struct {
+	Type             string `json:"type"`
+	Phase            string `json:"phase"`
+	StreamID         int    `json:"stream_id"`
+	ConnectedStreams int    `json:"connected_streams"`
+}
+
+func emitProxyDtlsAliveStatus(streamID int) {
 	now := time.Now().Unix()
 	minInterval := int64(proxyDtlsAliveStatusMinInterval / time.Second)
 	for {
@@ -112,7 +147,12 @@ func emitProxyDtlsAliveStatus() {
 			return
 		}
 		if proxyDtlsAliveStatusAt.CompareAndSwap(last, now) {
-			emitProxyStatus("dtls_alive")
+			emitProxyEvent(proxyDtlsAliveEvent{
+				Type:             "status",
+				Phase:            "dtls_alive",
+				StreamID:         streamID,
+				ConnectedStreams: int(connectedStreams.Load()),
+			})
 			return
 		}
 	}
