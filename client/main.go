@@ -1542,6 +1542,9 @@ const (
 	// accountStreamAgeJitter spreads the first recycle wave so streams do not all
 	// hit max age in the same tick.
 	accountStreamAgeJitter = 6 * time.Second
+	// recycleConcurrencyPercent is how many streams may roll at once, as a percent
+	// of the worker count (floored, min 1), so the rollout scales with the fleet.
+	recycleConcurrencyPercent = 20
 )
 
 func oneTurnConnection(
@@ -1557,8 +1560,13 @@ func oneTurnConnection(
 ) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
 	var err error
+	// recycling marks an intentional self-recycle (creds rotation / max age):
+	// turncancel() closes relayConn and the in-flight DTLS write trips a
+	// "write on closed pipe", which is expected teardown, not a session failure -
+	// do not surface it as a recorded error.
+	var recycling atomic.Bool
 	defer func() {
-		if err != nil && runtime != nil {
+		if err != nil && runtime != nil && !recycling.Load() {
 			runtime.NoteSessionError(byte(streamID), err)
 		}
 		c <- err
@@ -1773,6 +1781,7 @@ func oneTurnConnection(
 						reason = "max stream age reached"
 					}
 					log.Printf("[STREAM %d] recycling TURN allocation (%s) for fresh permission auth", streamID, reason)
+					recycling.Store(true)
 					turncancel()
 					return
 				}
@@ -2190,6 +2199,10 @@ func main() { //nolint:cyclop
 	if err != nil {
 		log.Panicf("WRAP config: %v", err)
 	}
+	recycleConcurrency := opts.n * recycleConcurrencyPercent / 100
+	if recycleConcurrency < 1 {
+		recycleConcurrency = 1
+	}
 	params := &turnParams{
 		host:         opts.host,
 		port:         opts.port,
@@ -2203,7 +2216,7 @@ func main() { //nolint:cyclop
 		wrapMode:     wrapMode,
 		wrapSendKey:  opts.wrapSendKey,
 		wrapStates:   &sync.Map{},
-		recycleGate:  make(chan struct{}, 1),
+		recycleGate:  make(chan struct{}, recycleConcurrency),
 	}
 	sessionID := []byte(nil)
 
