@@ -23,7 +23,11 @@ const (
 	muReadyTimeout           = 30 * time.Second
 	muProbeTimeout           = 15 * time.Second
 	waitPollInterval         = 250 * time.Millisecond
-	controlHeartbeatInterval = 60 * time.Second
+	// Every stream heartbeats on this cadence (not only the session leader): the
+	// DTLS rides UDP, so a stream with no data lets its NAT mapping to the OK
+	// server lapse and dies, collapsing traffic onto fewer streams. 25s is the
+	// WireGuard-proven NAT-safe keepalive interval.
+	controlHeartbeatInterval = 25 * time.Second
 )
 
 type mainlineControlHandle struct {
@@ -220,9 +224,9 @@ func startControlHeartbeatLoop(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if runtime != nil && !runtime.IsHeartbeatLeader(streamID) {
-				continue
-			}
+			// Heartbeat on every stream, not only the leader: this doubles as a
+			// per-stream NAT/idle keepalive so non-leader streams survive quiet
+			// periods instead of dying and collapsing all traffic onto one stream.
 			heartbeatMeta := meta
 			if runtime != nil {
 				heartbeatMeta.ActiveFlows = runtime.ActiveStreamCount()
