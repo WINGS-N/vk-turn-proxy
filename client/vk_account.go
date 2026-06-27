@@ -64,7 +64,7 @@ type vkAccountCredsLine struct {
 
 const (
 	accountAuthWaitTimeout = 5 * time.Minute
-	accountMaxWorkers      = 4
+	accountMaxWorkers      = 24
 )
 
 // vkAccountJoinHost is the host the join link is built against. We use the
@@ -258,17 +258,6 @@ func acquireAccountAuth(link string) accountAuthHandle {
 	return accountAuthHandle{auth: a, leader: true}
 }
 
-// clearAccountAuth removes the in-flight guard for link if it still points at
-// the given auth, so a genuinely new attempt can re-emit. Only the leader calls
-// this, on resolve or failure.
-func clearAccountAuth(link string, a *accountAuth) {
-	injectedCredsMu.Lock()
-	if accountAuths[link] == a {
-		delete(accountAuths, link)
-	}
-	injectedCredsMu.Unlock()
-}
-
 // resolveAccountAuth publishes res to the shared auth for link and broadcasts it
 // to every waiter by closing done. The in-flight guard is also dropped here so
 // the link entry does not linger past the resolution. It is safe to call more
@@ -303,6 +292,7 @@ func StartAccountCredsStdinReader(ctx context.Context) {
 		// VK TURN creds lines can carry several turn: URLs; allow a generous line
 		// size so a long JSON object is not truncated.
 		scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		log.Printf("[VK Auth] account creds stdin reader started")
 		for scanner.Scan() {
 			select {
 			case <-ctx.Done():
@@ -310,6 +300,9 @@ func StartAccountCredsStdinReader(ctx context.Context) {
 			default:
 			}
 			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				log.Printf("[VK Auth] stdin read %d bytes: %.24s", len(line), line)
+			}
 			if line == "" || line[0] != '{' {
 				continue
 			}
@@ -349,99 +342,6 @@ func StartAccountCredsStdinReader(ctx context.Context) {
 			}})
 			log.Printf("[VK Auth] received account TURN creds for link %s (urls=%d)", link, len(addresses))
 		}
-		if err := scanner.Err(); err != nil {
-			log.Printf("[VK Auth] account creds stdin reader stopped: %s", err)
-		}
+		log.Printf("[VK Auth] account creds stdin reader exited (err=%v)", scanner.Err())
 	}()
-}
-
-// fetchAccountVkCreds returns ready TURN creds for a VK join hash in account
-// mode. If creds are not cached yet, it emits a vk_account_auth_required
-// PROXY_EVENT carrying the desktop join URL (the host app opens it in a WebView,
-// signs in, joins the call and intercepts the VK turn_server creds) and blocks
-// until the app delivers the creds on stdin, the app cancels, or the wait times
-// out. The returned tuple matches the host:port address shape used by the
-// anonymous path so callers stay unchanged.
-func fetchAccountVkCreds(ctx context.Context, link string, resolver *protectedResolver, userAgent string, streamID int) (string, string, []string, error) {
-	_ = resolver
-	_ = userAgent
-	link = strings.TrimSpace(link)
-	if link == "" {
-		return "", "", nil, fmt.Errorf("empty VK join link")
-	}
-
-	if user, pass, addrs, ok := getInjectedTurnCreds(link); ok {
-		log.Printf("[STREAM %d] [VK Auth] using cached account creds (urls=%d)", streamID, len(addrs))
-		return user, pass, addrs, nil
-	}
-
-	// Attach to the shared in-flight auth for this link. Only the leader (the
-	// first worker for the link while no auth is outstanding) emits events; all
-	// other workers wait on the same shared done channel so the
-	// vk_account_auth_required event (and the WebView open it drives) happens
-	// once per link. The acquire/emit pair is NOT atomic with the cache check
-	// above, but the leader status from acquireAccountAuth still guarantees a
-	// single emitter for any outstanding auth.
-	handle := acquireAccountAuth(link)
-	auth := handle.auth
-	if handle.leader {
-		// The leader owns the terminal event and clearing the in-flight guard so
-		// a later genuinely new attempt can re-emit.
-		defer clearAccountAuth(link, auth)
-		joinURL := vkJoinURLForHash(link)
-		emitProxyEvent(vkAccountAuthEvent{
-			Type: "vk_account_auth_required",
-			Link: joinURL,
-		})
-		log.Printf("[STREAM %d] [VK Auth] account auth required: link=%s (waiting for app to deliver creds on stdin)", streamID, joinURL)
-	} else {
-		log.Printf("[STREAM %d] [VK Auth] account auth already in flight for link; waiting on shared result (no re-emit)", streamID)
-	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, accountAuthWaitTimeout)
-	defer cancel()
-
-	// Mark a VK account auth as in flight so the session-establishment timeout
-	// (waitForReady) does not tear the session down while the user is still
-	// signing in. This can take minutes; the 5-min auth wait here is bounded by
-	// accountAuthWaitTimeout, not by the session ready timeout.
-	beginAccountAuthWait()
-	defer endAccountAuthWait()
-	log.Printf("[STREAM %d] [VK Auth] waiting for account sign-in (up to %s); session ready-timeout is suspended during this wait", streamID, accountAuthWaitTimeout)
-
-	var res accountCredsResult
-	select {
-	case <-auth.done:
-		// Broadcast result; safe to read res after done is closed.
-		res = auth.res
-	case <-waitCtx.Done():
-		reason := "VK account auth timeout"
-		if ctx.Err() != nil {
-			reason = "VK account auth aborted"
-		}
-		// Only the leader emits the terminal failure event so it fires once per
-		// link. Publish the failure to any sibling waiters too: resolveAccountAuth
-		// broadcasts via the shared done channel and drops the in-flight guard
-		// (the leader's deferred clearAccountAuth is then a no-op).
-		if handle.leader {
-			resolveAccountAuth(link, accountCredsResult{err: fmt.Errorf("%s: %w", reason, waitCtx.Err())})
-			emitProxyEvent(vkAccountAuthEvent{Type: "vk_account_auth_failed", Reason: reason})
-		}
-		return "", "", nil, fmt.Errorf("%s: %w", reason, waitCtx.Err())
-	}
-
-	if res.err != nil {
-		if handle.leader {
-			emitProxyEvent(vkAccountAuthEvent{Type: "vk_account_auth_failed", Reason: errorString(res.err)})
-		}
-		return "", "", nil, res.err
-	}
-	if handle.leader {
-		emitProxyEvent(vkAccountAuthEvent{Type: "vk_account_auth_complete"})
-	}
-	// The stdin reader also caches via injectTurnCreds; prefer the cache.
-	if user, pass, addrs, ok := getInjectedTurnCreds(link); ok {
-		return user, pass, addrs, nil
-	}
-	return res.creds.user, res.creds.pass, cloneAddrs(res.creds.addrs), nil
 }

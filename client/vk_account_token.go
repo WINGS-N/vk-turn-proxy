@@ -8,10 +8,13 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	fhttp "github.com/bogdanfinn/fhttp"
 )
 
 // B' authorized-account TURN flow. The host app delivers the live VK web session
@@ -46,12 +49,172 @@ func setVkCookies(cookies, ua string) {
 		vkCookieReadyCh = make(chan struct{})
 	}
 	vkSessionMu.Unlock()
+	persistVkSession()
+}
+
+// vkSessionFile persists the session across relay restarts; set once at startup.
+var vkSessionFile string
+
+func setVkSessionFile(path string) {
+	vkSessionFile = strings.TrimSpace(path)
+}
+
+type vkSessionPersist struct {
+	Cookies string `json:"cookies"`
+	UA      string `json:"ua"`
+}
+
+// loadVkSessionFromFile restores a persisted VK session into memory so the relay
+// keeps serving authorized TURN across its own restarts without asking the host
+// app to sign in again.
+func loadVkSessionFromFile() {
+	if vkSessionFile == "" {
+		return
+	}
+	data, err := os.ReadFile(vkSessionFile)
+	if err != nil {
+		return
+	}
+	var s vkSessionPersist
+	if json.Unmarshal(data, &s) != nil || strings.TrimSpace(s.Cookies) == "" {
+		return
+	}
+	vkSessionMu.Lock()
+	if vkCookies == "" {
+		vkCookies = strings.TrimSpace(s.Cookies)
+		if strings.TrimSpace(s.UA) != "" {
+			vkUA = strings.TrimSpace(s.UA)
+		}
+	}
+	vkSessionMu.Unlock()
+	log.Printf("[VK Auth] restored VK session from disk (%d cookie chars)", len(strings.TrimSpace(s.Cookies)))
+}
+
+// persistVkSession atomically writes the current session to disk for the next
+// relay start to restore. Safe to call without holding vkSessionMu.
+func persistVkSession() {
+	if vkSessionFile == "" {
+		return
+	}
+	vkSessionMu.RLock()
+	s := vkSessionPersist{Cookies: vkCookies, UA: vkUA}
+	vkSessionMu.RUnlock()
+	if s.Cookies == "" {
+		return
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		return
+	}
+	tmp := vkSessionFile + ".tmp"
+	if os.WriteFile(tmp, data, 0o600) != nil {
+		return
+	}
+	_ = os.Rename(tmp, vkSessionFile)
 }
 
 func getVkSession() (string, string, <-chan struct{}) {
 	vkSessionMu.RLock()
 	defer vkSessionMu.RUnlock()
 	return vkCookies, vkUA, vkCookieReadyCh
+}
+
+// vkCookiesUpdateEvent pushes the relay's refreshed VK cookie jar back to the
+// host app so its WebView CookieManager stays in sync with the rotated session.
+type vkCookiesUpdateEvent struct {
+	Type    string `json:"type"`
+	Cookies string `json:"cookies"`
+}
+
+func isVkHost(host string) bool {
+	return host == "vk.com" || strings.HasSuffix(host, ".vk.com")
+}
+
+// mergeVkSetCookies folds rotated Set-Cookie values from a vk.com response into
+// the cached session jar so later web_token mints stay authorized without another
+// app round-trip, and pushes the refreshed jar back to the host app on change.
+func mergeVkSetCookies(setCookies []*fhttp.Cookie) {
+	if len(setCookies) == 0 {
+		return
+	}
+	vkSessionMu.Lock()
+	pairs, order := cookiePairs(vkCookies)
+	changed := false
+	for _, c := range setCookies {
+		if c == nil || c.Name == "" {
+			continue
+		}
+		if c.MaxAge < 0 || (!c.Expires.IsZero() && c.Expires.Before(time.Now())) {
+			if _, ok := pairs[c.Name]; ok {
+				delete(pairs, c.Name)
+				order = removeCookieName(order, c.Name)
+				changed = true
+			}
+			continue
+		}
+		if old, ok := pairs[c.Name]; !ok || old != c.Value {
+			if !ok {
+				order = append(order, c.Name)
+			}
+			pairs[c.Name] = c.Value
+			changed = true
+		}
+	}
+	if !changed {
+		vkSessionMu.Unlock()
+		return
+	}
+	vkCookies = serializeCookies(pairs, order)
+	updated := vkCookies
+	vkSessionMu.Unlock()
+	persistVkSession()
+	log.Printf("[VK Auth] merged rotated VK cookies from response")
+	emitProxyEvent(vkCookiesUpdateEvent{Type: "vk_cookies_update", Cookies: updated})
+}
+
+func cookiePairs(s string) (map[string]string, []string) {
+	pairs := make(map[string]string)
+	var order []string
+	for _, part := range strings.Split(s, ";") {
+		part = strings.TrimSpace(part)
+		eq := strings.IndexByte(part, '=')
+		if eq <= 0 {
+			continue
+		}
+		name := strings.TrimSpace(part[:eq])
+		if _, ok := pairs[name]; !ok {
+			order = append(order, name)
+		}
+		pairs[name] = strings.TrimSpace(part[eq+1:])
+	}
+	return pairs, order
+}
+
+func serializeCookies(pairs map[string]string, order []string) string {
+	var b strings.Builder
+	for _, name := range order {
+		val, ok := pairs[name]
+		if !ok {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("; ")
+		}
+		b.WriteString(name)
+		b.WriteByte('=')
+		b.WriteString(val)
+	}
+	return b.String()
+}
+
+func removeCookieName(order []string, name string) []string {
+	out := order[:0]
+	for _, n := range order {
+		if n != name {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // Account-wide OK state, reused across calls and refreshed on staleness. The
@@ -100,11 +263,18 @@ func getAccountVkCreds(ctx context.Context, link string, resolver *protectedReso
 	if cookies == "" {
 		emitProxyEvent(vkAccountAuthEvent{Type: "vk_cookies_required"})
 		log.Printf("[VK Auth] waiting for host app to deliver VK session cookies")
+		// Suspend the session ready-timeout while we wait for the host app to
+		// deliver cookies (this can take minutes); endAccountAuthWait must run on
+		// every exit path so the pending counter stays balanced.
+		beginAccountAuthWait()
 		select {
 		case <-ready:
+			endAccountAuthWait()
 		case <-ctx.Done():
+			endAccountAuthWait()
 			return "", "", nil, 0, ctx.Err()
 		case <-time.After(accountAuthWaitTimeout):
+			endAccountAuthWait()
 			return "", "", nil, 0, fmt.Errorf("timed out waiting for VK session cookies")
 		}
 		cookies, ua, _ = getVkSession()
@@ -142,6 +312,9 @@ func getAccountVkCreds(ctx context.Context, link string, resolver *protectedReso
 			return nil, doErr
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if isVkHost(parsed.Hostname()) {
+			mergeVkSetCookies(resp.Cookies())
+		}
 		body, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			return nil, readErr
