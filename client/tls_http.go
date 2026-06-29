@@ -19,11 +19,14 @@ import (
 
 func applyBrowserProfileFhttp(req *fhttp.Request, profile Profile) {
 	req.Header.Set("User-Agent", profile.UserAgent)
-	req.Header.Set("sec-ch-ua", profile.SecChUa)
-	req.Header.Set("sec-ch-ua-mobile", profile.SecChUaMobile)
-	req.Header.Set("sec-ch-ua-platform", profile.SecChUaPlatform)
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("DNT", "1")
+	// Client Hints are Chromium-only; omit them for Safari/Firefox (empty SecChUa)
+	// so the UA and the headers stay consistent. See applyBrowserProfile.
+	if profile.SecChUa != "" {
+		req.Header.Set("sec-ch-ua", profile.SecChUa)
+		req.Header.Set("sec-ch-ua-mobile", profile.SecChUaMobile)
+		req.Header.Set("sec-ch-ua-platform", profile.SecChUaPlatform)
+	}
+	req.Header.Set("Accept-Language", acceptLanguageOf(profile))
 }
 
 func generateBrowserFp(profile Profile) string {
@@ -47,16 +50,13 @@ func generateFakeCursor() string {
 }
 
 func tlsClientProfileFor(profile Profile) profiles.ClientProfile {
-	switch {
-	case strings.Contains(profile.UserAgent, "Chrome/144"):
-		return profiles.Chrome_144
-	case strings.Contains(profile.UserAgent, "Chrome/146"):
-		return profiles.Chrome_146
-	case strings.Contains(profile.UserAgent, "Edg/146"):
-		return profiles.Chrome_146
-	default:
-		return profiles.Chrome_146
+	// The uTLS ClientHello is paired with each profile so the JA3/JA4 matches the
+	// advertised browser. Fall back to a current Chrome profile only if a profile
+	// was built without one.
+	if profile.TLS.GetClientHelloId().Client != "" {
+		return profile.TLS
 	}
+	return profiles.Chrome_146
 }
 
 func (r *protectedResolver) newTLSHTTPClient(profile Profile, timeout time.Duration) (tlsclient.HttpClient, error) {

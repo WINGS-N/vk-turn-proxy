@@ -32,6 +32,7 @@ type clientOptions struct {
 	credsGroupSize   int
 	protectSock      string
 	protoFingerprint string
+	browserFP        string
 	sessionMode      string
 	sessionID        string
 
@@ -83,6 +84,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.vkSessionFile, "vk-session-file", "", "path to persist VK session cookies across relay restarts (account mode)")
 	fs.BoolVar(&opts.vkCookieFilePoll, "vk-cookie-file-poll", false, "poll vk-session-file for live cookie updates written by the host app (root/no-stdin path where the vk_account_creds stdin line cannot be delivered)")
 	fs.StringVar(&opts.protoFingerprint, "proto-fp", "", "deprecated; ignored")
+	fs.StringVar(&opts.browserFP, "browser-fp", "auto", "browser fingerprint family for HTTP+TLS impersonation: auto|chrome|edge|safari|firefox (auto = random per session)")
 	fs.StringVar(&opts.sessionMode, "session-mode", string(sessionproto.ModeMainline), "TURN session mode: mainline|mu|auto")
 	fs.StringVar(&opts.sessionID, "session-id", "", "override session ID (hex, 32 chars) for mu mode")
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", `LiveKit room ID; "any" creates a fresh one. When set, runs WB Stream tunnel mode.`)
@@ -158,6 +160,12 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 		case DNSModeUDP, DNSModeDoH, DNSModeAuto:
 		default:
 			opts.dnsMode = DNSModeAuto
+		}
+		opts.browserFP = strings.ToLower(strings.TrimSpace(opts.browserFP))
+		switch opts.browserFP {
+		case FamilyChrome, FamilyEdge, FamilySafari, FamilyFirefox, FamilyAuto:
+		default:
+			opts.browserFP = FamilyAuto
 		}
 		opts.roomExchangeRoomID = strings.TrimSpace(opts.roomExchangeRoomID)
 		opts.roomExchangeRoomIDs = strings.TrimSpace(opts.roomExchangeRoomIDs)

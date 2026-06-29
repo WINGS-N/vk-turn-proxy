@@ -290,9 +290,14 @@ func callCaptchaNotRobotWithSliderPOC(
 }
 
 func buildCaptchaDeviceJSON(profile Profile) string {
+	platform := profile.NavPlatform
+	if platform == "" {
+		platform = "Win32"
+	}
 	return fmt.Sprintf(
-		`{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1040,"innerWidth":1920,"innerHeight":969,"devicePixelRatio":1,"language":"en-US","languages":["en-US"],"webdriver":false,"hardwareConcurrency":8,"deviceMemory":8,"connectionEffectiveType":"4g","notificationsPermission":"default","userAgent":"%s","platform":"Win32"}`,
+		`{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1040,"innerWidth":1920,"innerHeight":969,"devicePixelRatio":1,"language":"en-US","languages":["en-US"],"webdriver":false,"hardwareConcurrency":8,"deviceMemory":8,"connectionEffectiveType":"4g","notificationsPermission":"default","userAgent":"%s","platform":"%s"}`,
 		profile.UserAgent,
+		platform,
 	)
 }
 

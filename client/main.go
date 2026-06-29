@@ -2005,6 +2005,8 @@ func main() { //nolint:cyclop
 	applyUserDns(opts.userDns)
 	setDnsMode(opts.dnsMode)
 	log.Printf("[DNS] mode=%s", dnsMode())
+	setBrowserFamily(opts.browserFP)
+	log.Printf("[FP] browser=%s", browserFamily)
 
 	if opts.roomExchangeMode {
 		if err := runRoomExchangeMode(opts); err != nil {
