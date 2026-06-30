@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.5.2...v1.6.0) (2026-06-30)
+
+
+### Features
+
+* **vk:** улучшение браузерных отпечатков для captcha ([12161ae](https://github.com/samosvalishe/free-turn-proxy/commit/12161aed4ab582504785ff79f2f9f4f051ee0d9d))
+
 ## [1.5.2](https://github.com/samosvalishe/free-turn-proxy/compare/v1.5.1...v1.5.2) (2026-06-25)
 
 
