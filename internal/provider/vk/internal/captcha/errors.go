@@ -39,8 +39,6 @@ func ParseError(errData map[string]any) *Error {
 	if !ok {
 		if sidNum, ok2 := errData["captcha_sid"].(float64); ok2 {
 			captchaSid = fmt.Sprintf("%.0f", sidNum)
-		} else {
-			Log.Debugf("[Captcha] captcha_sid not present in error data")
 		}
 	}
 
