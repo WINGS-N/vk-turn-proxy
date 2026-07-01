@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	neturl "net/url"
+	"strings"
 	"time"
 
 	"github.com/samosvalishe/free-turn-proxy/internal/provider/vk/internal/browserprofile"
@@ -43,6 +44,10 @@ func (c *Client) fetchCallToken(
 				data = retryData
 				continue
 			}
+			if termErr := classifyLinkError(errObj); termErr != nil {
+				c.log.Errorf("[STREAM %d] [VK Auth] terminal link error: %v", streamID, termErr)
+				return "", termErr
+			}
 			return "", fmt.Errorf("VK API error: %v", errObj)
 		}
 
@@ -56,6 +61,39 @@ func (c *Client) fetchCallToken(
 		}
 		return token2, nil
 	}
+}
+
+// classifyLinkError распознаёт ТЕРМИНАЛЬНЫЕ ответы VK в join-флоу и возвращает
+// соответствующий sentinel (или nil, если ошибку можно ретраить дальше по
+// client_id). Терминал = ни client_id, ни captcha не помогут, поэтому fast-fail
+// вместо бесконечного цикла "решить captcha -> ошибка -> следующий client_id".
+// Коды VK иногда плавают, поэтому где можно матчим и по тексту error_msg.
+//
+// Транзиентные (5 auth-failed, 29/9/6 rate/flood, 14 captcha) сюда НЕ попадают —
+// их гасить нельзя, иначе можно убить рабочее подключение.
+func classifyLinkError(errObj map[string]any) error {
+	code := 0
+	if f, ok := errObj["error_code"].(float64); ok {
+		code = int(f)
+	}
+	msg := ""
+	if s, ok := errObj["error_msg"].(string); ok {
+		msg = strings.ToLower(s)
+	}
+	switch {
+	// Битая/мёртвая ссылка: 9008 Join link is not valid, 9000 Call not found.
+	case code == 9000 || code == 9008 ||
+		strings.Contains(msg, "not valid") || strings.Contains(msg, "not found"):
+		return ErrInvalidJoinLink
+	// Звонок живой, но анонимный вход запрещён ("только авторизованные").
+	// Матчим по "anonym" (не по "authoriz" — коллизия с code 5 auth-failed).
+	case strings.Contains(msg, "anonym"):
+		return ErrAnonymousBlocked
+	// Звонок переполнен.
+	case strings.Contains(msg, "full"):
+		return ErrCallFull
+	}
+	return nil
 }
 
 // solveCaptcha выполняет одну попытку решения captcha и возвращает тело POST

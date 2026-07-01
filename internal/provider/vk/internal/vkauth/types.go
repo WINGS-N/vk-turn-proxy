@@ -59,4 +59,19 @@ var (
 	ErrCaptchaWaitRequired   = errors.Join(provider.ErrBackoffActive, errors.New("CAPTCHA_WAIT_REQUIRED"))
 	ErrFatalCaptchaNoStreams = errors.Join(provider.ErrFatalNoStreams, errors.New("FATAL_CAPTCHA_FAILED_NO_STREAMS"))
 	ErrLockoutActive         = errors.New("global lockout active")
+
+	// Terminal call/link errors: retrying other client_ids or solving the captcha
+	// won't help — only the user changing the link / call settings will. We fast-
+	// fail on these instead of looping "solve captcha -> error -> next credential"
+	// forever, and the joined provider.ErrFatalNoStreams lets the host surface a
+	// specific, actionable message.
+	//
+	// ErrInvalidJoinLink: VK 9008 "Join link is not valid" (broken link) or 9000
+	// "Call not found" (the call ended / no longer exists).
+	ErrInvalidJoinLink = errors.Join(provider.ErrFatalNoStreams, errors.New("INVALID_JOIN_LINK"))
+	// ErrAnonymousBlocked: the call is live but anonymous join is disabled
+	// ("authorized users only") — the user must allow joining by link in VK.
+	ErrAnonymousBlocked = errors.Join(provider.ErrFatalNoStreams, errors.New("ANON_BLOCKED"))
+	// ErrCallFull: the call has reached its participant limit.
+	ErrCallFull = errors.Join(provider.ErrFatalNoStreams, errors.New("CALL_FULL"))
 )
