@@ -67,29 +67,38 @@ func (c *Client) fetchCallToken(
 // соответствующий sentinel (или nil, если ошибку можно ретраить дальше по
 // client_id). Терминал = ни client_id, ни captcha не помогут, поэтому fast-fail
 // вместо бесконечного цикла "решить captcha -> ошибка -> следующий client_id".
-// Коды VK иногда плавают, поэтому где можно матчим и по тексту error_msg.
 //
-// Транзиентные (5 auth-failed, 29/9/6 rate/flood, 14 captcha) сюда НЕ попадают —
-// их гасить нельзя, иначе можно убить рабочее подключение.
+// Порядок важен: сначала явные коды (терминальные и транзиентные), и только для
+// неизвестного кода - матч по тексту error_msg. Так текстовый матч не может
+// перекрыть транзиентный код (5 auth-failed, 6/9/29 rate/flood, 14 captcha) и
+// убить рабочее подключение из-за подстроки в сообщении.
 func classifyLinkError(errObj map[string]any) error {
 	code := 0
 	if f, ok := errObj["error_code"].(float64); ok {
 		code = int(f)
 	}
+
+	// Явные терминальные коды: 9008 Join link is not valid, 9000 Call not found.
+	if code == 9000 || code == 9008 {
+		return ErrInvalidJoinLink
+	}
+	// Явные транзиентные коды: гасить нельзя, текст ниже к ним не применяем.
+	switch code {
+	case 5, 6, 9, 14, 29:
+		return nil
+	}
+
+	// Код неизвестен/плавает - осторожный матч по тексту.
 	msg := ""
 	if s, ok := errObj["error_msg"].(string); ok {
 		msg = strings.ToLower(s)
 	}
 	switch {
-	// Битая/мёртвая ссылка: 9008 Join link is not valid, 9000 Call not found.
-	case code == 9000 || code == 9008 ||
-		strings.Contains(msg, "not valid") || strings.Contains(msg, "not found"):
+	case strings.Contains(msg, "not valid") || strings.Contains(msg, "not found"):
 		return ErrInvalidJoinLink
-	// Звонок живой, но анонимный вход запрещён ("только авторизованные").
-	// Матчим по "anonym" (не по "authoriz" — коллизия с code 5 auth-failed).
+	// Анонимный вход запрещён. Матчим по "anonym" (не "authoriz" - коллизия с auth-failed).
 	case strings.Contains(msg, "anonym"):
 		return ErrAnonymousBlocked
-	// Звонок переполнен.
 	case strings.Contains(msg, "full"):
 		return ErrCallFull
 	}
