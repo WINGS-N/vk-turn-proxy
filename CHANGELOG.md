@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.7.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.6.0...v1.7.0) (2026-07-02)
+
+
+### Features
+
+* **mobile:** add host socket protector (SetProtect) for tun/VPN hosts ([0a6bc0a](https://github.com/samosvalishe/free-turn-proxy/commit/0a6bc0ae4f38f03722855f99461cc91f4181e057))
+
+
+### Bug Fixes
+
+* **vkauth:** fast-fail on terminal call/link errors (9000/9008, anonymous-only, full) ([805228e](https://github.com/samosvalishe/free-turn-proxy/commit/805228e62a42f71ab6c0d345e2a510af5cae32c3))
+* **vkauth:** классификация terminal-ошибок по коду перед текстом ([b391d7b](https://github.com/samosvalishe/free-turn-proxy/commit/b391d7bf255e6f027d655c7e1a20a21ce04ab22a))
+
 ## [1.6.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.5.2...v1.6.0) (2026-06-30)
 
 
