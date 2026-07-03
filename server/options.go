@@ -31,6 +31,10 @@ type serverOptions struct {
 	grpcToken    string // bearer token the panel must present on the Relay API
 	wgTunnelCIDR string // tunnel address pool, e.g. 10.66.66.0/24
 	wgInterface  string // tunnel interface name reported by the Relay API
+
+	panelGRPC  string // panel Provisioning gRPC endpoint for DTLS PROVISION (empty = disabled)
+	panelToken string // bearer token identifying this node to the panel
+	nodeID     string // this node's id as registered in the panel
 }
 
 func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverOptions) {
@@ -56,6 +60,9 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.StringVar(&opts.grpcToken, "grpc-token", "", "bearer token the panel must present on the Relay management API")
 	fs.StringVar(&opts.wgTunnelCIDR, "wg-tunnel-cidr", "10.66.66.0/24", "tunnel address pool for managed peers")
 	fs.StringVar(&opts.wgInterface, "wg-interface", "wg-wingsv", "tunnel interface name reported by the Relay API")
+	fs.StringVar(&opts.panelGRPC, "panel-grpc", "", "panel Provisioning gRPC endpoint enabling the DTLS PROVISION path")
+	fs.StringVar(&opts.panelToken, "panel-token", "", "bearer token identifying this node to the panel")
+	fs.StringVar(&opts.nodeID, "node-id", "", "this node's id as registered in the panel")
 	fs.Usage = func() {
 		cliutil.Fprintf(fs.Output(), "Usage:\n  %s -connect <ip:port> [flags]\n  %s -udp-connect <ip:port> [flags]\n  %s -wb-stream-room-id <id> -udp-connect <ip:port> [flags]\n\n", program, program, program)
 		cliutil.Fprintln(fs.Output(), "Examples:")

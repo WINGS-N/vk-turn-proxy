@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/internal/controlpath"
+	"github.com/cacggghp/vk-turn-proxy/internal/panelclient"
 	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
 	"github.com/cacggghp/vk-turn-proxy/internal/relaygrpc"
 	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
@@ -902,6 +903,8 @@ func handleConnection(
 		switch hello.GetType() {
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_ROOM_EXCHANGE:
 			return handleRoomExchange(conn, hello)
+		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROVISION:
+			return handleProvision(conn, hello)
 		case sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_SESSION:
 			if mode == sessionproto.ModeMainline {
 				selectedTransport, supportedTransports, _ := selectTransportForHello(mode, backends, hello)
@@ -1014,6 +1017,11 @@ func main() {
 			}
 		}()
 		defer grpcServer.GracefulStop()
+	}
+
+	if opts.panelGRPC != "" {
+		SetProvisionResolver(panelclient.New(opts.panelGRPC, opts.panelToken), opts.nodeID)
+		log.Printf("DTLS PROVISION enabled via panel %s (node %s)", opts.panelGRPC, opts.nodeID)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

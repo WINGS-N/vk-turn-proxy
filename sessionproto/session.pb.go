@@ -28,6 +28,7 @@ const (
 	ClientHelloType_CLIENT_HELLO_TYPE_PROBE         ClientHelloType = 1
 	ClientHelloType_CLIENT_HELLO_TYPE_SESSION       ClientHelloType = 2
 	ClientHelloType_CLIENT_HELLO_TYPE_ROOM_EXCHANGE ClientHelloType = 3
+	ClientHelloType_CLIENT_HELLO_TYPE_PROVISION     ClientHelloType = 4
 )
 
 // Enum value maps for ClientHelloType.
@@ -37,12 +38,14 @@ var (
 		1: "CLIENT_HELLO_TYPE_PROBE",
 		2: "CLIENT_HELLO_TYPE_SESSION",
 		3: "CLIENT_HELLO_TYPE_ROOM_EXCHANGE",
+		4: "CLIENT_HELLO_TYPE_PROVISION",
 	}
 	ClientHelloType_value = map[string]int32{
 		"CLIENT_HELLO_TYPE_UNSPECIFIED":   0,
 		"CLIENT_HELLO_TYPE_PROBE":         1,
 		"CLIENT_HELLO_TYPE_SESSION":       2,
 		"CLIENT_HELLO_TYPE_ROOM_EXCHANGE": 3,
+		"CLIENT_HELLO_TYPE_PROVISION":     4,
 	}
 )
 
@@ -290,8 +293,12 @@ type ClientHello struct {
 	// Optional client-proposed shared key (32 bytes for AES-256-CTR/ChaCha20).
 	// Server may accept or fall back to its preset key based on configuration.
 	WrapKeyProposal []byte `protobuf:"bytes,11,opt,name=wrap_key_proposal,json=wrapKeyProposal,proto3" json:"wrap_key_proposal,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Set on CLIENT_HELLO_TYPE_PROVISION: the app asks the node to mint (or return)
+	// its WireGuard config. The node forwards client_id + token to the panel over
+	// gRPC for verification; it never mints a config on its own.
+	Provision     *ProvisionRequest `protobuf:"bytes,12,opt,name=provision,proto3" json:"provision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ClientHello) Reset() {
@@ -401,6 +408,217 @@ func (x *ClientHello) GetWrapKeyProposal() []byte {
 	return nil
 }
 
+func (x *ClientHello) GetProvision() *ProvisionRequest {
+	if x != nil {
+		return x.Provision
+	}
+	return nil
+}
+
+type ProvisionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Token         []byte                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Hwid          string                 `protobuf:"bytes,3,opt,name=hwid,proto3" json:"hwid,omitempty"`
+	LocalPort     uint32                 `protobuf:"varint,4,opt,name=local_port,json=localPort,proto3" json:"local_port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProvisionRequest) Reset() {
+	*x = ProvisionRequest{}
+	mi := &file_proto_session_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProvisionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProvisionRequest) ProtoMessage() {}
+
+func (x *ProvisionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_session_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProvisionRequest.ProtoReflect.Descriptor instead.
+func (*ProvisionRequest) Descriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ProvisionRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *ProvisionRequest) GetToken() []byte {
+	if x != nil {
+		return x.Token
+	}
+	return nil
+}
+
+func (x *ProvisionRequest) GetHwid() string {
+	if x != nil {
+		return x.Hwid
+	}
+	return ""
+}
+
+func (x *ProvisionRequest) GetLocalPort() uint32 {
+	if x != nil {
+		return x.LocalPort
+	}
+	return 0
+}
+
+type ProvisionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Wg            *WireguardConfig       `protobuf:"bytes,1,opt,name=wg,proto3" json:"wg,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProvisionResponse) Reset() {
+	*x = ProvisionResponse{}
+	mi := &file_proto_session_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProvisionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProvisionResponse) ProtoMessage() {}
+
+func (x *ProvisionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_session_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProvisionResponse.ProtoReflect.Descriptor instead.
+func (*ProvisionResponse) Descriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ProvisionResponse) GetWg() *WireguardConfig {
+	if x != nil {
+		return x.Wg
+	}
+	return nil
+}
+
+func (x *ProvisionResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type WireguardConfig struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	PrivateKey      string                 `protobuf:"bytes,1,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`
+	PublicKey       string                 `protobuf:"bytes,2,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	Address         string                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	ServerPublicKey string                 `protobuf:"bytes,4,opt,name=server_public_key,json=serverPublicKey,proto3" json:"server_public_key,omitempty"`
+	AllowedIps      string                 `protobuf:"bytes,5,opt,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
+	Mtu             uint32                 `protobuf:"varint,6,opt,name=mtu,proto3" json:"mtu,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *WireguardConfig) Reset() {
+	*x = WireguardConfig{}
+	mi := &file_proto_session_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WireguardConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WireguardConfig) ProtoMessage() {}
+
+func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_session_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WireguardConfig.ProtoReflect.Descriptor instead.
+func (*WireguardConfig) Descriptor() ([]byte, []int) {
+	return file_proto_session_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *WireguardConfig) GetPrivateKey() string {
+	if x != nil {
+		return x.PrivateKey
+	}
+	return ""
+}
+
+func (x *WireguardConfig) GetPublicKey() string {
+	if x != nil {
+		return x.PublicKey
+	}
+	return ""
+}
+
+func (x *WireguardConfig) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *WireguardConfig) GetServerPublicKey() string {
+	if x != nil {
+		return x.ServerPublicKey
+	}
+	return ""
+}
+
+func (x *WireguardConfig) GetAllowedIps() string {
+	if x != nil {
+		return x.AllowedIps
+	}
+	return ""
+}
+
+func (x *WireguardConfig) GetMtu() uint32 {
+	if x != nil {
+		return x.Mtu
+	}
+	return 0
+}
+
 type RoomDataExchange struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Provider      RoomProvider           `protobuf:"varint,1,opt,name=provider,proto3,enum=sessionproto.RoomProvider" json:"provider,omitempty"`
@@ -415,7 +633,7 @@ type RoomDataExchange struct {
 
 func (x *RoomDataExchange) Reset() {
 	*x = RoomDataExchange{}
-	mi := &file_proto_session_proto_msgTypes[1]
+	mi := &file_proto_session_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -427,7 +645,7 @@ func (x *RoomDataExchange) String() string {
 func (*RoomDataExchange) ProtoMessage() {}
 
 func (x *RoomDataExchange) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_session_proto_msgTypes[1]
+	mi := &file_proto_session_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -440,7 +658,7 @@ func (x *RoomDataExchange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoomDataExchange.ProtoReflect.Descriptor instead.
 func (*RoomDataExchange) Descriptor() ([]byte, []int) {
-	return file_proto_session_proto_rawDescGZIP(), []int{1}
+	return file_proto_session_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RoomDataExchange) GetProvider() RoomProvider {
@@ -495,7 +713,7 @@ type RoomDataAck struct {
 
 func (x *RoomDataAck) Reset() {
 	*x = RoomDataAck{}
-	mi := &file_proto_session_proto_msgTypes[2]
+	mi := &file_proto_session_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +725,7 @@ func (x *RoomDataAck) String() string {
 func (*RoomDataAck) ProtoMessage() {}
 
 func (x *RoomDataAck) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_session_proto_msgTypes[2]
+	mi := &file_proto_session_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +738,7 @@ func (x *RoomDataAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoomDataAck.ProtoReflect.Descriptor instead.
 func (*RoomDataAck) Descriptor() ([]byte, []int) {
-	return file_proto_session_proto_rawDescGZIP(), []int{2}
+	return file_proto_session_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RoomDataAck) GetAccepted() bool {
@@ -557,7 +775,7 @@ type ServerHello struct {
 
 func (x *ServerHello) Reset() {
 	*x = ServerHello{}
-	mi := &file_proto_session_proto_msgTypes[3]
+	mi := &file_proto_session_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -569,7 +787,7 @@ func (x *ServerHello) String() string {
 func (*ServerHello) ProtoMessage() {}
 
 func (x *ServerHello) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_session_proto_msgTypes[3]
+	mi := &file_proto_session_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -582,7 +800,7 @@ func (x *ServerHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerHello.ProtoReflect.Descriptor instead.
 func (*ServerHello) Descriptor() ([]byte, []int) {
-	return file_proto_session_proto_rawDescGZIP(), []int{3}
+	return file_proto_session_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ServerHello) GetVersion() uint32 {
@@ -665,7 +883,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_proto_session_proto_msgTypes[4]
+	mi := &file_proto_session_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -677,7 +895,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_session_proto_msgTypes[4]
+	mi := &file_proto_session_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +908,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_proto_session_proto_rawDescGZIP(), []int{4}
+	return file_proto_session_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Heartbeat) GetVersion() uint32 {
@@ -760,7 +978,7 @@ var File_proto_session_proto protoreflect.FileDescriptor
 
 const file_proto_session_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/session.proto\x12\fsessionproto\"\x9f\x05\n" +
+	"\x13proto/session.proto\x12\fsessionproto\"\xdd\x05\n" +
 	"\vClientHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x121\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1d.sessionproto.ClientHelloTypeR\x04type\x12\x1d\n" +
@@ -774,7 +992,27 @@ const file_proto_session_proto_rawDesc = "" +
 	"\rroom_exchange\x18\t \x01(\v2\x1e.sessionproto.RoomDataExchangeR\froomExchange\x12N\n" +
 	"\x16supported_wrap_ciphers\x18\n" +
 	" \x03(\x0e2\x18.sessionproto.WrapCipherR\x14supportedWrapCiphers\x12*\n" +
-	"\x11wrap_key_proposal\x18\v \x01(\fR\x0fwrapKeyProposal\"\xe1\x01\n" +
+	"\x11wrap_key_proposal\x18\v \x01(\fR\x0fwrapKeyProposal\x12<\n" +
+	"\tprovision\x18\f \x01(\v2\x1e.sessionproto.ProvisionRequestR\tprovision\"x\n" +
+	"\x10ProvisionRequest\x12\x1b\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\fR\x05token\x12\x12\n" +
+	"\x04hwid\x18\x03 \x01(\tR\x04hwid\x12\x1d\n" +
+	"\n" +
+	"local_port\x18\x04 \x01(\rR\tlocalPort\"X\n" +
+	"\x11ProvisionResponse\x12-\n" +
+	"\x02wg\x18\x01 \x01(\v2\x1d.sessionproto.WireguardConfigR\x02wg\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xca\x01\n" +
+	"\x0fWireguardConfig\x12\x1f\n" +
+	"\vprivate_key\x18\x01 \x01(\tR\n" +
+	"privateKey\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\x02 \x01(\tR\tpublicKey\x12\x18\n" +
+	"\aaddress\x18\x03 \x01(\tR\aaddress\x12*\n" +
+	"\x11server_public_key\x18\x04 \x01(\tR\x0fserverPublicKey\x12\x1f\n" +
+	"\vallowed_ips\x18\x05 \x01(\tR\n" +
+	"allowedIps\x12\x10\n" +
+	"\x03mtu\x18\x06 \x01(\rR\x03mtu\"\xe1\x01\n" +
 	"\x10RoomDataExchange\x126\n" +
 	"\bprovider\x18\x01 \x01(\x0e2\x1a.sessionproto.RoomProviderR\bprovider\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12!\n" +
@@ -806,12 +1044,13 @@ const file_proto_session_proto_rawDesc = "" +
 	"\fsession_mode\x18\x06 \x01(\tR\vsessionMode\x12!\n" +
 	"\fcontrol_path\x18\a \x01(\tR\vcontrolPath\x12\x1a\n" +
 	"\bprovider\x18\b \x01(\tR\bprovider\x129\n" +
-	"\ttransport\x18\t \x01(\x0e2\x1b.sessionproto.TransportModeR\ttransport*\x95\x01\n" +
+	"\ttransport\x18\t \x01(\x0e2\x1b.sessionproto.TransportModeR\ttransport*\xb6\x01\n" +
 	"\x0fClientHelloType\x12!\n" +
 	"\x1dCLIENT_HELLO_TYPE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17CLIENT_HELLO_TYPE_PROBE\x10\x01\x12\x1d\n" +
 	"\x19CLIENT_HELLO_TYPE_SESSION\x10\x02\x12#\n" +
-	"\x1fCLIENT_HELLO_TYPE_ROOM_EXCHANGE\x10\x03*d\n" +
+	"\x1fCLIENT_HELLO_TYPE_ROOM_EXCHANGE\x10\x03\x12\x1f\n" +
+	"\x1bCLIENT_HELLO_TYPE_PROVISION\x10\x04*d\n" +
 	"\rTransportMode\x12\x1e\n" +
 	"\x1aTRANSPORT_MODE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TRANSPORT_MODE_DATAGRAM\x10\x01\x12\x16\n" +
@@ -843,18 +1082,21 @@ func file_proto_session_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_session_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_proto_session_proto_goTypes = []any{
-	(ClientHelloType)(0),     // 0: sessionproto.ClientHelloType
-	(TransportMode)(0),       // 1: sessionproto.TransportMode
-	(TcpTransportFlavor)(0),  // 2: sessionproto.TcpTransportFlavor
-	(WrapCipher)(0),          // 3: sessionproto.WrapCipher
-	(RoomProvider)(0),        // 4: sessionproto.RoomProvider
-	(*ClientHello)(nil),      // 5: sessionproto.ClientHello
-	(*RoomDataExchange)(nil), // 6: sessionproto.RoomDataExchange
-	(*RoomDataAck)(nil),      // 7: sessionproto.RoomDataAck
-	(*ServerHello)(nil),      // 8: sessionproto.ServerHello
-	(*Heartbeat)(nil),        // 9: sessionproto.Heartbeat
+	(ClientHelloType)(0),      // 0: sessionproto.ClientHelloType
+	(TransportMode)(0),        // 1: sessionproto.TransportMode
+	(TcpTransportFlavor)(0),   // 2: sessionproto.TcpTransportFlavor
+	(WrapCipher)(0),           // 3: sessionproto.WrapCipher
+	(RoomProvider)(0),         // 4: sessionproto.RoomProvider
+	(*ClientHello)(nil),       // 5: sessionproto.ClientHello
+	(*ProvisionRequest)(nil),  // 6: sessionproto.ProvisionRequest
+	(*ProvisionResponse)(nil), // 7: sessionproto.ProvisionResponse
+	(*WireguardConfig)(nil),   // 8: sessionproto.WireguardConfig
+	(*RoomDataExchange)(nil),  // 9: sessionproto.RoomDataExchange
+	(*RoomDataAck)(nil),       // 10: sessionproto.RoomDataAck
+	(*ServerHello)(nil),       // 11: sessionproto.ServerHello
+	(*Heartbeat)(nil),         // 12: sessionproto.Heartbeat
 }
 var file_proto_session_proto_depIdxs = []int32{
 	0,  // 0: sessionproto.ClientHello.type:type_name -> sessionproto.ClientHelloType
@@ -862,20 +1104,22 @@ var file_proto_session_proto_depIdxs = []int32{
 	1,  // 2: sessionproto.ClientHello.supported_transports:type_name -> sessionproto.TransportMode
 	2,  // 3: sessionproto.ClientHello.supported_tcp_flavors:type_name -> sessionproto.TcpTransportFlavor
 	2,  // 4: sessionproto.ClientHello.preferred_tcp_flavor:type_name -> sessionproto.TcpTransportFlavor
-	6,  // 5: sessionproto.ClientHello.room_exchange:type_name -> sessionproto.RoomDataExchange
+	9,  // 5: sessionproto.ClientHello.room_exchange:type_name -> sessionproto.RoomDataExchange
 	3,  // 6: sessionproto.ClientHello.supported_wrap_ciphers:type_name -> sessionproto.WrapCipher
-	4,  // 7: sessionproto.RoomDataExchange.provider:type_name -> sessionproto.RoomProvider
-	1,  // 8: sessionproto.ServerHello.selected_transport:type_name -> sessionproto.TransportMode
-	1,  // 9: sessionproto.ServerHello.supported_transports:type_name -> sessionproto.TransportMode
-	2,  // 10: sessionproto.ServerHello.supported_tcp_flavors:type_name -> sessionproto.TcpTransportFlavor
-	2,  // 11: sessionproto.ServerHello.selected_tcp_flavor:type_name -> sessionproto.TcpTransportFlavor
-	3,  // 12: sessionproto.ServerHello.selected_wrap_cipher:type_name -> sessionproto.WrapCipher
-	1,  // 13: sessionproto.Heartbeat.transport:type_name -> sessionproto.TransportMode
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	6,  // 7: sessionproto.ClientHello.provision:type_name -> sessionproto.ProvisionRequest
+	8,  // 8: sessionproto.ProvisionResponse.wg:type_name -> sessionproto.WireguardConfig
+	4,  // 9: sessionproto.RoomDataExchange.provider:type_name -> sessionproto.RoomProvider
+	1,  // 10: sessionproto.ServerHello.selected_transport:type_name -> sessionproto.TransportMode
+	1,  // 11: sessionproto.ServerHello.supported_transports:type_name -> sessionproto.TransportMode
+	2,  // 12: sessionproto.ServerHello.supported_tcp_flavors:type_name -> sessionproto.TcpTransportFlavor
+	2,  // 13: sessionproto.ServerHello.selected_tcp_flavor:type_name -> sessionproto.TcpTransportFlavor
+	3,  // 14: sessionproto.ServerHello.selected_wrap_cipher:type_name -> sessionproto.WrapCipher
+	1,  // 15: sessionproto.Heartbeat.transport:type_name -> sessionproto.TransportMode
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_proto_session_proto_init() }
@@ -889,7 +1133,7 @@ func file_proto_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_session_proto_rawDesc), len(file_proto_session_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   5,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

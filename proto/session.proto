@@ -9,6 +9,7 @@ enum ClientHelloType {
   CLIENT_HELLO_TYPE_PROBE = 1;
   CLIENT_HELLO_TYPE_SESSION = 2;
   CLIENT_HELLO_TYPE_ROOM_EXCHANGE = 3;
+  CLIENT_HELLO_TYPE_PROVISION = 4;
 }
 
 enum TransportMode {
@@ -50,6 +51,31 @@ message ClientHello {
   // Optional client-proposed shared key (32 bytes for AES-256-CTR/ChaCha20).
   // Server may accept or fall back to its preset key based on configuration.
   bytes wrap_key_proposal = 11;
+  // Set on CLIENT_HELLO_TYPE_PROVISION: the app asks the node to mint (or return)
+  // its WireGuard config. The node forwards client_id + token to the panel over
+  // gRPC for verification; it never mints a config on its own.
+  ProvisionRequest provision = 12;
+}
+
+message ProvisionRequest {
+  string client_id = 1;
+  bytes token = 2;
+  string hwid = 3;
+  uint32 local_port = 4;
+}
+
+message ProvisionResponse {
+  WireguardConfig wg = 1;
+  string error = 2;
+}
+
+message WireguardConfig {
+  string private_key = 1;
+  string public_key = 2;
+  string address = 3;
+  string server_public_key = 4;
+  string allowed_ips = 5;
+  uint32 mtu = 6;
 }
 
 enum RoomProvider {

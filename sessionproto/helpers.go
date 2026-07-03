@@ -73,6 +73,14 @@ func ParseHeartbeatMessage(payload []byte) (*Heartbeat, error) {
 	return &heartbeat, nil
 }
 
+func ParseProvisionResponseMessage(payload []byte) (*ProvisionResponse, error) {
+	var resp ProvisionResponse
+	if err := unmarshalProto(payload, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func NormalizeSupportedTransports(transports []TransportMode) []TransportMode {
 	normalized := make([]TransportMode, 0, len(transports))
 	seen := make(map[TransportMode]struct{}, len(transports))
