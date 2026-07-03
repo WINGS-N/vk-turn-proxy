@@ -236,6 +236,11 @@ func mergeVkSetCookies(setCookies []*fhttp.Cookie) {
 	vkSessionMu.Unlock()
 	persistVkSession()
 	log.Printf("[VK Auth] merged rotated VK cookies from response")
+	// The event path stays, but with the AppControl IPC active the cookie value
+	// must not reach stdout; the app pulls it via GetVKCookies instead.
+	if appControlActive.Load() {
+		updated = ""
+	}
 	emitProxyEvent(vkCookiesUpdateEvent{Type: "vk_cookies_update", Cookies: updated})
 }
 

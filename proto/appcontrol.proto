@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+// AppControl is the LOCAL IPC between the WINGS V host app and the embedded
+// vk-turn-proxy client (libclient.so), served over a unix domain socket. It
+// replaces the older stdin/stdout/cookie-file channels with a typed contract:
+// the app pushes VK webview cookies in, and pulls the provisioned WireGuard
+// config out.
+package vkturn.appcontrol.v1;
+
+option go_package = "github.com/cacggghp/vk-turn-proxy/appcontrolpb;appcontrolpb";
+
+service AppControl {
+  rpc SetVKCookies(SetVKCookiesRequest) returns (SetVKCookiesResponse);
+  // GetVKCookies lets the app pull the current (possibly relay-rotated) session
+  // over gRPC instead of reading a vk_cookies_update line off stdout, so cookies
+  // never touch stdout / logcat.
+  rpc GetVKCookies(GetVKCookiesRequest) returns (GetVKCookiesResponse);
+  rpc Provision(ProvisionRequest) returns (ProvisionResponse);
+}
+
+message SetVKCookiesRequest {
+  string cookies = 1;
+  string user_agent = 2;
+}
+
+message SetVKCookiesResponse {}
+
+message GetVKCookiesRequest {}
+
+message GetVKCookiesResponse {
+  string cookies = 1;
+  string user_agent = 2;
+}
+
+message ProvisionRequest {
+  string client_id = 1;
+  bytes token = 2;
+  string hwid = 3;
+  uint32 local_port = 4;
+}
+
+message ProvisionResponse {
+  WireguardConfig wg = 1;
+  string error = 2;
+}
+
+message WireguardConfig {
+  string private_key = 1;
+  string public_key = 2;
+  string address = 3;
+  string server_public_key = 4;
+  string allowed_ips = 5;
+  uint32 mtu = 6;
+}
