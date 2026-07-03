@@ -42,6 +42,22 @@ func BuildProbeHelloWithTcpFlavors(
 	})
 }
 
+// BuildProvisionHello builds a CLIENT_HELLO_TYPE_PROVISION hello carrying the
+// panel client token: the node verifies it with the panel and returns the
+// client's WireGuard config.
+func BuildProvisionHello(clientID string, token []byte, hwid string, localPort uint32) ([]byte, error) {
+	return sessionproto.MarshalClientHello(&sessionproto.ClientHello{
+		Version: ProtocolVersion,
+		Type:    sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROVISION,
+		Provision: &sessionproto.ProvisionRequest{
+			ClientId:  clientID,
+			Token:     append([]byte(nil), token...),
+			Hwid:      hwid,
+			LocalPort: localPort,
+		},
+	})
+}
+
 func BuildSessionHello(sessionID []byte, streamID byte) ([]byte, error) {
 	return BuildSessionHelloWithTransport(
 		sessionID,
