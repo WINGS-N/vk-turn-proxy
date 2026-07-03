@@ -13,9 +13,62 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cacggghp/vk-turn-proxy/internal/relaygrpc"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 )
+
+// Flows returns a snapshot of the active relay streams for the Relay gRPC API.
+func (t *serverTUI) Flows() []relaygrpc.Flow {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]relaygrpc.Flow, 0, len(t.streams))
+	for _, s := range t.streams {
+		out = append(out, relaygrpc.Flow{
+			SessionID:   s.SessionID,
+			StreamID:    uint32(s.StreamID),
+			ClientIP:    s.ClientIP,
+			Remote:      s.Remote,
+			Protocol:    s.Protocol,
+			Version:     s.Version,
+			RxBytes:     s.RxBytes,
+			TxBytes:     s.TxBytes,
+			RxRate:      s.RxRate,
+			TxRate:      s.TxRate,
+			StartedUnix: s.StartedAt.Unix(),
+		})
+	}
+	return out
+}
+
+// FlowStats returns aggregate relay activity for the Relay gRPC API.
+func (t *serverTUI) FlowStats() relaygrpc.FlowStats {
+	if t == nil {
+		return relaygrpc.FlowStats{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	byProto := make(map[string]uint32, len(t.streams))
+	for _, s := range t.streams {
+		byProto[s.Protocol]++
+	}
+	avg := 0.0
+	if t.closedSessions > 0 {
+		avg = t.totalLifetime.Seconds() / float64(t.closedSessions)
+	}
+	return relaygrpc.FlowStats{
+		ActiveStreams:             uint32(len(t.streams)),
+		ActiveSessions:            uint32(len(t.sessions)),
+		TotalSessions:             t.closedSessions + uint64(len(t.sessions)),
+		AvgSessionLifetimeSeconds: avg,
+		ServerRxBytes:             t.serverRxBytes,
+		ServerTxBytes:             t.serverTxBytes,
+		StreamsByProtocol:         byProto,
+	}
+}
 
 const (
 	tuiLogBufferSize = 1000
@@ -83,7 +136,9 @@ type serverTUI struct {
 	mouseReporting bool
 	streams        map[string]*streamMetrics
 	clients        map[string]*clientMetrics
-	sessions       map[string]struct{}
+	sessions       map[string]time.Time
+	closedSessions uint64
+	totalLifetime  time.Duration
 	serverRxBytes  uint64
 	serverTxBytes  uint64
 	lastServerRx   uint64
@@ -106,7 +161,7 @@ func newServerTUI(listen, connectAddr, mode, renderMode string) *serverTUI {
 		doneCh:      make(chan struct{}),
 		streams:     make(map[string]*streamMetrics),
 		clients:     make(map[string]*clientMetrics),
-		sessions:    make(map[string]struct{}),
+		sessions:    make(map[string]time.Time),
 		logLines:    make([]tuiLogEntry, 0, tuiLogBufferSize),
 	}
 	if tui.enabled {
@@ -284,7 +339,7 @@ func (t *serverTUI) registerSession(id string) {
 		return
 	}
 	t.mu.Lock()
-	t.sessions[id] = struct{}{}
+	t.sessions[id] = time.Now()
 	t.mu.Unlock()
 }
 
@@ -293,7 +348,11 @@ func (t *serverTUI) unregisterSession(id string) {
 		return
 	}
 	t.mu.Lock()
-	delete(t.sessions, id)
+	if start, ok := t.sessions[id]; ok {
+		t.totalLifetime += time.Since(start)
+		t.closedSessions++
+		delete(t.sessions, id)
+	}
 	t.mu.Unlock()
 }
 

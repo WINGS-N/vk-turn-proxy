@@ -99,3 +99,46 @@ func TestAuthToken(t *testing.T) {
 		t.Fatalf("with token: %v", err)
 	}
 }
+
+type fakeFlows struct{}
+
+func (fakeFlows) Flows() []Flow {
+	return []Flow{{
+		SessionID: "s1", StreamID: 2, ClientIP: "1.2.3.4", Remote: "1.2.3.4:9000",
+		Protocol: "mu", Version: 1, RxBytes: 100, TxBytes: 50, StartedUnix: 111,
+	}}
+}
+
+func (fakeFlows) FlowStats() FlowStats {
+	return FlowStats{
+		ActiveStreams: 1, ActiveSessions: 1, TotalSessions: 5,
+		AvgSessionLifetimeSeconds: 12.5, ServerRxBytes: 1000,
+		StreamsByProtocol: map[string]uint32{"mu": 1},
+	}
+}
+
+func TestFlows(t *testing.T) {
+	client := dial(t, Options{Flows: fakeFlows{}})
+	ctx := context.Background()
+
+	flows, err := client.ListFlows(ctx, &controlpb.ListFlowsRequest{})
+	if err != nil {
+		t.Fatalf("ListFlows: %v", err)
+	}
+	if len(flows.GetFlows()) != 1 {
+		t.Fatalf("flows = %d, want 1", len(flows.GetFlows()))
+	}
+	f := flows.GetFlows()[0]
+	if f.GetSessionId() != "s1" || f.GetClientIp() != "1.2.3.4" || f.GetProtocol() != "mu" || f.GetRxBytes() != 100 {
+		t.Fatalf("flow wrong: %+v", f)
+	}
+
+	st, err := client.GetFlowStats(ctx, &controlpb.GetFlowStatsRequest{})
+	if err != nil {
+		t.Fatalf("GetFlowStats: %v", err)
+	}
+	if st.GetActiveStreams() != 1 || st.GetTotalSessions() != 5 || st.GetAvgSessionLifetimeSeconds() != 12.5 ||
+		st.GetStreamsByProtocol()["mu"] != 1 {
+		t.Fatalf("flow stats wrong: %+v", st)
+	}
+}

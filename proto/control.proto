@@ -13,6 +13,42 @@ service Relay {
   rpc ListPeers(ListPeersRequest) returns (Peers);
   rpc CreatePeer(CreatePeerRequest) returns (Peer);
   rpc DeletePeer(DeletePeerRequest) returns (DeletePeerResponse);
+  rpc ListFlows(ListFlowsRequest) returns (Flows);
+  rpc GetFlowStats(GetFlowStatsRequest) returns (FlowStats);
+}
+
+message ListFlowsRequest {}
+
+// Flow is one active relay stream: the panel renders these as connection chains
+// (client IP:port -> session/stream -> relay).
+message Flow {
+  string session_id = 1;
+  uint32 stream_id = 2;
+  string client_ip = 3;
+  string remote = 4;
+  string protocol = 5;
+  uint32 version = 6;
+  uint64 rx_bytes = 7;
+  uint64 tx_bytes = 8;
+  uint64 rx_rate = 9;
+  uint64 tx_rate = 10;
+  int64 started_unix = 11;
+}
+
+message Flows {
+  repeated Flow flows = 1;
+}
+
+message GetFlowStatsRequest {}
+
+message FlowStats {
+  uint32 active_streams = 1;
+  uint32 active_sessions = 2;
+  uint64 total_sessions = 3;
+  double avg_session_lifetime_seconds = 4;
+  uint64 server_rx_bytes = 5;
+  uint64 server_tx_bytes = 6;
+  map<string, uint32> streams_by_protocol = 7;
 }
 
 message GetStatusRequest {}

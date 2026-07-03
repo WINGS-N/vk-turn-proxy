@@ -18,12 +18,46 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Flow is one active relay stream.
+type Flow struct {
+	SessionID   string
+	StreamID    uint32
+	ClientIP    string
+	Remote      string
+	Protocol    string
+	Version     uint32
+	RxBytes     uint64
+	TxBytes     uint64
+	RxRate      uint64
+	TxRate      uint64
+	StartedUnix int64
+}
+
+// FlowStats aggregates the node's live relay activity.
+type FlowStats struct {
+	ActiveStreams             uint32
+	ActiveSessions            uint32
+	TotalSessions             uint64
+	AvgSessionLifetimeSeconds float64
+	ServerRxBytes             uint64
+	ServerTxBytes             uint64
+	StreamsByProtocol         map[string]uint32
+}
+
+// FlowProvider exposes the node's active flows and aggregate stats. The server
+// TUI registry implements it.
+type FlowProvider interface {
+	Flows() []Flow
+	FlowStats() FlowStats
+}
+
 type server struct {
 	controlpb.UnimplementedRelayServer
 	store    *peerstore.Store
 	version  string
 	sessions func() uint64
 	token    string
+	flows    FlowProvider
 }
 
 // Options configures the Relay gRPC server.
@@ -33,13 +67,14 @@ type Options struct {
 	Sessions func() uint64
 	Token    string
 	Creds    credentials.TransportCredentials
+	Flows    FlowProvider
 }
 
 // NewServer builds a grpc.Server serving the Relay service. When Token is set,
 // callers must present it as a bearer token; a verified client certificate
 // (mTLS) is always accepted.
 func NewServer(o Options) *grpc.Server {
-	s := &server{store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token}
+	s := &server{store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token, flows: o.Flows}
 	opts := []grpc.ServerOption{grpc.ChainUnaryInterceptor(s.authUnary)}
 	if o.Creds != nil {
 		opts = append(opts, grpc.Creds(o.Creds))
@@ -84,6 +119,46 @@ func (s *server) DeletePeer(_ context.Context, req *controlpb.DeletePeerRequest)
 		return nil, status.Error(codes.NotFound, "peer not found")
 	}
 	return &controlpb.DeletePeerResponse{}, nil
+}
+
+func (s *server) ListFlows(_ context.Context, _ *controlpb.ListFlowsRequest) (*controlpb.Flows, error) {
+	if s.flows == nil {
+		return &controlpb.Flows{}, nil
+	}
+	src := s.flows.Flows()
+	out := make([]*controlpb.Flow, 0, len(src))
+	for _, f := range src {
+		out = append(out, &controlpb.Flow{
+			SessionId:   f.SessionID,
+			StreamId:    f.StreamID,
+			ClientIp:    f.ClientIP,
+			Remote:      f.Remote,
+			Protocol:    f.Protocol,
+			Version:     f.Version,
+			RxBytes:     f.RxBytes,
+			TxBytes:     f.TxBytes,
+			RxRate:      f.RxRate,
+			TxRate:      f.TxRate,
+			StartedUnix: f.StartedUnix,
+		})
+	}
+	return &controlpb.Flows{Flows: out}, nil
+}
+
+func (s *server) GetFlowStats(_ context.Context, _ *controlpb.GetFlowStatsRequest) (*controlpb.FlowStats, error) {
+	if s.flows == nil {
+		return &controlpb.FlowStats{}, nil
+	}
+	st := s.flows.FlowStats()
+	return &controlpb.FlowStats{
+		ActiveStreams:             st.ActiveStreams,
+		ActiveSessions:            st.ActiveSessions,
+		TotalSessions:             st.TotalSessions,
+		AvgSessionLifetimeSeconds: st.AvgSessionLifetimeSeconds,
+		ServerRxBytes:             st.ServerRxBytes,
+		ServerTxBytes:             st.ServerTxBytes,
+		StreamsByProtocol:         st.StreamsByProtocol,
+	}, nil
 }
 
 func (s *server) toProto(p peerstore.Peer, privateKey string) *controlpb.Peer {

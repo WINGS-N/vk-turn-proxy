@@ -21,6 +21,340 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ListFlowsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFlowsRequest) Reset() {
+	*x = ListFlowsRequest{}
+	mi := &file_proto_control_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFlowsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFlowsRequest) ProtoMessage() {}
+
+func (x *ListFlowsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFlowsRequest.ProtoReflect.Descriptor instead.
+func (*ListFlowsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_control_proto_rawDescGZIP(), []int{0}
+}
+
+// Flow is one active relay stream: the panel renders these as connection chains
+// (client IP:port -> session/stream -> relay).
+type Flow struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	StreamId      uint32                 `protobuf:"varint,2,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	ClientIp      string                 `protobuf:"bytes,3,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	Remote        string                 `protobuf:"bytes,4,opt,name=remote,proto3" json:"remote,omitempty"`
+	Protocol      string                 `protobuf:"bytes,5,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Version       uint32                 `protobuf:"varint,6,opt,name=version,proto3" json:"version,omitempty"`
+	RxBytes       uint64                 `protobuf:"varint,7,opt,name=rx_bytes,json=rxBytes,proto3" json:"rx_bytes,omitempty"`
+	TxBytes       uint64                 `protobuf:"varint,8,opt,name=tx_bytes,json=txBytes,proto3" json:"tx_bytes,omitempty"`
+	RxRate        uint64                 `protobuf:"varint,9,opt,name=rx_rate,json=rxRate,proto3" json:"rx_rate,omitempty"`
+	TxRate        uint64                 `protobuf:"varint,10,opt,name=tx_rate,json=txRate,proto3" json:"tx_rate,omitempty"`
+	StartedUnix   int64                  `protobuf:"varint,11,opt,name=started_unix,json=startedUnix,proto3" json:"started_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Flow) Reset() {
+	*x = Flow{}
+	mi := &file_proto_control_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Flow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Flow) ProtoMessage() {}
+
+func (x *Flow) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Flow.ProtoReflect.Descriptor instead.
+func (*Flow) Descriptor() ([]byte, []int) {
+	return file_proto_control_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Flow) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Flow) GetStreamId() uint32 {
+	if x != nil {
+		return x.StreamId
+	}
+	return 0
+}
+
+func (x *Flow) GetClientIp() string {
+	if x != nil {
+		return x.ClientIp
+	}
+	return ""
+}
+
+func (x *Flow) GetRemote() string {
+	if x != nil {
+		return x.Remote
+	}
+	return ""
+}
+
+func (x *Flow) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *Flow) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *Flow) GetRxBytes() uint64 {
+	if x != nil {
+		return x.RxBytes
+	}
+	return 0
+}
+
+func (x *Flow) GetTxBytes() uint64 {
+	if x != nil {
+		return x.TxBytes
+	}
+	return 0
+}
+
+func (x *Flow) GetRxRate() uint64 {
+	if x != nil {
+		return x.RxRate
+	}
+	return 0
+}
+
+func (x *Flow) GetTxRate() uint64 {
+	if x != nil {
+		return x.TxRate
+	}
+	return 0
+}
+
+func (x *Flow) GetStartedUnix() int64 {
+	if x != nil {
+		return x.StartedUnix
+	}
+	return 0
+}
+
+type Flows struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Flows         []*Flow                `protobuf:"bytes,1,rep,name=flows,proto3" json:"flows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Flows) Reset() {
+	*x = Flows{}
+	mi := &file_proto_control_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Flows) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Flows) ProtoMessage() {}
+
+func (x *Flows) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Flows.ProtoReflect.Descriptor instead.
+func (*Flows) Descriptor() ([]byte, []int) {
+	return file_proto_control_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Flows) GetFlows() []*Flow {
+	if x != nil {
+		return x.Flows
+	}
+	return nil
+}
+
+type GetFlowStatsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFlowStatsRequest) Reset() {
+	*x = GetFlowStatsRequest{}
+	mi := &file_proto_control_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFlowStatsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFlowStatsRequest) ProtoMessage() {}
+
+func (x *GetFlowStatsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFlowStatsRequest.ProtoReflect.Descriptor instead.
+func (*GetFlowStatsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_control_proto_rawDescGZIP(), []int{3}
+}
+
+type FlowStats struct {
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	ActiveStreams             uint32                 `protobuf:"varint,1,opt,name=active_streams,json=activeStreams,proto3" json:"active_streams,omitempty"`
+	ActiveSessions            uint32                 `protobuf:"varint,2,opt,name=active_sessions,json=activeSessions,proto3" json:"active_sessions,omitempty"`
+	TotalSessions             uint64                 `protobuf:"varint,3,opt,name=total_sessions,json=totalSessions,proto3" json:"total_sessions,omitempty"`
+	AvgSessionLifetimeSeconds float64                `protobuf:"fixed64,4,opt,name=avg_session_lifetime_seconds,json=avgSessionLifetimeSeconds,proto3" json:"avg_session_lifetime_seconds,omitempty"`
+	ServerRxBytes             uint64                 `protobuf:"varint,5,opt,name=server_rx_bytes,json=serverRxBytes,proto3" json:"server_rx_bytes,omitempty"`
+	ServerTxBytes             uint64                 `protobuf:"varint,6,opt,name=server_tx_bytes,json=serverTxBytes,proto3" json:"server_tx_bytes,omitempty"`
+	StreamsByProtocol         map[string]uint32      `protobuf:"bytes,7,rep,name=streams_by_protocol,json=streamsByProtocol,proto3" json:"streams_by_protocol,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *FlowStats) Reset() {
+	*x = FlowStats{}
+	mi := &file_proto_control_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlowStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlowStats) ProtoMessage() {}
+
+func (x *FlowStats) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlowStats.ProtoReflect.Descriptor instead.
+func (*FlowStats) Descriptor() ([]byte, []int) {
+	return file_proto_control_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *FlowStats) GetActiveStreams() uint32 {
+	if x != nil {
+		return x.ActiveStreams
+	}
+	return 0
+}
+
+func (x *FlowStats) GetActiveSessions() uint32 {
+	if x != nil {
+		return x.ActiveSessions
+	}
+	return 0
+}
+
+func (x *FlowStats) GetTotalSessions() uint64 {
+	if x != nil {
+		return x.TotalSessions
+	}
+	return 0
+}
+
+func (x *FlowStats) GetAvgSessionLifetimeSeconds() float64 {
+	if x != nil {
+		return x.AvgSessionLifetimeSeconds
+	}
+	return 0
+}
+
+func (x *FlowStats) GetServerRxBytes() uint64 {
+	if x != nil {
+		return x.ServerRxBytes
+	}
+	return 0
+}
+
+func (x *FlowStats) GetServerTxBytes() uint64 {
+	if x != nil {
+		return x.ServerTxBytes
+	}
+	return 0
+}
+
+func (x *FlowStats) GetStreamsByProtocol() map[string]uint32 {
+	if x != nil {
+		return x.StreamsByProtocol
+	}
+	return nil
+}
+
 type GetStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -29,7 +363,7 @@ type GetStatusRequest struct {
 
 func (x *GetStatusRequest) Reset() {
 	*x = GetStatusRequest{}
-	mi := &file_proto_control_proto_msgTypes[0]
+	mi := &file_proto_control_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -41,7 +375,7 @@ func (x *GetStatusRequest) String() string {
 func (*GetStatusRequest) ProtoMessage() {}
 
 func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_proto_msgTypes[0]
+	mi := &file_proto_control_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -54,7 +388,7 @@ func (x *GetStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetStatusRequest) Descriptor() ([]byte, []int) {
-	return file_proto_control_proto_rawDescGZIP(), []int{0}
+	return file_proto_control_proto_rawDescGZIP(), []int{5}
 }
 
 type Status struct {
@@ -69,7 +403,7 @@ type Status struct {
 
 func (x *Status) Reset() {
 	*x = Status{}
-	mi := &file_proto_control_proto_msgTypes[1]
+	mi := &file_proto_control_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -81,7 +415,7 @@ func (x *Status) String() string {
 func (*Status) ProtoMessage() {}
 
 func (x *Status) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_proto_msgTypes[1]
+	mi := &file_proto_control_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -94,7 +428,7 @@ func (x *Status) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Status.ProtoReflect.Descriptor instead.
 func (*Status) Descriptor() ([]byte, []int) {
-	return file_proto_control_proto_rawDescGZIP(), []int{1}
+	return file_proto_control_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Status) GetVersion() string {
@@ -133,7 +467,7 @@ type ListPeersRequest struct {
 
 func (x *ListPeersRequest) Reset() {
 	*x = ListPeersRequest{}
-	mi := &file_proto_control_proto_msgTypes[2]
+	mi := &file_proto_control_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -145,7 +479,7 @@ func (x *ListPeersRequest) String() string {
 func (*ListPeersRequest) ProtoMessage() {}
 
 func (x *ListPeersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_proto_msgTypes[2]
+	mi := &file_proto_control_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -158,7 +492,7 @@ func (x *ListPeersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPeersRequest.ProtoReflect.Descriptor instead.
 func (*ListPeersRequest) Descriptor() ([]byte, []int) {
-	return file_proto_control_proto_rawDescGZIP(), []int{2}
+	return file_proto_control_proto_rawDescGZIP(), []int{7}
 }
 
 type Peers struct {
@@ -170,7 +504,7 @@ type Peers struct {
 
 func (x *Peers) Reset() {
 	*x = Peers{}
-	mi := &file_proto_control_proto_msgTypes[3]
+	mi := &file_proto_control_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -182,7 +516,7 @@ func (x *Peers) String() string {
 func (*Peers) ProtoMessage() {}
 
 func (x *Peers) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_proto_msgTypes[3]
+	mi := &file_proto_control_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -195,7 +529,7 @@ func (x *Peers) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Peers.ProtoReflect.Descriptor instead.
 func (*Peers) Descriptor() ([]byte, []int) {
-	return file_proto_control_proto_rawDescGZIP(), []int{3}
+	return file_proto_control_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Peers) GetPeers() []*Peer {
@@ -219,7 +553,7 @@ type CreatePeerRequest struct {
 
 func (x *CreatePeerRequest) Reset() {
 	*x = CreatePeerRequest{}
-	mi := &file_proto_control_proto_msgTypes[4]
+	mi := &file_proto_control_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -231,7 +565,7 @@ func (x *CreatePeerRequest) String() string {
 func (*CreatePeerRequest) ProtoMessage() {}
 
 func (x *CreatePeerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_proto_msgTypes[4]
+	mi := &file_proto_control_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -244,7 +578,7 @@ func (x *CreatePeerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatePeerRequest.ProtoReflect.Descriptor instead.
 func (*CreatePeerRequest) Descriptor() ([]byte, []int) {
-	return file_proto_control_proto_rawDescGZIP(), []int{4}
+	return file_proto_control_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CreatePeerRequest) GetPublicKey() string {
@@ -277,7 +611,7 @@ type Peer struct {
 
 func (x *Peer) Reset() {
 	*x = Peer{}
-	mi := &file_proto_control_proto_msgTypes[5]
+	mi := &file_proto_control_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -289,7 +623,7 @@ func (x *Peer) String() string {
 func (*Peer) ProtoMessage() {}
 
 func (x *Peer) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_proto_msgTypes[5]
+	mi := &file_proto_control_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -302,7 +636,7 @@ func (x *Peer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Peer.ProtoReflect.Descriptor instead.
 func (*Peer) Descriptor() ([]byte, []int) {
-	return file_proto_control_proto_rawDescGZIP(), []int{5}
+	return file_proto_control_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Peer) GetPublicKey() string {
@@ -363,7 +697,7 @@ type DeletePeerRequest struct {
 
 func (x *DeletePeerRequest) Reset() {
 	*x = DeletePeerRequest{}
-	mi := &file_proto_control_proto_msgTypes[6]
+	mi := &file_proto_control_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -375,7 +709,7 @@ func (x *DeletePeerRequest) String() string {
 func (*DeletePeerRequest) ProtoMessage() {}
 
 func (x *DeletePeerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_proto_msgTypes[6]
+	mi := &file_proto_control_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -388,7 +722,7 @@ func (x *DeletePeerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePeerRequest.ProtoReflect.Descriptor instead.
 func (*DeletePeerRequest) Descriptor() ([]byte, []int) {
-	return file_proto_control_proto_rawDescGZIP(), []int{6}
+	return file_proto_control_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeletePeerRequest) GetPublicKey() string {
@@ -406,7 +740,7 @@ type DeletePeerResponse struct {
 
 func (x *DeletePeerResponse) Reset() {
 	*x = DeletePeerResponse{}
-	mi := &file_proto_control_proto_msgTypes[7]
+	mi := &file_proto_control_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -418,7 +752,7 @@ func (x *DeletePeerResponse) String() string {
 func (*DeletePeerResponse) ProtoMessage() {}
 
 func (x *DeletePeerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_proto_msgTypes[7]
+	mi := &file_proto_control_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -431,7 +765,7 @@ func (x *DeletePeerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePeerResponse.ProtoReflect.Descriptor instead.
 func (*DeletePeerResponse) Descriptor() ([]byte, []int) {
-	return file_proto_control_proto_rawDescGZIP(), []int{7}
+	return file_proto_control_proto_rawDescGZIP(), []int{12}
 }
 
 var File_proto_control_proto protoreflect.FileDescriptor
@@ -439,6 +773,35 @@ var File_proto_control_proto protoreflect.FileDescriptor
 const file_proto_control_proto_rawDesc = "" +
 	"\n" +
 	"\x13proto/control.proto\x12\x11vkturn.control.v1\"\x12\n" +
+	"\x10ListFlowsRequest\"\xb8\x02\n" +
+	"\x04Flow\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tstream_id\x18\x02 \x01(\rR\bstreamId\x12\x1b\n" +
+	"\tclient_ip\x18\x03 \x01(\tR\bclientIp\x12\x16\n" +
+	"\x06remote\x18\x04 \x01(\tR\x06remote\x12\x1a\n" +
+	"\bprotocol\x18\x05 \x01(\tR\bprotocol\x12\x18\n" +
+	"\aversion\x18\x06 \x01(\rR\aversion\x12\x19\n" +
+	"\brx_bytes\x18\a \x01(\x04R\arxBytes\x12\x19\n" +
+	"\btx_bytes\x18\b \x01(\x04R\atxBytes\x12\x17\n" +
+	"\arx_rate\x18\t \x01(\x04R\x06rxRate\x12\x17\n" +
+	"\atx_rate\x18\n" +
+	" \x01(\x04R\x06txRate\x12!\n" +
+	"\fstarted_unix\x18\v \x01(\x03R\vstartedUnix\"6\n" +
+	"\x05Flows\x12-\n" +
+	"\x05flows\x18\x01 \x03(\v2\x17.vkturn.control.v1.FlowR\x05flows\"\x15\n" +
+	"\x13GetFlowStatsRequest\"\xbe\x03\n" +
+	"\tFlowStats\x12%\n" +
+	"\x0eactive_streams\x18\x01 \x01(\rR\ractiveStreams\x12'\n" +
+	"\x0factive_sessions\x18\x02 \x01(\rR\x0eactiveSessions\x12%\n" +
+	"\x0etotal_sessions\x18\x03 \x01(\x04R\rtotalSessions\x12?\n" +
+	"\x1cavg_session_lifetime_seconds\x18\x04 \x01(\x01R\x19avgSessionLifetimeSeconds\x12&\n" +
+	"\x0fserver_rx_bytes\x18\x05 \x01(\x04R\rserverRxBytes\x12&\n" +
+	"\x0fserver_tx_bytes\x18\x06 \x01(\x04R\rserverTxBytes\x12c\n" +
+	"\x13streams_by_protocol\x18\a \x03(\v23.vkturn.control.v1.FlowStats.StreamsByProtocolEntryR\x11streamsByProtocol\x1aD\n" +
+	"\x16StreamsByProtocolEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\x12\n" +
 	"\x10GetStatusRequest\"\x8d\x01\n" +
 	"\x06Status\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12!\n" +
@@ -468,14 +831,16 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x11DeletePeerRequest\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\tR\tpublicKey\"\x14\n" +
-	"\x12DeletePeerResponse2\xc8\x02\n" +
+	"\x12DeletePeerResponse2\xea\x03\n" +
 	"\x05Relay\x12K\n" +
 	"\tGetStatus\x12#.vkturn.control.v1.GetStatusRequest\x1a\x19.vkturn.control.v1.Status\x12J\n" +
 	"\tListPeers\x12#.vkturn.control.v1.ListPeersRequest\x1a\x18.vkturn.control.v1.Peers\x12K\n" +
 	"\n" +
 	"CreatePeer\x12$.vkturn.control.v1.CreatePeerRequest\x1a\x17.vkturn.control.v1.Peer\x12Y\n" +
 	"\n" +
-	"DeletePeer\x12$.vkturn.control.v1.DeletePeerRequest\x1a%.vkturn.control.v1.DeletePeerResponseB7Z5github.com/cacggghp/vk-turn-proxy/controlpb;controlpbb\x06proto3"
+	"DeletePeer\x12$.vkturn.control.v1.DeletePeerRequest\x1a%.vkturn.control.v1.DeletePeerResponse\x12J\n" +
+	"\tListFlows\x12#.vkturn.control.v1.ListFlowsRequest\x1a\x18.vkturn.control.v1.Flows\x12T\n" +
+	"\fGetFlowStats\x12&.vkturn.control.v1.GetFlowStatsRequest\x1a\x1c.vkturn.control.v1.FlowStatsB7Z5github.com/cacggghp/vk-turn-proxy/controlpb;controlpbb\x06proto3"
 
 var (
 	file_proto_control_proto_rawDescOnce sync.Once
@@ -489,32 +854,44 @@ func file_proto_control_proto_rawDescGZIP() []byte {
 	return file_proto_control_proto_rawDescData
 }
 
-var file_proto_control_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_proto_control_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_proto_control_proto_goTypes = []any{
-	(*GetStatusRequest)(nil),   // 0: vkturn.control.v1.GetStatusRequest
-	(*Status)(nil),             // 1: vkturn.control.v1.Status
-	(*ListPeersRequest)(nil),   // 2: vkturn.control.v1.ListPeersRequest
-	(*Peers)(nil),              // 3: vkturn.control.v1.Peers
-	(*CreatePeerRequest)(nil),  // 4: vkturn.control.v1.CreatePeerRequest
-	(*Peer)(nil),               // 5: vkturn.control.v1.Peer
-	(*DeletePeerRequest)(nil),  // 6: vkturn.control.v1.DeletePeerRequest
-	(*DeletePeerResponse)(nil), // 7: vkturn.control.v1.DeletePeerResponse
+	(*ListFlowsRequest)(nil),    // 0: vkturn.control.v1.ListFlowsRequest
+	(*Flow)(nil),                // 1: vkturn.control.v1.Flow
+	(*Flows)(nil),               // 2: vkturn.control.v1.Flows
+	(*GetFlowStatsRequest)(nil), // 3: vkturn.control.v1.GetFlowStatsRequest
+	(*FlowStats)(nil),           // 4: vkturn.control.v1.FlowStats
+	(*GetStatusRequest)(nil),    // 5: vkturn.control.v1.GetStatusRequest
+	(*Status)(nil),              // 6: vkturn.control.v1.Status
+	(*ListPeersRequest)(nil),    // 7: vkturn.control.v1.ListPeersRequest
+	(*Peers)(nil),               // 8: vkturn.control.v1.Peers
+	(*CreatePeerRequest)(nil),   // 9: vkturn.control.v1.CreatePeerRequest
+	(*Peer)(nil),                // 10: vkturn.control.v1.Peer
+	(*DeletePeerRequest)(nil),   // 11: vkturn.control.v1.DeletePeerRequest
+	(*DeletePeerResponse)(nil),  // 12: vkturn.control.v1.DeletePeerResponse
+	nil,                         // 13: vkturn.control.v1.FlowStats.StreamsByProtocolEntry
 }
 var file_proto_control_proto_depIdxs = []int32{
-	5, // 0: vkturn.control.v1.Peers.peers:type_name -> vkturn.control.v1.Peer
-	0, // 1: vkturn.control.v1.Relay.GetStatus:input_type -> vkturn.control.v1.GetStatusRequest
-	2, // 2: vkturn.control.v1.Relay.ListPeers:input_type -> vkturn.control.v1.ListPeersRequest
-	4, // 3: vkturn.control.v1.Relay.CreatePeer:input_type -> vkturn.control.v1.CreatePeerRequest
-	6, // 4: vkturn.control.v1.Relay.DeletePeer:input_type -> vkturn.control.v1.DeletePeerRequest
-	1, // 5: vkturn.control.v1.Relay.GetStatus:output_type -> vkturn.control.v1.Status
-	3, // 6: vkturn.control.v1.Relay.ListPeers:output_type -> vkturn.control.v1.Peers
-	5, // 7: vkturn.control.v1.Relay.CreatePeer:output_type -> vkturn.control.v1.Peer
-	7, // 8: vkturn.control.v1.Relay.DeletePeer:output_type -> vkturn.control.v1.DeletePeerResponse
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1,  // 0: vkturn.control.v1.Flows.flows:type_name -> vkturn.control.v1.Flow
+	13, // 1: vkturn.control.v1.FlowStats.streams_by_protocol:type_name -> vkturn.control.v1.FlowStats.StreamsByProtocolEntry
+	10, // 2: vkturn.control.v1.Peers.peers:type_name -> vkturn.control.v1.Peer
+	5,  // 3: vkturn.control.v1.Relay.GetStatus:input_type -> vkturn.control.v1.GetStatusRequest
+	7,  // 4: vkturn.control.v1.Relay.ListPeers:input_type -> vkturn.control.v1.ListPeersRequest
+	9,  // 5: vkturn.control.v1.Relay.CreatePeer:input_type -> vkturn.control.v1.CreatePeerRequest
+	11, // 6: vkturn.control.v1.Relay.DeletePeer:input_type -> vkturn.control.v1.DeletePeerRequest
+	0,  // 7: vkturn.control.v1.Relay.ListFlows:input_type -> vkturn.control.v1.ListFlowsRequest
+	3,  // 8: vkturn.control.v1.Relay.GetFlowStats:input_type -> vkturn.control.v1.GetFlowStatsRequest
+	6,  // 9: vkturn.control.v1.Relay.GetStatus:output_type -> vkturn.control.v1.Status
+	8,  // 10: vkturn.control.v1.Relay.ListPeers:output_type -> vkturn.control.v1.Peers
+	10, // 11: vkturn.control.v1.Relay.CreatePeer:output_type -> vkturn.control.v1.Peer
+	12, // 12: vkturn.control.v1.Relay.DeletePeer:output_type -> vkturn.control.v1.DeletePeerResponse
+	2,  // 13: vkturn.control.v1.Relay.ListFlows:output_type -> vkturn.control.v1.Flows
+	4,  // 14: vkturn.control.v1.Relay.GetFlowStats:output_type -> vkturn.control.v1.FlowStats
+	9,  // [9:15] is the sub-list for method output_type
+	3,  // [3:9] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_control_proto_init() }
@@ -528,7 +905,7 @@ func file_proto_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_control_proto_rawDesc), len(file_proto_control_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

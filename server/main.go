@@ -39,6 +39,14 @@ const relayVersion = "dev"
 
 var serverUI *serverTUI
 
+// flowRegistry adapts the always-on serverUI stream registry to the Relay gRPC
+// FlowProvider. It reads the global lazily (the methods are nil-safe) so it can
+// be wired before serverUI is created.
+type flowRegistry struct{}
+
+func (flowRegistry) Flows() []relaygrpc.Flow        { return serverUI.Flows() }
+func (flowRegistry) FlowStats() relaygrpc.FlowStats { return serverUI.FlowStats() }
+
 const (
 	serverUDPReadBufferBytes  = 4 << 20
 	serverUDPWriteBufferBytes = 4 << 20
@@ -1020,9 +1028,11 @@ func main() {
 			log.Printf("WireGuard interface %s up on port %d", opts.wgInterface, opts.wgListenPort)
 		}
 		grpcServer := relaygrpc.NewServer(relaygrpc.Options{
-			Store:   peers,
-			Version: relayVersion,
-			Token:   opts.grpcToken,
+			Store:    peers,
+			Version:  relayVersion,
+			Token:    opts.grpcToken,
+			Flows:    flowRegistry{},
+			Sessions: func() uint64 { return uint64(serverUI.FlowStats().ActiveSessions) },
 		})
 		grpcLis, err := net.Listen("tcp", opts.grpcListen)
 		if err != nil {
