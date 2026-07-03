@@ -1049,10 +1049,22 @@ func main() {
 			}
 			log.Printf("WireGuard interface %s up on port %d", opts.wgInterface, opts.wgListenPort)
 		}
+		var grpcCreds credentials.TransportCredentials
+		if opts.grpcCert != "" && opts.grpcKey != "" {
+			tlsCreds, credErr := credentials.NewServerTLSFromFile(opts.grpcCert, opts.grpcKey)
+			if credErr != nil {
+				log.Fatalf("relay grpc tls: %v", credErr)
+			}
+			grpcCreds = tlsCreds
+			log.Printf("Relay management API TLS enabled")
+		} else {
+			log.Printf("Relay management API serving without TLS (token only)")
+		}
 		grpcServer := relaygrpc.NewServer(relaygrpc.Options{
 			Store:    peers,
 			Version:  relayVersion,
 			Token:    opts.grpcToken,
+			Creds:    grpcCreds,
 			Flows:    flowRegistry{},
 			Sessions: func() uint64 { return uint64(serverUI.FlowStats().ActiveSessions) },
 		})

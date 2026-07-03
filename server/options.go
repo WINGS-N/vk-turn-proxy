@@ -29,6 +29,8 @@ type serverOptions struct {
 
 	grpcListen   string // ip:port for the panel-facing Relay management API (empty = disabled)
 	grpcToken    string // bearer token the panel must present on the Relay API
+	grpcCert     string // TLS certificate file for the Relay API (empty = plaintext)
+	grpcKey      string // TLS private key file for the Relay API
 	wgTunnelCIDR string // tunnel address pool, e.g. 10.66.66.0/24
 	wgInterface  string // tunnel interface name reported by the Relay API
 	wgApply      bool   // program peers onto a live kernel WireGuard interface (needs root)
@@ -62,6 +64,8 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.BoolVar(&opts.wrapAcceptClientKeys, "wrap-accept-client-keys", true, "Accept wrap_key_proposal from client SessionHello when no -wrap-key is preset (default true)")
 	fs.StringVar(&opts.grpcListen, "grpc-listen", "", "ip:port for the panel-facing Relay management API (empty disables it)")
 	fs.StringVar(&opts.grpcToken, "grpc-token", "", "bearer token the panel must present on the Relay management API")
+	fs.StringVar(&opts.grpcCert, "grpc-cert", "", "TLS certificate file for the Relay management API (empty serves plaintext)")
+	fs.StringVar(&opts.grpcKey, "grpc-key", "", "TLS private key file for the Relay management API")
 	fs.StringVar(&opts.wgTunnelCIDR, "wg-tunnel-cidr", "10.66.66.0/24", "tunnel address pool for managed peers")
 	fs.StringVar(&opts.wgInterface, "wg-interface", "wg-wingsv", "tunnel interface name reported by the Relay API")
 	fs.BoolVar(&opts.wgApply, "wg-apply", false, "program peers onto a live kernel WireGuard interface (requires root)")
