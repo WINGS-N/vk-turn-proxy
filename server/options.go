@@ -91,6 +91,7 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 }
 
 func parseServerOptions(args []string, program string, stdout, stderr io.Writer) (serverOptions, int) {
+	args = mergeConfigFile(args)
 	return cliutil.Parse(args, program, stdout, stderr, newServerFlagSet, func(opts *serverOptions) error {
 		opts.connect = strings.TrimSpace(opts.connect)
 		opts.udpConnect = strings.TrimSpace(opts.udpConnect)
