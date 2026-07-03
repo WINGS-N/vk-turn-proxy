@@ -1248,6 +1248,13 @@ func oneDtlsConnection(
 		}
 		log.Printf("Closed DTLS connection\n")
 	}()
+	if !probeOnly && runPendingProvisionOnConn(dtlsConn) {
+		// This connection carried a one-shot PROVISION enrollment, sent as the
+		// first hello exactly like a SessionHello. The server closes it after
+		// answering, so drop it here and let the worker loop reconnect for a
+		// normal session.
+		return
+	}
 	dtlsWriteMu := &sync.Mutex{}
 	controlResponses := make(chan []byte, 4)
 	sessionResponses := make(chan []byte, 4)
@@ -2053,15 +2060,10 @@ func main() { //nolint:cyclop
 	manualCaptcha = opts.manualCaptcha
 	captchaSolverVersion = opts.captchaSolver
 	if opts.appGRPCSocket != "" {
-		// The provision backend is left nil for now: AppControl.Provision then
-		// answers "provisioning is not available" and the app degrades cleanly.
-		// Wiring it means dialling a standalone PROVISION connection to the relay
-		// (a DTLS conn whose first ClientHello is CLIENT_HELLO_TYPE_PROVISION, which
-		// the server already answers via handleProvision -> the panel resolver) and
-		// handing it to RequestProvision. That dial has to ride the live async TURN
-		// allocation + relay pipeline (oneTurnConnectionLoop / oneDtlsConnection),
-		// so it can only be developed and verified against real VK TURN, not offline.
-		if _, err := StartAppControl(opts.appGRPCSocket, opts.appGRPCToken, setVkCookies, nil); err != nil {
+		// provisionViaWorker parks the enrollment for the next DTLS worker, which
+		// runs the PROVISION exchange as the first hello on its connection (the
+		// server dispatches PROVISION vs SESSION by the inner ClientHello type).
+		if _, err := StartAppControl(opts.appGRPCSocket, opts.appGRPCToken, setVkCookies, provisionViaWorker); err != nil {
 			log.Printf("app-control: %v", err)
 		} else {
 			log.Printf("app-control: serving on %s", opts.appGRPCSocket)
