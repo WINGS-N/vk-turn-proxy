@@ -20,6 +20,7 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/internal/controlpath"
 	"github.com/cacggghp/vk-turn-proxy/internal/panelclient"
 	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
+	"github.com/cacggghp/vk-turn-proxy/internal/pintls"
 	"github.com/cacggghp/vk-turn-proxy/internal/relaygrpc"
 	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
@@ -28,6 +29,7 @@ import (
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 	dtlsnet "github.com/pion/dtls/v3/pkg/net"
 	pionudp "github.com/pion/transport/v4/udp"
+	"google.golang.org/grpc/credentials"
 )
 
 const initialNegotiationTimeout = 750 * time.Millisecond
@@ -1020,7 +1022,15 @@ func main() {
 	}
 
 	if opts.panelGRPC != "" {
-		SetProvisionResolver(panelclient.New(opts.panelGRPC, opts.panelToken), opts.nodeID)
+		var pcOpts []panelclient.Option
+		if opts.panelCAPin != "" {
+			pin, pinErr := pintls.ParsePin(opts.panelCAPin)
+			if pinErr != nil {
+				log.Fatalf("invalid -panel-ca-pin: %v", pinErr)
+			}
+			pcOpts = append(pcOpts, panelclient.WithTransportCredentials(credentials.NewTLS(pintls.ClientConfig(pin))))
+		}
+		SetProvisionResolver(panelclient.New(opts.panelGRPC, opts.panelToken, pcOpts...), opts.nodeID)
 		log.Printf("DTLS PROVISION enabled via panel %s (node %s)", opts.panelGRPC, opts.nodeID)
 	}
 
