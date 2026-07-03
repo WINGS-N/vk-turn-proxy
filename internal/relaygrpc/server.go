@@ -58,6 +58,7 @@ type server struct {
 	sessions func() uint64
 	token    string
 	flows    FlowProvider
+	listen   string
 }
 
 // Options configures the Relay gRPC server.
@@ -68,13 +69,16 @@ type Options struct {
 	Token    string
 	Creds    credentials.TransportCredentials
 	Flows    FlowProvider
+	// Listen is the relay's DTLS data-plane listen address, reported in Status so
+	// the panel can derive the endpoint apps dial.
+	Listen string
 }
 
 // NewServer builds a grpc.Server serving the Relay service. When Token is set,
 // callers must present it as a bearer token; a verified client certificate
 // (mTLS) is always accepted.
 func NewServer(o Options) *grpc.Server {
-	s := &server{store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token, flows: o.Flows}
+	s := &server{store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token, flows: o.Flows, listen: o.Listen}
 	opts := []grpc.ServerOption{grpc.ChainUnaryInterceptor(s.authUnary)}
 	if o.Creds != nil {
 		opts = append(opts, grpc.Creds(o.Creds))
@@ -94,6 +98,7 @@ func (s *server) GetStatus(_ context.Context, _ *controlpb.GetStatusRequest) (*c
 		WgInterface:    s.store.Interface(),
 		PeerCount:      uint32(s.store.Count()),
 		ActiveSessions: active,
+		ListenEndpoint: s.listen,
 	}, nil
 }
 

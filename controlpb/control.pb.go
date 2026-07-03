@@ -397,6 +397,9 @@ type Status struct {
 	WgInterface    string                 `protobuf:"bytes,2,opt,name=wg_interface,json=wgInterface,proto3" json:"wg_interface,omitempty"`
 	PeerCount      uint32                 `protobuf:"varint,3,opt,name=peer_count,json=peerCount,proto3" json:"peer_count,omitempty"`
 	ActiveSessions uint64                 `protobuf:"varint,4,opt,name=active_sessions,json=activeSessions,proto3" json:"active_sessions,omitempty"`
+	// The relay's DTLS data-plane listen address (the -listen flag), so the panel
+	// can derive the endpoint apps dial without a separate configuration.
+	ListenEndpoint string `protobuf:"bytes,5,opt,name=listen_endpoint,json=listenEndpoint,proto3" json:"listen_endpoint,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -457,6 +460,13 @@ func (x *Status) GetActiveSessions() uint64 {
 		return x.ActiveSessions
 	}
 	return 0
+}
+
+func (x *Status) GetListenEndpoint() string {
+	if x != nil {
+		return x.ListenEndpoint
+	}
+	return ""
 }
 
 type ListPeersRequest struct {
@@ -802,13 +812,14 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x16StreamsByProtocolEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\x12\n" +
-	"\x10GetStatusRequest\"\x8d\x01\n" +
+	"\x10GetStatusRequest\"\xb6\x01\n" +
 	"\x06Status\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12!\n" +
 	"\fwg_interface\x18\x02 \x01(\tR\vwgInterface\x12\x1d\n" +
 	"\n" +
 	"peer_count\x18\x03 \x01(\rR\tpeerCount\x12'\n" +
-	"\x0factive_sessions\x18\x04 \x01(\x04R\x0eactiveSessions\"\x12\n" +
+	"\x0factive_sessions\x18\x04 \x01(\x04R\x0eactiveSessions\x12'\n" +
+	"\x0flisten_endpoint\x18\x05 \x01(\tR\x0elistenEndpoint\"\x12\n" +
 	"\x10ListPeersRequest\"6\n" +
 	"\x05Peers\x12-\n" +
 	"\x05peers\x18\x01 \x03(\v2\x17.vkturn.control.v1.PeerR\x05peers\"S\n" +

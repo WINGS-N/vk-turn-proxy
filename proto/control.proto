@@ -58,6 +58,9 @@ message Status {
   string wg_interface = 2;
   uint32 peer_count = 3;
   uint64 active_sessions = 4;
+  // The relay's DTLS data-plane listen address (the -listen flag), so the panel
+  // can derive the endpoint apps dial without a separate configuration.
+  string listen_endpoint = 5;
 }
 
 message ListPeersRequest {}

@@ -1070,6 +1070,7 @@ func main() {
 			Token:    opts.grpcToken,
 			Creds:    grpcCreds,
 			Flows:    flowRegistry{},
+			Listen:   opts.listen,
 			Sessions: func() uint64 { return uint64(serverUI.FlowStats().ActiveSessions) },
 		})
 		grpcLis, err := net.Listen("tcp", opts.grpcListen)
