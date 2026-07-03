@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/internal/controlpath"
+	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
+	"github.com/cacggghp/vk-turn-proxy/internal/relaygrpc"
 	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	sessionmuv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/mu/v1"
@@ -28,6 +30,8 @@ import (
 )
 
 const initialNegotiationTimeout = 750 * time.Millisecond
+
+const relayVersion = "dev"
 
 var serverUI *serverTUI
 
@@ -987,6 +991,29 @@ func main() {
 				log.Fatalf("wb-stream pre-join %q: %v", trimmed, err)
 			}
 		}
+	}
+
+	if opts.grpcListen != "" {
+		peers, err := peerstore.New(opts.wgTunnelCIDR, opts.wgInterface)
+		if err != nil {
+			log.Fatalf("relay peerstore: %v", err)
+		}
+		grpcServer := relaygrpc.NewServer(relaygrpc.Options{
+			Store:   peers,
+			Version: relayVersion,
+			Token:   opts.grpcToken,
+		})
+		grpcLis, err := net.Listen("tcp", opts.grpcListen)
+		if err != nil {
+			log.Fatalf("relay grpc listen %s: %v", opts.grpcListen, err)
+		}
+		go func() {
+			log.Printf("Relay management API on %s", opts.grpcListen)
+			if serveErr := grpcServer.Serve(grpcLis); serveErr != nil {
+				log.Printf("relay grpc serve: %v", serveErr)
+			}
+		}()
+		defer grpcServer.GracefulStop()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

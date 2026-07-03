@@ -26,6 +26,11 @@ type serverOptions struct {
 	wrapCipher           string // any|srtp-aes-gcm|srtp-chacha20-poly1305 — accepted cipher(s)
 	wrapKeyHex           string // optional preset key; takes precedence over client proposal
 	wrapAcceptClientKeys bool   // default true; in-band key transmission opt-out
+
+	grpcListen   string // ip:port for the panel-facing Relay management API (empty = disabled)
+	grpcToken    string // bearer token the panel must present on the Relay API
+	wgTunnelCIDR string // tunnel address pool, e.g. 10.66.66.0/24
+	wgInterface  string // tunnel interface name reported by the Relay API
 }
 
 func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverOptions) {
@@ -47,6 +52,10 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "any", "Accepted WRAP cipher(s): any|srtp-aes-gcm|srtp-chacha20-poly1305")
 	fs.StringVar(&opts.wrapKeyHex, "wrap-key", "", "Optional fixed WRAP key (64-char hex, 32 bytes); takes precedence over client proposal when set")
 	fs.BoolVar(&opts.wrapAcceptClientKeys, "wrap-accept-client-keys", true, "Accept wrap_key_proposal from client SessionHello when no -wrap-key is preset (default true)")
+	fs.StringVar(&opts.grpcListen, "grpc-listen", "", "ip:port for the panel-facing Relay management API (empty disables it)")
+	fs.StringVar(&opts.grpcToken, "grpc-token", "", "bearer token the panel must present on the Relay management API")
+	fs.StringVar(&opts.wgTunnelCIDR, "wg-tunnel-cidr", "10.66.66.0/24", "tunnel address pool for managed peers")
+	fs.StringVar(&opts.wgInterface, "wg-interface", "wg-wingsv", "tunnel interface name reported by the Relay API")
 	fs.Usage = func() {
 		cliutil.Fprintf(fs.Output(), "Usage:\n  %s -connect <ip:port> [flags]\n  %s -udp-connect <ip:port> [flags]\n  %s -wb-stream-room-id <id> -udp-connect <ip:port> [flags]\n\n", program, program, program)
 		cliutil.Fprintln(fs.Output(), "Examples:")

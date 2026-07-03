@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package vkturn.control.v1;
+
+option go_package = "github.com/cacggghp/vk-turn-proxy/controlpb;controlpb";
+
+// Relay is the management API the wingsv-panel calls over gRPC to drive a
+// vk-turn-proxy node: inspect status and manage the WireGuard/AmneziaWG peers
+// that back the tunnel. It is distinct from the DTLS relay data plane and from
+// the app self-enroll path (which reaches the panel over its own gRPC).
+service Relay {
+  rpc GetStatus(GetStatusRequest) returns (Status);
+  rpc ListPeers(ListPeersRequest) returns (Peers);
+  rpc CreatePeer(CreatePeerRequest) returns (Peer);
+  rpc DeletePeer(DeletePeerRequest) returns (DeletePeerResponse);
+}
+
+message GetStatusRequest {}
+
+message Status {
+  string version = 1;
+  string wg_interface = 2;
+  uint32 peer_count = 3;
+  uint64 active_sessions = 4;
+}
+
+message ListPeersRequest {}
+
+message Peers {
+  repeated Peer peers = 1;
+}
+
+message CreatePeerRequest {
+  // Client WireGuard public key (base64). Empty asks the server to generate a
+  // keypair and return the private key in the Peer response.
+  string public_key = 1;
+  // Optional tunnel address (CIDR). Empty allocates the next free address from
+  // the node pool.
+  string allowed_ips = 2;
+}
+
+message Peer {
+  string public_key = 1;
+  // Set only when the server generated the keypair on this request.
+  string private_key = 2;
+  string allowed_ips = 3;
+  string server_public_key = 4;
+  uint64 rx_bytes = 5;
+  uint64 tx_bytes = 6;
+  int64 created_unix = 7;
+}
+
+message DeletePeerRequest {
+  string public_key = 1;
+}
+
+message DeletePeerResponse {}

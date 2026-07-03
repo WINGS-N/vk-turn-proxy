@@ -36,8 +36,20 @@ EOF
   GOCACHE="$GO_BUILD_CACHE_DIR" go build -o "$TOOLS_DIR/protoc-gen-go" google.golang.org/protobuf/cmd/protoc-gen-go
 )
 
+if [ ! -x "$TOOLS_DIR/protoc-gen-go-grpc" ]; then
+  GOBIN="$TOOLS_DIR" GOCACHE="$GO_BUILD_CACHE_DIR" GOSUMDB=off \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+fi
+
 PATH="$TOOLS_DIR:$PATH" protoc \
   --proto_path="$ROOT_DIR" \
   --go_out="$OUT_DIR" \
   --go_opt=module=github.com/cacggghp/vk-turn-proxy \
-  "$PROTO_DIR/session.proto"
+  "$PROTO_DIR/session.proto" \
+  "$PROTO_DIR/control.proto"
+
+PATH="$TOOLS_DIR:$PATH" protoc \
+  --proto_path="$ROOT_DIR" \
+  --go-grpc_out="$OUT_DIR" \
+  --go-grpc_opt=module=github.com/cacggghp/vk-turn-proxy \
+  "$PROTO_DIR/control.proto"
