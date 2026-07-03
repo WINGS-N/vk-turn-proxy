@@ -18,7 +18,7 @@ import (
 func dial(t *testing.T, o Options) controlpb.RelayClient {
 	t.Helper()
 	if o.Store == nil {
-		store, err := peerstore.New("10.66.66.0/24", "wg-test")
+		store, err := peerstore.New("10.66.66.0/24", "wg-test", nil)
 		if err != nil {
 			t.Fatalf("peerstore.New: %v", err)
 		}

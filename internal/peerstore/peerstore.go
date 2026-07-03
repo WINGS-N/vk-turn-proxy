@@ -14,6 +14,8 @@ import (
 	"net/netip"
 	"sync"
 	"time"
+
+	"github.com/cacggghp/vk-turn-proxy/internal/wgapply"
 )
 
 // Peer is one tunnel client.
@@ -35,11 +37,13 @@ type Store struct {
 	serverPriv string
 	peers      map[string]*Peer
 	nowUnix    func() int64
+	applier    wgapply.Applier
 }
 
 // New creates a store for the given tunnel CIDR (for example 10.66.66.0/24) and
-// interface name, generating a fresh server keypair.
-func New(cidr, iface string) (*Store, error) {
+// interface name, generating a fresh server keypair. applier programs peers onto
+// the live interface; pass nil (or wgapply.Noop{}) to keep peers in memory only.
+func New(cidr, iface string, applier wgapply.Applier) (*Store, error) {
 	prefix, err := netip.ParsePrefix(cidr)
 	if err != nil {
 		return nil, fmt.Errorf("peerstore: parse cidr: %w", err)
@@ -51,6 +55,9 @@ func New(cidr, iface string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if applier == nil {
+		applier = wgapply.Noop{}
+	}
 	return &Store{
 		iface:      iface,
 		prefix:     prefix.Masked(),
@@ -59,11 +66,16 @@ func New(cidr, iface string) (*Store, error) {
 		serverPriv: priv,
 		peers:      make(map[string]*Peer),
 		nowUnix:    func() int64 { return time.Now().Unix() },
+		applier:    applier,
 	}, nil
 }
 
 // ServerPublicKey returns the node's WireGuard public key (base64).
 func (s *Store) ServerPublicKey() string { return s.serverPub }
+
+// ServerPrivateKey returns the node's WireGuard private key (base64). It is the
+// interface's key; keep it on the host only.
+func (s *Store) ServerPrivateKey() string { return s.serverPriv }
 
 // Interface returns the tunnel interface name.
 func (s *Store) Interface() string { return s.iface }
@@ -101,6 +113,9 @@ func (s *Store) Create(publicKey, allowedIPs string) (Created, error) {
 		}
 		allowedIPs = addr.String() + "/32"
 	}
+	if err := s.applier.SetPeer(s.iface, wgapply.Peer{PublicKey: publicKey, AllowedIPs: allowedIPs}); err != nil {
+		return Created{}, err
+	}
 	peer := &Peer{PublicKey: publicKey, AllowedIPs: allowedIPs, CreatedUnix: s.nowUnix()}
 	s.peers[publicKey] = peer
 	return Created{Peer: *peer, PrivateKey: generatedPriv}, nil
@@ -113,6 +128,7 @@ func (s *Store) Delete(publicKey string) bool {
 	if _, ok := s.peers[publicKey]; !ok {
 		return false
 	}
+	_ = s.applier.RemovePeer(s.iface, publicKey)
 	delete(s.peers, publicKey)
 	return true
 }

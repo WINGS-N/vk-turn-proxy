@@ -22,6 +22,7 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
 	"github.com/cacggghp/vk-turn-proxy/internal/pintls"
 	"github.com/cacggghp/vk-turn-proxy/internal/relaygrpc"
+	"github.com/cacggghp/vk-turn-proxy/internal/wgapply"
 	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	sessionmuv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/mu/v1"
@@ -999,9 +1000,24 @@ func main() {
 	}
 
 	if opts.grpcListen != "" {
-		peers, err := peerstore.New(opts.wgTunnelCIDR, opts.wgInterface)
+		var applier wgapply.Applier = wgapply.Noop{}
+		if opts.wgApply {
+			wc, wcErr := wgapply.NewWGCtrl()
+			if wcErr != nil {
+				log.Fatalf("wg apply: %v", wcErr)
+			}
+			applier = wc
+			defer func() { _ = wc.Close() }()
+		}
+		peers, err := peerstore.New(opts.wgTunnelCIDR, opts.wgInterface, applier)
 		if err != nil {
 			log.Fatalf("relay peerstore: %v", err)
+		}
+		if opts.wgApply {
+			if err := applier.EnsureInterface(opts.wgInterface, peers.ServerPrivateKey(), opts.wgListenPort, opts.wgAddress); err != nil {
+				log.Fatalf("wg ensure interface: %v", err)
+			}
+			log.Printf("WireGuard interface %s up on port %d", opts.wgInterface, opts.wgListenPort)
 		}
 		grpcServer := relaygrpc.NewServer(relaygrpc.Options{
 			Store:   peers,
