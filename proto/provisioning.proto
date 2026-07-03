@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+// Package and service names mirror the panel's provisioning.proto exactly so the
+// generated method paths line up; only go_package differs. This is the node
+// (client) side: during app self-enroll the node calls the panel to verify the
+// client token and obtain (creating on first use) the client's WireGuard config.
+package wingsv.provisioning.v1;
+
+option go_package = "github.com/cacggghp/vk-turn-proxy/provisioningpb;provisioningpb";
+
+service Provisioning {
+  rpc ResolveClientConfig(ResolveClientConfigRequest) returns (ResolveClientConfigResponse);
+}
+
+message ResolveClientConfigRequest {
+  string client_id = 1;
+  bytes token = 2;
+  string hwid = 3;
+  string node_id = 4;
+}
+
+message ResolveClientConfigResponse {
+  WireguardConfig wg = 1;
+}
+
+message WireguardConfig {
+  string private_key = 1;
+  string public_key = 2;
+  string address = 3;
+  string server_public_key = 4;
+  string allowed_ips = 5;
+  uint32 mtu = 6;
+}

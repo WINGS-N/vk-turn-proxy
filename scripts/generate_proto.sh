@@ -46,10 +46,12 @@ PATH="$TOOLS_DIR:$PATH" protoc \
   --go_out="$OUT_DIR" \
   --go_opt=module=github.com/cacggghp/vk-turn-proxy \
   "$PROTO_DIR/session.proto" \
-  "$PROTO_DIR/control.proto"
+  "$PROTO_DIR/control.proto" \
+  "$PROTO_DIR/provisioning.proto"
 
 PATH="$TOOLS_DIR:$PATH" protoc \
   --proto_path="$ROOT_DIR" \
   --go-grpc_out="$OUT_DIR" \
   --go-grpc_opt=module=github.com/cacggghp/vk-turn-proxy \
-  "$PROTO_DIR/control.proto"
+  "$PROTO_DIR/control.proto" \
+  "$PROTO_DIR/provisioning.proto"
