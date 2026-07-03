@@ -2053,6 +2053,14 @@ func main() { //nolint:cyclop
 	manualCaptcha = opts.manualCaptcha
 	captchaSolverVersion = opts.captchaSolver
 	if opts.appGRPCSocket != "" {
+		// The provision backend is left nil for now: AppControl.Provision then
+		// answers "provisioning is not available" and the app degrades cleanly.
+		// Wiring it means dialling a standalone PROVISION connection to the relay
+		// (a DTLS conn whose first ClientHello is CLIENT_HELLO_TYPE_PROVISION, which
+		// the server already answers via handleProvision -> the panel resolver) and
+		// handing it to RequestProvision. That dial has to ride the live async TURN
+		// allocation + relay pipeline (oneTurnConnectionLoop / oneDtlsConnection),
+		// so it can only be developed and verified against real VK TURN, not offline.
 		if _, err := StartAppControl(opts.appGRPCSocket, opts.appGRPCToken, setVkCookies, nil); err != nil {
 			log.Printf("app-control: %v", err)
 		} else {
