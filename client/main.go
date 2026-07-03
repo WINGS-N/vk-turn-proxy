@@ -2052,6 +2052,13 @@ func main() { //nolint:cyclop
 	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
 	manualCaptcha = opts.manualCaptcha
 	captchaSolverVersion = opts.captchaSolver
+	if opts.appGRPCSocket != "" {
+		if _, err := StartAppControl(opts.appGRPCSocket, opts.appGRPCToken, setVkCookies, nil); err != nil {
+			log.Printf("app-control: %v", err)
+		} else {
+			log.Printf("app-control: serving on %s", opts.appGRPCSocket)
+		}
+	}
 	setVkAuthMode(opts.vkAuth)
 	if getVkAuthMode() == "account" {
 		log.Printf("[VK Auth] account mode armed")

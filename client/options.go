@@ -28,6 +28,8 @@ type clientOptions struct {
 	vkAuth           string
 	vkSessionFile    string
 	vkCookieFilePoll bool
+	appGRPCSocket    string
+	appGRPCToken     string
 	tcpFlavor        string
 	credsGroupSize   int
 	protectSock      string
@@ -83,6 +85,8 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.protectSock, "protect-sock", "", "unix socket used for VpnService.protect fd bridge")
 	fs.StringVar(&opts.vkSessionFile, "vk-session-file", "", "path to persist VK session cookies across relay restarts (account mode)")
 	fs.BoolVar(&opts.vkCookieFilePoll, "vk-cookie-file-poll", false, "poll vk-session-file for live cookie updates written by the host app (root/no-stdin path where the vk_account_creds stdin line cannot be delivered)")
+	fs.StringVar(&opts.appGRPCSocket, "app-grpc-socket", "", "serve the local AppControl gRPC IPC on this unix socket path (app-private dir); empty disables it")
+	fs.StringVar(&opts.appGRPCToken, "app-grpc-token", "", "shared bearer token the host app must present on the AppControl IPC")
 	fs.StringVar(&opts.protoFingerprint, "proto-fp", "", "deprecated; ignored")
 	fs.StringVar(&opts.browserFP, "browser-fp", "auto", "browser fingerprint family for HTTP+TLS impersonation: auto|chrome|edge|safari|firefox (auto = random per session)")
 	fs.StringVar(&opts.sessionMode, "session-mode", string(sessionproto.ModeMainline), "TURN session mode: mainline|mu|auto")
