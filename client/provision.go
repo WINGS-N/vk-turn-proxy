@@ -35,9 +35,9 @@ var pendingProvision atomic.Pointer[provisionExchange]
 
 // runPendingProvisionOnConn is called by a DTLS worker right after its connection
 // is up, before it sends the session hello. If an enrollment is parked it claims
-// and runs it on this connection and returns true, signalling the worker to drop
-// this connection (the server closes it after answering PROVISION) and reconnect
-// for a normal session.
+// and runs it on this connection and returns true. The node treats PROVISION as a
+// non-terminal prefix hello and keeps the connection open, so the worker then
+// proceeds with its normal session hello on the SAME connection - no reconnect.
 func runPendingProvisionOnConn(dtlsConn net.Conn) bool {
 	ex := pendingProvision.Load()
 	if ex == nil {

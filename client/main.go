@@ -1248,12 +1248,13 @@ func oneDtlsConnection(
 		}
 		log.Printf("Closed DTLS connection\n")
 	}()
-	if !probeOnly && runPendingProvisionOnConn(dtlsConn) {
-		// This connection carried a one-shot PROVISION enrollment, sent as the
-		// first hello exactly like a SessionHello. The server closes it after
-		// answering, so drop it here and let the worker loop reconnect for a
-		// normal session.
-		return
+	if !probeOnly {
+		// If an enrollment is parked, run the PROVISION exchange as the first hello
+		// on this connection, then fall through to the normal session hello on the
+		// SAME connection - the node treats PROVISION as a non-terminal prefix hello
+		// (like PROBE) and keeps the connection for the session that follows, so
+		// this worker's stream is reused rather than reconnected.
+		runPendingProvisionOnConn(dtlsConn)
 	}
 	dtlsWriteMu := &sync.Mutex{}
 	controlResponses := make(chan []byte, 4)
