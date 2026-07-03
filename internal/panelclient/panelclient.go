@@ -5,6 +5,7 @@ package panelclient
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 
@@ -37,10 +38,16 @@ type Client struct {
 // Option configures a Client.
 type Option func(*Client)
 
-// WithTransportCredentials sets the gRPC transport credentials (pinned-CA mTLS
-// to the panel). The default is insecure.
+// WithTransportCredentials sets the gRPC transport credentials, overriding the
+// system-trust TLS default (used for the pinned-CA path with a self-signed panel).
 func WithTransportCredentials(c credentials.TransportCredentials) Option {
 	return func(cl *Client) { cl.creds = c }
+}
+
+// WithInsecure drops TLS entirely (plaintext h2c). Only for a panel reached over
+// a trusted local network or a sidecar; never across the public internet.
+func WithInsecure() Option {
+	return func(cl *Client) { cl.creds = insecure.NewCredentials() }
 }
 
 // WithContextDialer overrides how connections are dialed (used by tests).
@@ -49,9 +56,12 @@ func WithContextDialer(d func(context.Context, string) (net.Conn, error)) Option
 }
 
 // New builds a Client for the panel Provisioning endpoint. token, when set, is
-// sent as a bearer credential identifying this node to the panel.
+// sent as a bearer credential identifying this node to the panel. The default
+// transport is system-trust TLS, so a panel served with a publicly trusted
+// (e.g. Let's Encrypt) certificate needs no pin; use WithTransportCredentials
+// for a self-signed pinned CA or WithInsecure for plaintext.
 func New(endpoint, token string, opts ...Option) *Client {
-	c := &Client{endpoint: endpoint, token: token, creds: insecure.NewCredentials()}
+	c := &Client{endpoint: endpoint, token: token, creds: credentials.NewTLS(&tls.Config{})}
 	for _, opt := range opts {
 		opt(c)
 	}

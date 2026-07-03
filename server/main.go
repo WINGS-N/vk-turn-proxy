@@ -1083,12 +1083,15 @@ func main() {
 
 	if opts.panelGRPC != "" {
 		var pcOpts []panelclient.Option
-		if opts.panelCAPin != "" {
+		switch {
+		case opts.panelCAPin != "":
 			pin, pinErr := pintls.ParsePin(opts.panelCAPin)
 			if pinErr != nil {
 				log.Fatalf("invalid -panel-ca-pin: %v", pinErr)
 			}
 			pcOpts = append(pcOpts, panelclient.WithTransportCredentials(credentials.NewTLS(pintls.ClientConfig(pin))))
+		case opts.panelInsecure:
+			pcOpts = append(pcOpts, panelclient.WithInsecure())
 		}
 		SetProvisionResolver(panelclient.New(opts.panelGRPC, opts.panelToken, pcOpts...), opts.nodeID)
 		log.Printf("DTLS PROVISION enabled via panel %s (node %s)", opts.panelGRPC, opts.nodeID)

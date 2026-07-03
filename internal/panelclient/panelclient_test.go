@@ -43,7 +43,7 @@ func TestResolveMapsResponse(t *testing.T) {
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 
-	c := New("passthrough:///bufnet", "node-token", WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+	c := New("passthrough:///bufnet", "node-token", WithInsecure(), WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 		return lis.DialContext(ctx)
 	}))
 	cfg, err := c.Resolve(context.Background(), "c1", []byte("tok"), "hw", "n1")
