@@ -865,7 +865,29 @@ func handleConnection(
 		return nil
 	}
 
-	for hello != nil && hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE {
+	for hello != nil &&
+		(hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROBE ||
+			hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROVISION) {
+		if hello.GetType() == sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROVISION {
+			// PROVISION is a non-terminal prefix hello: answer it and keep the
+			// connection for the session hello that follows, so the client reuses
+			// this same DTLS worker connection instead of reconnecting.
+			if err := handleProvision(conn, hello); err != nil {
+				return err
+			}
+			hello, firstPacket, wrappedSession, err = readInitialHelloOrLegacy(conn, mode)
+			if err != nil {
+				return err
+			}
+			if hello != nil {
+				log.Printf(
+					"protobuf follow-up hello after provision from %s: %s",
+					conn.RemoteAddr(),
+					describeClientHello(hello),
+				)
+			}
+			continue
+		}
 		selectedTransport, supportedTransports, errorText := selectTransportForHello(mode, backends, hello)
 		muSupported := allowsMu(mode) && errorText == ""
 		selectedTcpFlavor, supportedTcpFlavors := selectTcpFlavorForHello(hello)
