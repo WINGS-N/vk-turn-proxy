@@ -1008,6 +1008,10 @@ func main() {
 		os.Exit(0)
 	}
 
+	// On first run, snapshot the effective flags into the config file so the unit
+	// can later drop them and rely on the file. Never overwrites an existing file.
+	migrateFlagsToConfig(serverOptionsToConfigLines(opts))
+
 	backends, err := resolveServerBackends(opts.connect, opts.udpConnect, opts.tcpConnect, opts.vlessMode)
 	if err != nil {
 		log.Panicf("invalid backend flags: %v", err)
