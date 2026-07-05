@@ -15,6 +15,10 @@ service Relay {
   rpc DeletePeer(DeletePeerRequest) returns (DeletePeerResponse);
   rpc ListFlows(ListFlowsRequest) returns (Flows);
   rpc GetFlowStats(GetFlowStatsRequest) returns (FlowStats);
+  // StreamFlowStats pushes a FlowStats snapshot on a fast cadence so the panel
+  // shows live speed/traffic without polling each node. Same payload as
+  // GetFlowStats; the panel keeps the connection open and reads deltas.
+  rpc StreamFlowStats(GetFlowStatsRequest) returns (stream FlowStats);
 }
 
 message ListFlowsRequest {}
