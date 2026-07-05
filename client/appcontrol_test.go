@@ -18,7 +18,7 @@ import (
 func TestAppControl(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "app.sock")
 	var gotCookies, gotUA string
-	gs, err := StartAppControl(sock, "s3cret", -1,
+	gs, err := StartAppControl(sock, "s3cret", -1, "",
 		func(cookies, ua string) { gotCookies, gotUA = cookies, ua },
 		func(_ context.Context, clientID string, token []byte, _ string, _ uint32) (*appcontrolpb.WireguardConfig, error) {
 			if clientID != "c1" || string(token) != "tok" {

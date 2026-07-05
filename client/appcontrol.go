@@ -175,7 +175,23 @@ func appControlAuth(token string) grpc.UnaryServerInterceptor {
 // path the relay runs under su as uid 0 while the host app connects as its own
 // uid, so the app passes its uid here: the socket is chowned to it (root can) and
 // the peer-cred check accepts it, otherwise the app could never reach the relay.
-func StartAppControl(socketPath, token string, peerUID int, setCookies func(cookies, ua string), provision ProvisionFunc, configure ConfigureFunc) (*grpc.Server, error) {
+func StartAppControl(socketPath, token string, peerUID int, peerContext string, setCookies func(cookies, ua string), provision ProvisionFunc, configure ConfigureFunc) (*grpc.Server, error) {
+	// TCP loopback transport (root/kernel-WG path): the relay runs under su in a
+	// priv_app domain, and SELinux forbids untrusted_app -> priv_app unix_stream_socket
+	// connectto no matter the socket file label. A 127.0.0.1 TCP listener has no such
+	// domain-connectto check, so the app reaches it; the bearer token is the access
+	// control. Selected by an "tcp:" prefix on the socket path.
+	if addr, ok := strings.CutPrefix(socketPath, "tcp:"); ok {
+		lis, err := net.Listen("tcp", addr)
+		if err != nil {
+			return nil, fmt.Errorf("app-control: listen tcp %s: %w", addr, err)
+		}
+		gs := grpc.NewServer(grpc.ChainUnaryInterceptor(appControlAuth(token)))
+		appcontrolpb.RegisterAppControlServer(gs, &appControlServer{setCookies: setCookies, provision: provision, configure: configure})
+		appControlActive.Store(true)
+		go func() { _ = gs.Serve(lis) }()
+		return gs, nil
+	}
 	_ = os.Remove(socketPath)
 	lis, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -195,6 +211,16 @@ func StartAppControl(socketPath, token string, peerUID int, setCookies func(cook
 		if err := os.Chown(socketPath, int(allowedUID), -1); err != nil {
 			_ = lis.Close()
 			return nil, fmt.Errorf("app-control: chown socket to uid %d: %w", allowedUID, err)
+		}
+	}
+	// Root path: a socket we (root) create in the app's data dir gets the plain
+	// app_data_file:s0 label - without the app's per-app MLS categories, so the app
+	// (untrusted_app:s0:cNNN,...) is denied sock_file connect (level mismatch). The
+	// app passes its target context so we relabel the socket to match. Best-effort:
+	// if the relay's domain lacks relabelto, the connect just stays denied.
+	if peerContext != "" {
+		if err := relabelSocket(socketPath, peerContext); err != nil {
+			log.Printf("app-control: relabel socket to %q failed: %v", peerContext, err)
 		}
 	}
 	lis = newPeerCredListener(lis, allowedUID)

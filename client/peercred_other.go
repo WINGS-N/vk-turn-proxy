@@ -9,3 +9,6 @@ import "net"
 func newPeerCredListener(l net.Listener, _ uint32) net.Listener {
 	return l
 }
+
+// relabelSocket is a no-op off linux (SELinux only).
+func relabelSocket(_, _ string) error { return nil }

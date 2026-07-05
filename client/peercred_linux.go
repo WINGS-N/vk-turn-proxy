@@ -20,6 +20,13 @@ func newPeerCredListener(l net.Listener, allowedUID uint32) net.Listener {
 	return &peerCredListener{Listener: l, allowedUID: allowedUID}
 }
 
+// relabelSocket sets the SELinux context (security.selinux xattr) on the socket
+// file, so a root-created socket in the app's data dir can carry the app's own
+// per-app MLS categories and pass the untrusted_app sock_file connect check.
+func relabelSocket(path, context string) error {
+	return unix.Setxattr(path, "security.selinux", []byte(context+"\x00"), 0)
+}
+
 func (l *peerCredListener) Accept() (net.Conn, error) {
 	for {
 		conn, err := l.Listener.Accept()

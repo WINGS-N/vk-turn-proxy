@@ -11,33 +11,34 @@ import (
 )
 
 type clientOptions struct {
-	host             string
-	port             string
-	listen           string
-	vklink           string
-	vklinkSecondary  string
-	yalink           string
-	peerAddr         string
-	n                int
-	transport        string
-	vlessMode        bool
-	udp              bool
-	direct           bool
-	manualCaptcha    bool
-	captchaSolver    string
-	vkAuth           string
-	vkSessionFile    string
-	vkCookieFilePoll bool
-	appGRPCSocket    string
-	appGRPCToken     string
-	appGRPCPeerUID   int
-	tcpFlavor        string
-	credsGroupSize   int
-	protectSock      string
-	protoFingerprint string
-	browserFP        string
-	sessionMode      string
-	sessionID        string
+	host               string
+	port               string
+	listen             string
+	vklink             string
+	vklinkSecondary    string
+	yalink             string
+	peerAddr           string
+	n                  int
+	transport          string
+	vlessMode          bool
+	udp                bool
+	direct             bool
+	manualCaptcha      bool
+	captchaSolver      string
+	vkAuth             string
+	vkSessionFile      string
+	vkCookieFilePoll   bool
+	appGRPCSocket      string
+	appGRPCToken       string
+	appGRPCPeerUID     int
+	appGRPCPeerContext string
+	tcpFlavor          string
+	credsGroupSize     int
+	protectSock        string
+	protoFingerprint   string
+	browserFP          string
+	sessionMode        string
+	sessionID          string
 
 	wbStreamRoomID             string
 	wbStreamRoomIDs            string
@@ -89,6 +90,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.appGRPCSocket, "app-grpc-socket", "", "serve the local AppControl gRPC IPC on this unix socket path (app-private dir); empty disables it")
 	fs.StringVar(&opts.appGRPCToken, "app-grpc-token", "", "shared bearer token the host app must present on the AppControl IPC")
 	fs.IntVar(&opts.appGRPCPeerUID, "app-grpc-peer-uid", -1, "uid the AppControl socket must accept and be owned by; -1 uses this process's own uid (root/kernel-WG path passes the host app uid so the app can connect to the root-launched relay)")
+	fs.StringVar(&opts.appGRPCPeerContext, "app-grpc-peer-context", "", "SELinux file context to relabel the AppControl socket to (root/kernel-WG path passes the host app's app_data_file context so untrusted_app can connect); empty leaves the socket label unchanged")
 	fs.StringVar(&opts.protoFingerprint, "proto-fp", "", "deprecated; ignored")
 	fs.StringVar(&opts.browserFP, "browser-fp", "auto", "browser fingerprint family for HTTP+TLS impersonation: auto|chrome|edge|safari|firefox (auto = random per session)")
 	fs.StringVar(&opts.sessionMode, "session-mode", string(sessionproto.ModeMainline), "TURN session mode: mainline|mu|auto")
