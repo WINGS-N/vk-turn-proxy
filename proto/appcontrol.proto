@@ -23,6 +23,12 @@ service AppControl {
   // never touch stdout / logcat.
   rpc GetVKCookies(GetVKCookiesRequest) returns (GetVKCookiesResponse);
   rpc Provision(ProvisionRequest) returns (ProvisionResponse);
+  // GetTelemetry returns the relay's live counters (connected TURN streams) once.
+  rpc GetTelemetry(GetTelemetryRequest) returns (Telemetry);
+  // StreamTelemetry pushes the connected-stream count the moment it changes, so the
+  // app tracks connect progress event-driven (as fast as the old PROXY_EVENT stdout
+  // scrape) instead of polling. The relay still prints the telemetry line for logs.
+  rpc StreamTelemetry(StreamTelemetryRequest) returns (stream Telemetry);
   // Configure delivers the relay runtime configuration the host app used to pass
   // as CLI flags. The relay launches with only the AppControl socket flags and
   // blocks until the app calls Configure, then boots its engine from these fields.
@@ -88,6 +94,14 @@ message ProvisionRequest {
 message ProvisionResponse {
   WireguardConfig wg = 1;
   string error = 2;
+}
+
+message GetTelemetryRequest {}
+
+message StreamTelemetryRequest {}
+
+message Telemetry {
+  int64 connected_streams = 1;
 }
 
 message WireguardConfig {

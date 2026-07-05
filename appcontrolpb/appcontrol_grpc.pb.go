@@ -25,10 +25,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AppControl_SetVKCookies_FullMethodName = "/vkturn.appcontrol.v1.AppControl/SetVKCookies"
-	AppControl_GetVKCookies_FullMethodName = "/vkturn.appcontrol.v1.AppControl/GetVKCookies"
-	AppControl_Provision_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/Provision"
-	AppControl_Configure_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/Configure"
+	AppControl_SetVKCookies_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/SetVKCookies"
+	AppControl_GetVKCookies_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/GetVKCookies"
+	AppControl_Provision_FullMethodName       = "/vkturn.appcontrol.v1.AppControl/Provision"
+	AppControl_GetTelemetry_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/GetTelemetry"
+	AppControl_StreamTelemetry_FullMethodName = "/vkturn.appcontrol.v1.AppControl/StreamTelemetry"
+	AppControl_Configure_FullMethodName       = "/vkturn.appcontrol.v1.AppControl/Configure"
 )
 
 // AppControlClient is the client API for AppControl service.
@@ -41,6 +43,12 @@ type AppControlClient interface {
 	// never touch stdout / logcat.
 	GetVKCookies(ctx context.Context, in *GetVKCookiesRequest, opts ...grpc.CallOption) (*GetVKCookiesResponse, error)
 	Provision(ctx context.Context, in *ProvisionRequest, opts ...grpc.CallOption) (*ProvisionResponse, error)
+	// GetTelemetry returns the relay's live counters (connected TURN streams) once.
+	GetTelemetry(ctx context.Context, in *GetTelemetryRequest, opts ...grpc.CallOption) (*Telemetry, error)
+	// StreamTelemetry pushes the connected-stream count the moment it changes, so the
+	// app tracks connect progress event-driven (as fast as the old PROXY_EVENT stdout
+	// scrape) instead of polling. The relay still prints the telemetry line for logs.
+	StreamTelemetry(ctx context.Context, in *StreamTelemetryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Telemetry], error)
 	// Configure delivers the relay runtime configuration the host app used to pass
 	// as CLI flags. The relay launches with only the AppControl socket flags and
 	// blocks until the app calls Configure, then boots its engine from these fields.
@@ -85,6 +93,35 @@ func (c *appControlClient) Provision(ctx context.Context, in *ProvisionRequest, 
 	return out, nil
 }
 
+func (c *appControlClient) GetTelemetry(ctx context.Context, in *GetTelemetryRequest, opts ...grpc.CallOption) (*Telemetry, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Telemetry)
+	err := c.cc.Invoke(ctx, AppControl_GetTelemetry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *appControlClient) StreamTelemetry(ctx context.Context, in *StreamTelemetryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Telemetry], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AppControl_ServiceDesc.Streams[0], AppControl_StreamTelemetry_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamTelemetryRequest, Telemetry]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AppControl_StreamTelemetryClient = grpc.ServerStreamingClient[Telemetry]
+
 func (c *appControlClient) Configure(ctx context.Context, in *ConfigureRequest, opts ...grpc.CallOption) (*ConfigureResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ConfigureResponse)
@@ -105,6 +142,12 @@ type AppControlServer interface {
 	// never touch stdout / logcat.
 	GetVKCookies(context.Context, *GetVKCookiesRequest) (*GetVKCookiesResponse, error)
 	Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error)
+	// GetTelemetry returns the relay's live counters (connected TURN streams) once.
+	GetTelemetry(context.Context, *GetTelemetryRequest) (*Telemetry, error)
+	// StreamTelemetry pushes the connected-stream count the moment it changes, so the
+	// app tracks connect progress event-driven (as fast as the old PROXY_EVENT stdout
+	// scrape) instead of polling. The relay still prints the telemetry line for logs.
+	StreamTelemetry(*StreamTelemetryRequest, grpc.ServerStreamingServer[Telemetry]) error
 	// Configure delivers the relay runtime configuration the host app used to pass
 	// as CLI flags. The relay launches with only the AppControl socket flags and
 	// blocks until the app calls Configure, then boots its engine from these fields.
@@ -127,6 +170,12 @@ func (UnimplementedAppControlServer) GetVKCookies(context.Context, *GetVKCookies
 }
 func (UnimplementedAppControlServer) Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Provision not implemented")
+}
+func (UnimplementedAppControlServer) GetTelemetry(context.Context, *GetTelemetryRequest) (*Telemetry, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetTelemetry not implemented")
+}
+func (UnimplementedAppControlServer) StreamTelemetry(*StreamTelemetryRequest, grpc.ServerStreamingServer[Telemetry]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamTelemetry not implemented")
 }
 func (UnimplementedAppControlServer) Configure(context.Context, *ConfigureRequest) (*ConfigureResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Configure not implemented")
@@ -206,6 +255,35 @@ func _AppControl_Provision_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AppControl_GetTelemetry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTelemetryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AppControlServer).GetTelemetry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AppControl_GetTelemetry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AppControlServer).GetTelemetry(ctx, req.(*GetTelemetryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AppControl_StreamTelemetry_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamTelemetryRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(AppControlServer).StreamTelemetry(m, &grpc.GenericServerStream[StreamTelemetryRequest, Telemetry]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AppControl_StreamTelemetryServer = grpc.ServerStreamingServer[Telemetry]
+
 func _AppControl_Configure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ConfigureRequest)
 	if err := dec(in); err != nil {
@@ -244,10 +322,20 @@ var AppControl_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AppControl_Provision_Handler,
 		},
 		{
+			MethodName: "GetTelemetry",
+			Handler:    _AppControl_GetTelemetry_Handler,
+		},
+		{
 			MethodName: "Configure",
 			Handler:    _AppControl_Configure_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamTelemetry",
+			Handler:       _AppControl_StreamTelemetry_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "proto/appcontrol.proto",
 }

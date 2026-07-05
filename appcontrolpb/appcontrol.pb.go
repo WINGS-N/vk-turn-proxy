@@ -613,6 +613,122 @@ func (x *ProvisionResponse) GetError() string {
 	return ""
 }
 
+type GetTelemetryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTelemetryRequest) Reset() {
+	*x = GetTelemetryRequest{}
+	mi := &file_proto_appcontrol_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTelemetryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTelemetryRequest) ProtoMessage() {}
+
+func (x *GetTelemetryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTelemetryRequest.ProtoReflect.Descriptor instead.
+func (*GetTelemetryRequest) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{8}
+}
+
+type StreamTelemetryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamTelemetryRequest) Reset() {
+	*x = StreamTelemetryRequest{}
+	mi := &file_proto_appcontrol_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamTelemetryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamTelemetryRequest) ProtoMessage() {}
+
+func (x *StreamTelemetryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamTelemetryRequest.ProtoReflect.Descriptor instead.
+func (*StreamTelemetryRequest) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{9}
+}
+
+type Telemetry struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ConnectedStreams int64                  `protobuf:"varint,1,opt,name=connected_streams,json=connectedStreams,proto3" json:"connected_streams,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *Telemetry) Reset() {
+	*x = Telemetry{}
+	mi := &file_proto_appcontrol_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Telemetry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Telemetry) ProtoMessage() {}
+
+func (x *Telemetry) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Telemetry.ProtoReflect.Descriptor instead.
+func (*Telemetry) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *Telemetry) GetConnectedStreams() int64 {
+	if x != nil {
+		return x.ConnectedStreams
+	}
+	return 0
+}
+
 type WireguardConfig struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	PrivateKey      string                 `protobuf:"bytes,1,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`
@@ -627,7 +743,7 @@ type WireguardConfig struct {
 
 func (x *WireguardConfig) Reset() {
 	*x = WireguardConfig{}
-	mi := &file_proto_appcontrol_proto_msgTypes[8]
+	mi := &file_proto_appcontrol_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -639,7 +755,7 @@ func (x *WireguardConfig) String() string {
 func (*WireguardConfig) ProtoMessage() {}
 
 func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[8]
+	mi := &file_proto_appcontrol_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -652,7 +768,7 @@ func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WireguardConfig.ProtoReflect.Descriptor instead.
 func (*WireguardConfig) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{8}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *WireguardConfig) GetPrivateKey() string {
@@ -753,7 +869,11 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"local_port\x18\x04 \x01(\rR\tlocalPort\"`\n" +
 	"\x11ProvisionResponse\x125\n" +
 	"\x02wg\x18\x01 \x01(\v2%.vkturn.appcontrol.v1.WireguardConfigR\x02wg\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xca\x01\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\x15\n" +
+	"\x13GetTelemetryRequest\"\x18\n" +
+	"\x16StreamTelemetryRequest\"8\n" +
+	"\tTelemetry\x12+\n" +
+	"\x11connected_streams\x18\x01 \x01(\x03R\x10connectedStreams\"\xca\x01\n" +
 	"\x0fWireguardConfig\x12\x1f\n" +
 	"\vprivate_key\x18\x01 \x01(\tR\n" +
 	"privateKey\x12\x1d\n" +
@@ -763,12 +883,14 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x11server_public_key\x18\x04 \x01(\tR\x0fserverPublicKey\x12\x1f\n" +
 	"\vallowed_ips\x18\x05 \x01(\tR\n" +
 	"allowedIps\x12\x10\n" +
-	"\x03mtu\x18\x06 \x01(\rR\x03mtu2\x96\x03\n" +
+	"\x03mtu\x18\x06 \x01(\rR\x03mtu2\xd6\x04\n" +
 	"\n" +
 	"AppControl\x12e\n" +
 	"\fSetVKCookies\x12).vkturn.appcontrol.v1.SetVKCookiesRequest\x1a*.vkturn.appcontrol.v1.SetVKCookiesResponse\x12e\n" +
 	"\fGetVKCookies\x12).vkturn.appcontrol.v1.GetVKCookiesRequest\x1a*.vkturn.appcontrol.v1.GetVKCookiesResponse\x12\\\n" +
-	"\tProvision\x12&.vkturn.appcontrol.v1.ProvisionRequest\x1a'.vkturn.appcontrol.v1.ProvisionResponse\x12\\\n" +
+	"\tProvision\x12&.vkturn.appcontrol.v1.ProvisionRequest\x1a'.vkturn.appcontrol.v1.ProvisionResponse\x12Z\n" +
+	"\fGetTelemetry\x12).vkturn.appcontrol.v1.GetTelemetryRequest\x1a\x1f.vkturn.appcontrol.v1.Telemetry\x12b\n" +
+	"\x0fStreamTelemetry\x12,.vkturn.appcontrol.v1.StreamTelemetryRequest\x1a\x1f.vkturn.appcontrol.v1.Telemetry0\x01\x12\\\n" +
 	"\tConfigure\x12&.vkturn.appcontrol.v1.ConfigureRequest\x1a'.vkturn.appcontrol.v1.ConfigureResponseBj\n" +
 	"\x18wings.v.proto.appcontrolB\x0fAppControlProtoH\x03Z;github.com/cacggghp/vk-turn-proxy/appcontrolpb;appcontrolpbb\x06proto3"
 
@@ -784,33 +906,40 @@ func file_proto_appcontrol_proto_rawDescGZIP() []byte {
 	return file_proto_appcontrol_proto_rawDescData
 }
 
-var file_proto_appcontrol_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_proto_appcontrol_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_proto_appcontrol_proto_goTypes = []any{
-	(*ConfigureRequest)(nil),     // 0: vkturn.appcontrol.v1.ConfigureRequest
-	(*ConfigureResponse)(nil),    // 1: vkturn.appcontrol.v1.ConfigureResponse
-	(*SetVKCookiesRequest)(nil),  // 2: vkturn.appcontrol.v1.SetVKCookiesRequest
-	(*SetVKCookiesResponse)(nil), // 3: vkturn.appcontrol.v1.SetVKCookiesResponse
-	(*GetVKCookiesRequest)(nil),  // 4: vkturn.appcontrol.v1.GetVKCookiesRequest
-	(*GetVKCookiesResponse)(nil), // 5: vkturn.appcontrol.v1.GetVKCookiesResponse
-	(*ProvisionRequest)(nil),     // 6: vkturn.appcontrol.v1.ProvisionRequest
-	(*ProvisionResponse)(nil),    // 7: vkturn.appcontrol.v1.ProvisionResponse
-	(*WireguardConfig)(nil),      // 8: vkturn.appcontrol.v1.WireguardConfig
+	(*ConfigureRequest)(nil),       // 0: vkturn.appcontrol.v1.ConfigureRequest
+	(*ConfigureResponse)(nil),      // 1: vkturn.appcontrol.v1.ConfigureResponse
+	(*SetVKCookiesRequest)(nil),    // 2: vkturn.appcontrol.v1.SetVKCookiesRequest
+	(*SetVKCookiesResponse)(nil),   // 3: vkturn.appcontrol.v1.SetVKCookiesResponse
+	(*GetVKCookiesRequest)(nil),    // 4: vkturn.appcontrol.v1.GetVKCookiesRequest
+	(*GetVKCookiesResponse)(nil),   // 5: vkturn.appcontrol.v1.GetVKCookiesResponse
+	(*ProvisionRequest)(nil),       // 6: vkturn.appcontrol.v1.ProvisionRequest
+	(*ProvisionResponse)(nil),      // 7: vkturn.appcontrol.v1.ProvisionResponse
+	(*GetTelemetryRequest)(nil),    // 8: vkturn.appcontrol.v1.GetTelemetryRequest
+	(*StreamTelemetryRequest)(nil), // 9: vkturn.appcontrol.v1.StreamTelemetryRequest
+	(*Telemetry)(nil),              // 10: vkturn.appcontrol.v1.Telemetry
+	(*WireguardConfig)(nil),        // 11: vkturn.appcontrol.v1.WireguardConfig
 }
 var file_proto_appcontrol_proto_depIdxs = []int32{
-	8, // 0: vkturn.appcontrol.v1.ProvisionResponse.wg:type_name -> vkturn.appcontrol.v1.WireguardConfig
-	2, // 1: vkturn.appcontrol.v1.AppControl.SetVKCookies:input_type -> vkturn.appcontrol.v1.SetVKCookiesRequest
-	4, // 2: vkturn.appcontrol.v1.AppControl.GetVKCookies:input_type -> vkturn.appcontrol.v1.GetVKCookiesRequest
-	6, // 3: vkturn.appcontrol.v1.AppControl.Provision:input_type -> vkturn.appcontrol.v1.ProvisionRequest
-	0, // 4: vkturn.appcontrol.v1.AppControl.Configure:input_type -> vkturn.appcontrol.v1.ConfigureRequest
-	3, // 5: vkturn.appcontrol.v1.AppControl.SetVKCookies:output_type -> vkturn.appcontrol.v1.SetVKCookiesResponse
-	5, // 6: vkturn.appcontrol.v1.AppControl.GetVKCookies:output_type -> vkturn.appcontrol.v1.GetVKCookiesResponse
-	7, // 7: vkturn.appcontrol.v1.AppControl.Provision:output_type -> vkturn.appcontrol.v1.ProvisionResponse
-	1, // 8: vkturn.appcontrol.v1.AppControl.Configure:output_type -> vkturn.appcontrol.v1.ConfigureResponse
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	11, // 0: vkturn.appcontrol.v1.ProvisionResponse.wg:type_name -> vkturn.appcontrol.v1.WireguardConfig
+	2,  // 1: vkturn.appcontrol.v1.AppControl.SetVKCookies:input_type -> vkturn.appcontrol.v1.SetVKCookiesRequest
+	4,  // 2: vkturn.appcontrol.v1.AppControl.GetVKCookies:input_type -> vkturn.appcontrol.v1.GetVKCookiesRequest
+	6,  // 3: vkturn.appcontrol.v1.AppControl.Provision:input_type -> vkturn.appcontrol.v1.ProvisionRequest
+	8,  // 4: vkturn.appcontrol.v1.AppControl.GetTelemetry:input_type -> vkturn.appcontrol.v1.GetTelemetryRequest
+	9,  // 5: vkturn.appcontrol.v1.AppControl.StreamTelemetry:input_type -> vkturn.appcontrol.v1.StreamTelemetryRequest
+	0,  // 6: vkturn.appcontrol.v1.AppControl.Configure:input_type -> vkturn.appcontrol.v1.ConfigureRequest
+	3,  // 7: vkturn.appcontrol.v1.AppControl.SetVKCookies:output_type -> vkturn.appcontrol.v1.SetVKCookiesResponse
+	5,  // 8: vkturn.appcontrol.v1.AppControl.GetVKCookies:output_type -> vkturn.appcontrol.v1.GetVKCookiesResponse
+	7,  // 9: vkturn.appcontrol.v1.AppControl.Provision:output_type -> vkturn.appcontrol.v1.ProvisionResponse
+	10, // 10: vkturn.appcontrol.v1.AppControl.GetTelemetry:output_type -> vkturn.appcontrol.v1.Telemetry
+	10, // 11: vkturn.appcontrol.v1.AppControl.StreamTelemetry:output_type -> vkturn.appcontrol.v1.Telemetry
+	1,  // 12: vkturn.appcontrol.v1.AppControl.Configure:output_type -> vkturn.appcontrol.v1.ConfigureResponse
+	7,  // [7:13] is the sub-list for method output_type
+	1,  // [1:7] is the sub-list for method input_type
+	1,  // [1:1] is the sub-list for extension type_name
+	1,  // [1:1] is the sub-list for extension extendee
+	0,  // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_proto_appcontrol_proto_init() }
@@ -824,7 +953,7 @@ func file_proto_appcontrol_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_appcontrol_proto_rawDesc), len(file_proto_appcontrol_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
