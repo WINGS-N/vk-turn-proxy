@@ -25,12 +25,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AppControl_SetVKCookies_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/SetVKCookies"
-	AppControl_GetVKCookies_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/GetVKCookies"
-	AppControl_Provision_FullMethodName       = "/vkturn.appcontrol.v1.AppControl/Provision"
-	AppControl_GetTelemetry_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/GetTelemetry"
-	AppControl_StreamTelemetry_FullMethodName = "/vkturn.appcontrol.v1.AppControl/StreamTelemetry"
-	AppControl_Configure_FullMethodName       = "/vkturn.appcontrol.v1.AppControl/Configure"
+	AppControl_SetVKCookies_FullMethodName         = "/vkturn.appcontrol.v1.AppControl/SetVKCookies"
+	AppControl_GetVKCookies_FullMethodName         = "/vkturn.appcontrol.v1.AppControl/GetVKCookies"
+	AppControl_Provision_FullMethodName            = "/vkturn.appcontrol.v1.AppControl/Provision"
+	AppControl_GetTelemetry_FullMethodName         = "/vkturn.appcontrol.v1.AppControl/GetTelemetry"
+	AppControl_StreamTelemetry_FullMethodName      = "/vkturn.appcontrol.v1.AppControl/StreamTelemetry"
+	AppControl_Configure_FullMethodName            = "/vkturn.appcontrol.v1.AppControl/Configure"
+	AppControl_StreamEvents_FullMethodName         = "/vkturn.appcontrol.v1.AppControl/StreamEvents"
+	AppControl_SubmitVKAccountCreds_FullMethodName = "/vkturn.appcontrol.v1.AppControl/SubmitVKAccountCreds"
 )
 
 // AppControlClient is the client API for AppControl service.
@@ -53,6 +55,16 @@ type AppControlClient interface {
 	// as CLI flags. The relay launches with only the AppControl socket flags and
 	// blocks until the app calls Configure, then boots its engine from these fields.
 	Configure(ctx context.Context, in *ConfigureRequest, opts ...grpc.CallOption) (*ConfigureResponse, error)
+	// StreamEvents pushes the relay's control events - connection-progress status,
+	// capabilities, captcha prompts, VK account-auth drive - that formerly rode the
+	// stdout PROXY_EVENT / PROXY_CAPS / CAPTCHA_ JSONL lines. The relay still prints
+	// those lines, but now only for the log; control flows over this stream.
+	StreamEvents(ctx context.Context, in *StreamEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProxyEvent], error)
+	// SubmitVKAccountCreds delivers the VK TURN credentials the host app intercepted
+	// in its sign-in WebView (or a cancel) back to the relay, replacing the
+	// vk_account_creds stdin line. Unlike stdin it also works on the root/kernel-WG
+	// path, where the relay runs under su with no writable stdin.
+	SubmitVKAccountCreds(ctx context.Context, in *VKAccountCredsRequest, opts ...grpc.CallOption) (*VKAccountCredsResponse, error)
 }
 
 type appControlClient struct {
@@ -132,6 +144,35 @@ func (c *appControlClient) Configure(ctx context.Context, in *ConfigureRequest, 
 	return out, nil
 }
 
+func (c *appControlClient) StreamEvents(ctx context.Context, in *StreamEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProxyEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AppControl_ServiceDesc.Streams[1], AppControl_StreamEvents_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamEventsRequest, ProxyEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AppControl_StreamEventsClient = grpc.ServerStreamingClient[ProxyEvent]
+
+func (c *appControlClient) SubmitVKAccountCreds(ctx context.Context, in *VKAccountCredsRequest, opts ...grpc.CallOption) (*VKAccountCredsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VKAccountCredsResponse)
+	err := c.cc.Invoke(ctx, AppControl_SubmitVKAccountCreds_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AppControlServer is the server API for AppControl service.
 // All implementations must embed UnimplementedAppControlServer
 // for forward compatibility.
@@ -152,6 +193,16 @@ type AppControlServer interface {
 	// as CLI flags. The relay launches with only the AppControl socket flags and
 	// blocks until the app calls Configure, then boots its engine from these fields.
 	Configure(context.Context, *ConfigureRequest) (*ConfigureResponse, error)
+	// StreamEvents pushes the relay's control events - connection-progress status,
+	// capabilities, captcha prompts, VK account-auth drive - that formerly rode the
+	// stdout PROXY_EVENT / PROXY_CAPS / CAPTCHA_ JSONL lines. The relay still prints
+	// those lines, but now only for the log; control flows over this stream.
+	StreamEvents(*StreamEventsRequest, grpc.ServerStreamingServer[ProxyEvent]) error
+	// SubmitVKAccountCreds delivers the VK TURN credentials the host app intercepted
+	// in its sign-in WebView (or a cancel) back to the relay, replacing the
+	// vk_account_creds stdin line. Unlike stdin it also works on the root/kernel-WG
+	// path, where the relay runs under su with no writable stdin.
+	SubmitVKAccountCreds(context.Context, *VKAccountCredsRequest) (*VKAccountCredsResponse, error)
 	mustEmbedUnimplementedAppControlServer()
 }
 
@@ -179,6 +230,12 @@ func (UnimplementedAppControlServer) StreamTelemetry(*StreamTelemetryRequest, gr
 }
 func (UnimplementedAppControlServer) Configure(context.Context, *ConfigureRequest) (*ConfigureResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Configure not implemented")
+}
+func (UnimplementedAppControlServer) StreamEvents(*StreamEventsRequest, grpc.ServerStreamingServer[ProxyEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamEvents not implemented")
+}
+func (UnimplementedAppControlServer) SubmitVKAccountCreds(context.Context, *VKAccountCredsRequest) (*VKAccountCredsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitVKAccountCreds not implemented")
 }
 func (UnimplementedAppControlServer) mustEmbedUnimplementedAppControlServer() {}
 func (UnimplementedAppControlServer) testEmbeddedByValue()                    {}
@@ -302,6 +359,35 @@ func _AppControl_Configure_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AppControl_StreamEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamEventsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(AppControlServer).StreamEvents(m, &grpc.GenericServerStream[StreamEventsRequest, ProxyEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AppControl_StreamEventsServer = grpc.ServerStreamingServer[ProxyEvent]
+
+func _AppControl_SubmitVKAccountCreds_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VKAccountCredsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AppControlServer).SubmitVKAccountCreds(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AppControl_SubmitVKAccountCreds_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AppControlServer).SubmitVKAccountCreds(ctx, req.(*VKAccountCredsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AppControl_ServiceDesc is the grpc.ServiceDesc for AppControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -329,11 +415,20 @@ var AppControl_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Configure",
 			Handler:    _AppControl_Configure_Handler,
 		},
+		{
+			MethodName: "SubmitVKAccountCreds",
+			Handler:    _AppControl_SubmitVKAccountCreds_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "StreamTelemetry",
 			Handler:       _AppControl_StreamTelemetry_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "StreamEvents",
+			Handler:       _AppControl_StreamEvents_Handler,
 			ServerStreams: true,
 		},
 	},

@@ -33,6 +33,16 @@ service AppControl {
   // as CLI flags. The relay launches with only the AppControl socket flags and
   // blocks until the app calls Configure, then boots its engine from these fields.
   rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  // StreamEvents pushes the relay's control events - connection-progress status,
+  // capabilities, captcha prompts, VK account-auth drive - that formerly rode the
+  // stdout PROXY_EVENT / PROXY_CAPS / CAPTCHA_ JSONL lines. The relay still prints
+  // those lines, but now only for the log; control flows over this stream.
+  rpc StreamEvents(StreamEventsRequest) returns (stream ProxyEvent);
+  // SubmitVKAccountCreds delivers the VK TURN credentials the host app intercepted
+  // in its sign-in WebView (or a cancel) back to the relay, replacing the
+  // vk_account_creds stdin line. Unlike stdin it also works on the root/kernel-WG
+  // path, where the relay runs under su with no writable stdin.
+  rpc SubmitVKAccountCreds(VKAccountCredsRequest) returns (VKAccountCredsResponse);
 }
 
 // ConfigureRequest mirrors the former CLI flags (clientOptions). Empty/zero
@@ -103,6 +113,75 @@ message StreamTelemetryRequest {}
 message Telemetry {
   int64 connected_streams = 1;
 }
+
+message StreamEventsRequest {}
+
+// ProxyEvent is one relay control event. It carries exactly one of the variants
+// below - the same information the relay prints as a PROXY_EVENT JSONL line.
+message ProxyEvent {
+  oneof event {
+    StatusEvent status = 1;
+    CapsEvent caps = 2;
+    CaptchaEvent captcha = 3;
+    LockoutEvent lockout = 4;
+    VKAccountAuthEvent vk_account_auth = 5;
+    VKCookiesRequiredEvent vk_cookies_required = 6;
+  }
+}
+
+// StatusEvent reports a connection-progress phase (auth_ready, turn_ready,
+// dtls_ready, dtls_alive, ...). stream_id attributes it to a TURN stream (0 for
+// process-wide phases); connected_streams is the live count carried by the
+// dtls_alive heartbeat (0 when not reported).
+message StatusEvent {
+  string phase = 1;
+  int32 stream_id = 2;
+  int32 connected_streams = 3;
+}
+
+// CapsEvent advertises the relay event-protocol version and capability tokens.
+message CapsEvent {
+  int32 version = 1;
+  repeated string capabilities = 2;
+}
+
+// CaptchaEvent mirrors the PROXY_EVENT captcha payload. state is one of
+// required|pending|solving|solved|cancelled|expired; source is primary|pool; url
+// and user_agent are set for required/pending prompts.
+message CaptchaEvent {
+  string state = 1;
+  string source = 2;
+  string url = 3;
+  string user_agent = 4;
+}
+
+// LockoutEvent reports how long VK has locked out captcha attempts.
+message LockoutEvent {
+  int32 seconds = 1;
+}
+
+// VKAccountAuthEvent drives the VK account sign-in WebView. phase is
+// required|complete|failed; link is the VK join URL (required); reason is the
+// failure detail (failed).
+message VKAccountAuthEvent {
+  string phase = 1;
+  string link = 2;
+  string reason = 3;
+}
+
+// VKCookiesRequiredEvent asks the app to (re)deliver the VK web session so the
+// relay can mint a privileged TURN token.
+message VKCookiesRequiredEvent {}
+
+message VKAccountCredsRequest {
+  string link = 1;
+  string username = 2;
+  string credential = 3;
+  repeated string turn_urls = 4;
+  bool cancel = 5;
+}
+
+message VKAccountCredsResponse {}
 
 message WireguardConfig {
   string private_key = 1;
