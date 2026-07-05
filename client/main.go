@@ -36,6 +36,11 @@ import (
 	"github.com/pion/turn/v5"
 )
 
+// clientVersion is the build version logged at startup. It is stamped at build
+// time with -ldflags "-X main.clientVersion=$(git describe --tags --always --dirty)";
+// the default marks an unstamped local build.
+var clientVersion = "dev"
+
 // dnsModeGlobal is set in main() from the -dns flag and consumed by the
 // resolver helpers below. Default mirrors the CLI default: auto-probe UDP/53
 // then sticky-fallback to DoH on total failure.
@@ -2010,6 +2015,7 @@ func main() { //nolint:cyclop
 	if exitCode == 0 {
 		os.Exit(0)
 	}
+	log.Printf("WINGS V VK TURN PROXY client %s starting", clientVersion)
 	applyUserDns(opts.userDns)
 	setDnsMode(opts.dnsMode)
 	log.Printf("[DNS] mode=%s", dnsMode())
