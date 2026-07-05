@@ -28,6 +28,7 @@ const (
 	AppControl_SetVKCookies_FullMethodName = "/vkturn.appcontrol.v1.AppControl/SetVKCookies"
 	AppControl_GetVKCookies_FullMethodName = "/vkturn.appcontrol.v1.AppControl/GetVKCookies"
 	AppControl_Provision_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/Provision"
+	AppControl_Configure_FullMethodName    = "/vkturn.appcontrol.v1.AppControl/Configure"
 )
 
 // AppControlClient is the client API for AppControl service.
@@ -40,6 +41,10 @@ type AppControlClient interface {
 	// never touch stdout / logcat.
 	GetVKCookies(ctx context.Context, in *GetVKCookiesRequest, opts ...grpc.CallOption) (*GetVKCookiesResponse, error)
 	Provision(ctx context.Context, in *ProvisionRequest, opts ...grpc.CallOption) (*ProvisionResponse, error)
+	// Configure delivers the relay runtime configuration the host app used to pass
+	// as CLI flags. The relay launches with only the AppControl socket flags and
+	// blocks until the app calls Configure, then boots its engine from these fields.
+	Configure(ctx context.Context, in *ConfigureRequest, opts ...grpc.CallOption) (*ConfigureResponse, error)
 }
 
 type appControlClient struct {
@@ -80,6 +85,16 @@ func (c *appControlClient) Provision(ctx context.Context, in *ProvisionRequest, 
 	return out, nil
 }
 
+func (c *appControlClient) Configure(ctx context.Context, in *ConfigureRequest, opts ...grpc.CallOption) (*ConfigureResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConfigureResponse)
+	err := c.cc.Invoke(ctx, AppControl_Configure_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AppControlServer is the server API for AppControl service.
 // All implementations must embed UnimplementedAppControlServer
 // for forward compatibility.
@@ -90,6 +105,10 @@ type AppControlServer interface {
 	// never touch stdout / logcat.
 	GetVKCookies(context.Context, *GetVKCookiesRequest) (*GetVKCookiesResponse, error)
 	Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error)
+	// Configure delivers the relay runtime configuration the host app used to pass
+	// as CLI flags. The relay launches with only the AppControl socket flags and
+	// blocks until the app calls Configure, then boots its engine from these fields.
+	Configure(context.Context, *ConfigureRequest) (*ConfigureResponse, error)
 	mustEmbedUnimplementedAppControlServer()
 }
 
@@ -108,6 +127,9 @@ func (UnimplementedAppControlServer) GetVKCookies(context.Context, *GetVKCookies
 }
 func (UnimplementedAppControlServer) Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Provision not implemented")
+}
+func (UnimplementedAppControlServer) Configure(context.Context, *ConfigureRequest) (*ConfigureResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Configure not implemented")
 }
 func (UnimplementedAppControlServer) mustEmbedUnimplementedAppControlServer() {}
 func (UnimplementedAppControlServer) testEmbeddedByValue()                    {}
@@ -184,6 +206,24 @@ func _AppControl_Provision_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AppControl_Configure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConfigureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AppControlServer).Configure(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AppControl_Configure_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AppControlServer).Configure(ctx, req.(*ConfigureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AppControl_ServiceDesc is the grpc.ServiceDesc for AppControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -202,6 +242,10 @@ var AppControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Provision",
 			Handler:    _AppControl_Provision_Handler,
+		},
+		{
+			MethodName: "Configure",
+			Handler:    _AppControl_Configure_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

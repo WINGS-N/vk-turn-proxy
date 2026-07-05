@@ -27,6 +27,296 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// ConfigureRequest mirrors the former CLI flags (clientOptions). Empty/zero
+// fields fall back to the relay's own defaults, matching the old flag behaviour.
+type ConfigureRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	DnsMode          string                 `protobuf:"bytes,1,opt,name=dns_mode,json=dnsMode,proto3" json:"dns_mode,omitempty"`                                  // -dns
+	UserDns          string                 `protobuf:"bytes,2,opt,name=user_dns,json=userDns,proto3" json:"user_dns,omitempty"`                                  // -user-dns
+	Peer             string                 `protobuf:"bytes,3,opt,name=peer,proto3" json:"peer,omitempty"`                                                       // -peer (VK TURN endpoint)
+	VkLink           string                 `protobuf:"bytes,4,opt,name=vk_link,json=vkLink,proto3" json:"vk_link,omitempty"`                                     // -vk-link (comma-joined)
+	VkLinkSecondary  string                 `protobuf:"bytes,5,opt,name=vk_link_secondary,json=vkLinkSecondary,proto3" json:"vk_link_secondary,omitempty"`        // -vk-link-secondary
+	Listen           string                 `protobuf:"bytes,6,opt,name=listen,proto3" json:"listen,omitempty"`                                                   // -listen (local relay endpoint)
+	Threads          int32                  `protobuf:"varint,7,opt,name=threads,proto3" json:"threads,omitempty"`                                                // -n
+	CredsGroupSize   int32                  `protobuf:"varint,8,opt,name=creds_group_size,json=credsGroupSize,proto3" json:"creds_group_size,omitempty"`          // -creds-group-size
+	Transport        string                 `protobuf:"bytes,9,opt,name=transport,proto3" json:"transport,omitempty"`                                             // -transport (e.g. tcp)
+	Udp              bool                   `protobuf:"varint,10,opt,name=udp,proto3" json:"udp,omitempty"`                                                       // -udp
+	NoDtls           bool                   `protobuf:"varint,11,opt,name=no_dtls,json=noDtls,proto3" json:"no_dtls,omitempty"`                                   // -no-dtls
+	ManualCaptcha    bool                   `protobuf:"varint,12,opt,name=manual_captcha,json=manualCaptcha,proto3" json:"manual_captcha,omitempty"`              // -manual-captcha
+	CaptchaSolver    string                 `protobuf:"bytes,13,opt,name=captcha_solver,json=captchaSolver,proto3" json:"captcha_solver,omitempty"`               // -captcha-solver
+	VkAuth           string                 `protobuf:"bytes,14,opt,name=vk_auth,json=vkAuth,proto3" json:"vk_auth,omitempty"`                                    // -vk-auth (e.g. account)
+	VkSessionFile    string                 `protobuf:"bytes,15,opt,name=vk_session_file,json=vkSessionFile,proto3" json:"vk_session_file,omitempty"`             // -vk-session-file
+	VkCookieFilePoll bool                   `protobuf:"varint,16,opt,name=vk_cookie_file_poll,json=vkCookieFilePoll,proto3" json:"vk_cookie_file_poll,omitempty"` // -vk-cookie-file-poll
+	SessionMode      string                 `protobuf:"bytes,17,opt,name=session_mode,json=sessionMode,proto3" json:"session_mode,omitempty"`                     // -session-mode
+	BrowserFp        string                 `protobuf:"bytes,18,opt,name=browser_fp,json=browserFp,proto3" json:"browser_fp,omitempty"`                           // -browser-fp
+	TurnHost         string                 `protobuf:"bytes,19,opt,name=turn_host,json=turnHost,proto3" json:"turn_host,omitempty"`                              // -turn
+	TurnPort         string                 `protobuf:"bytes,20,opt,name=turn_port,json=turnPort,proto3" json:"turn_port,omitempty"`                              // -port
+	ProtectSock      string                 `protobuf:"bytes,21,opt,name=protect_sock,json=protectSock,proto3" json:"protect_sock,omitempty"`                     // -protect-sock
+	WrapMode         string                 `protobuf:"bytes,22,opt,name=wrap_mode,json=wrapMode,proto3" json:"wrap_mode,omitempty"`                              // -wrap-mode
+	WrapCipher       string                 `protobuf:"bytes,23,opt,name=wrap_cipher,json=wrapCipher,proto3" json:"wrap_cipher,omitempty"`                        // -wrap-cipher
+	WrapKeyHex       string                 `protobuf:"bytes,24,opt,name=wrap_key_hex,json=wrapKeyHex,proto3" json:"wrap_key_hex,omitempty"`                      // -wrap-key
+	WrapSendKey      bool                   `protobuf:"varint,25,opt,name=wrap_send_key,json=wrapSendKey,proto3" json:"wrap_send_key,omitempty"`                  // -wrap-send-key
+	ProtoFp          string                 `protobuf:"bytes,26,opt,name=proto_fp,json=protoFp,proto3" json:"proto_fp,omitempty"`                                 // -proto-fp
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ConfigureRequest) Reset() {
+	*x = ConfigureRequest{}
+	mi := &file_proto_appcontrol_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureRequest) ProtoMessage() {}
+
+func (x *ConfigureRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigureRequest.ProtoReflect.Descriptor instead.
+func (*ConfigureRequest) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ConfigureRequest) GetDnsMode() string {
+	if x != nil {
+		return x.DnsMode
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetUserDns() string {
+	if x != nil {
+		return x.UserDns
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetPeer() string {
+	if x != nil {
+		return x.Peer
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetVkLink() string {
+	if x != nil {
+		return x.VkLink
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetVkLinkSecondary() string {
+	if x != nil {
+		return x.VkLinkSecondary
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetListen() string {
+	if x != nil {
+		return x.Listen
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetThreads() int32 {
+	if x != nil {
+		return x.Threads
+	}
+	return 0
+}
+
+func (x *ConfigureRequest) GetCredsGroupSize() int32 {
+	if x != nil {
+		return x.CredsGroupSize
+	}
+	return 0
+}
+
+func (x *ConfigureRequest) GetTransport() string {
+	if x != nil {
+		return x.Transport
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetUdp() bool {
+	if x != nil {
+		return x.Udp
+	}
+	return false
+}
+
+func (x *ConfigureRequest) GetNoDtls() bool {
+	if x != nil {
+		return x.NoDtls
+	}
+	return false
+}
+
+func (x *ConfigureRequest) GetManualCaptcha() bool {
+	if x != nil {
+		return x.ManualCaptcha
+	}
+	return false
+}
+
+func (x *ConfigureRequest) GetCaptchaSolver() string {
+	if x != nil {
+		return x.CaptchaSolver
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetVkAuth() string {
+	if x != nil {
+		return x.VkAuth
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetVkSessionFile() string {
+	if x != nil {
+		return x.VkSessionFile
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetVkCookieFilePoll() bool {
+	if x != nil {
+		return x.VkCookieFilePoll
+	}
+	return false
+}
+
+func (x *ConfigureRequest) GetSessionMode() string {
+	if x != nil {
+		return x.SessionMode
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetBrowserFp() string {
+	if x != nil {
+		return x.BrowserFp
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetTurnHost() string {
+	if x != nil {
+		return x.TurnHost
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetTurnPort() string {
+	if x != nil {
+		return x.TurnPort
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetProtectSock() string {
+	if x != nil {
+		return x.ProtectSock
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetWrapMode() string {
+	if x != nil {
+		return x.WrapMode
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetWrapCipher() string {
+	if x != nil {
+		return x.WrapCipher
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetWrapKeyHex() string {
+	if x != nil {
+		return x.WrapKeyHex
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetWrapSendKey() bool {
+	if x != nil {
+		return x.WrapSendKey
+	}
+	return false
+}
+
+func (x *ConfigureRequest) GetProtoFp() string {
+	if x != nil {
+		return x.ProtoFp
+	}
+	return ""
+}
+
+type ConfigureResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Error         string                 `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigureResponse) Reset() {
+	*x = ConfigureResponse{}
+	mi := &file_proto_appcontrol_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureResponse) ProtoMessage() {}
+
+func (x *ConfigureResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigureResponse.ProtoReflect.Descriptor instead.
+func (*ConfigureResponse) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ConfigureResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type SetVKCookiesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Cookies       string                 `protobuf:"bytes,1,opt,name=cookies,proto3" json:"cookies,omitempty"`
@@ -37,7 +327,7 @@ type SetVKCookiesRequest struct {
 
 func (x *SetVKCookiesRequest) Reset() {
 	*x = SetVKCookiesRequest{}
-	mi := &file_proto_appcontrol_proto_msgTypes[0]
+	mi := &file_proto_appcontrol_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -49,7 +339,7 @@ func (x *SetVKCookiesRequest) String() string {
 func (*SetVKCookiesRequest) ProtoMessage() {}
 
 func (x *SetVKCookiesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[0]
+	mi := &file_proto_appcontrol_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -62,7 +352,7 @@ func (x *SetVKCookiesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetVKCookiesRequest.ProtoReflect.Descriptor instead.
 func (*SetVKCookiesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{0}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *SetVKCookiesRequest) GetCookies() string {
@@ -87,7 +377,7 @@ type SetVKCookiesResponse struct {
 
 func (x *SetVKCookiesResponse) Reset() {
 	*x = SetVKCookiesResponse{}
-	mi := &file_proto_appcontrol_proto_msgTypes[1]
+	mi := &file_proto_appcontrol_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -99,7 +389,7 @@ func (x *SetVKCookiesResponse) String() string {
 func (*SetVKCookiesResponse) ProtoMessage() {}
 
 func (x *SetVKCookiesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[1]
+	mi := &file_proto_appcontrol_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -112,7 +402,7 @@ func (x *SetVKCookiesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetVKCookiesResponse.ProtoReflect.Descriptor instead.
 func (*SetVKCookiesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{1}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{3}
 }
 
 type GetVKCookiesRequest struct {
@@ -123,7 +413,7 @@ type GetVKCookiesRequest struct {
 
 func (x *GetVKCookiesRequest) Reset() {
 	*x = GetVKCookiesRequest{}
-	mi := &file_proto_appcontrol_proto_msgTypes[2]
+	mi := &file_proto_appcontrol_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -135,7 +425,7 @@ func (x *GetVKCookiesRequest) String() string {
 func (*GetVKCookiesRequest) ProtoMessage() {}
 
 func (x *GetVKCookiesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[2]
+	mi := &file_proto_appcontrol_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -148,7 +438,7 @@ func (x *GetVKCookiesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetVKCookiesRequest.ProtoReflect.Descriptor instead.
 func (*GetVKCookiesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{2}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{4}
 }
 
 type GetVKCookiesResponse struct {
@@ -161,7 +451,7 @@ type GetVKCookiesResponse struct {
 
 func (x *GetVKCookiesResponse) Reset() {
 	*x = GetVKCookiesResponse{}
-	mi := &file_proto_appcontrol_proto_msgTypes[3]
+	mi := &file_proto_appcontrol_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -173,7 +463,7 @@ func (x *GetVKCookiesResponse) String() string {
 func (*GetVKCookiesResponse) ProtoMessage() {}
 
 func (x *GetVKCookiesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[3]
+	mi := &file_proto_appcontrol_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -186,7 +476,7 @@ func (x *GetVKCookiesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetVKCookiesResponse.ProtoReflect.Descriptor instead.
 func (*GetVKCookiesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{3}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetVKCookiesResponse) GetCookies() string {
@@ -215,7 +505,7 @@ type ProvisionRequest struct {
 
 func (x *ProvisionRequest) Reset() {
 	*x = ProvisionRequest{}
-	mi := &file_proto_appcontrol_proto_msgTypes[4]
+	mi := &file_proto_appcontrol_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -227,7 +517,7 @@ func (x *ProvisionRequest) String() string {
 func (*ProvisionRequest) ProtoMessage() {}
 
 func (x *ProvisionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[4]
+	mi := &file_proto_appcontrol_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -240,7 +530,7 @@ func (x *ProvisionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProvisionRequest.ProtoReflect.Descriptor instead.
 func (*ProvisionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{4}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ProvisionRequest) GetClientId() string {
@@ -281,7 +571,7 @@ type ProvisionResponse struct {
 
 func (x *ProvisionResponse) Reset() {
 	*x = ProvisionResponse{}
-	mi := &file_proto_appcontrol_proto_msgTypes[5]
+	mi := &file_proto_appcontrol_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -293,7 +583,7 @@ func (x *ProvisionResponse) String() string {
 func (*ProvisionResponse) ProtoMessage() {}
 
 func (x *ProvisionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[5]
+	mi := &file_proto_appcontrol_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -306,7 +596,7 @@ func (x *ProvisionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProvisionResponse.ProtoReflect.Descriptor instead.
 func (*ProvisionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{5}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ProvisionResponse) GetWg() *WireguardConfig {
@@ -337,7 +627,7 @@ type WireguardConfig struct {
 
 func (x *WireguardConfig) Reset() {
 	*x = WireguardConfig{}
-	mi := &file_proto_appcontrol_proto_msgTypes[6]
+	mi := &file_proto_appcontrol_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -349,7 +639,7 @@ func (x *WireguardConfig) String() string {
 func (*WireguardConfig) ProtoMessage() {}
 
 func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[6]
+	mi := &file_proto_appcontrol_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -362,7 +652,7 @@ func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WireguardConfig.ProtoReflect.Descriptor instead.
 func (*WireguardConfig) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{6}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *WireguardConfig) GetPrivateKey() string {
@@ -411,7 +701,40 @@ var File_proto_appcontrol_proto protoreflect.FileDescriptor
 
 const file_proto_appcontrol_proto_rawDesc = "" +
 	"\n" +
-	"\x16proto/appcontrol.proto\x12\x14vkturn.appcontrol.v1\"N\n" +
+	"\x16proto/appcontrol.proto\x12\x14vkturn.appcontrol.v1\"\xc2\x06\n" +
+	"\x10ConfigureRequest\x12\x19\n" +
+	"\bdns_mode\x18\x01 \x01(\tR\adnsMode\x12\x19\n" +
+	"\buser_dns\x18\x02 \x01(\tR\auserDns\x12\x12\n" +
+	"\x04peer\x18\x03 \x01(\tR\x04peer\x12\x17\n" +
+	"\avk_link\x18\x04 \x01(\tR\x06vkLink\x12*\n" +
+	"\x11vk_link_secondary\x18\x05 \x01(\tR\x0fvkLinkSecondary\x12\x16\n" +
+	"\x06listen\x18\x06 \x01(\tR\x06listen\x12\x18\n" +
+	"\athreads\x18\a \x01(\x05R\athreads\x12(\n" +
+	"\x10creds_group_size\x18\b \x01(\x05R\x0ecredsGroupSize\x12\x1c\n" +
+	"\ttransport\x18\t \x01(\tR\ttransport\x12\x10\n" +
+	"\x03udp\x18\n" +
+	" \x01(\bR\x03udp\x12\x17\n" +
+	"\ano_dtls\x18\v \x01(\bR\x06noDtls\x12%\n" +
+	"\x0emanual_captcha\x18\f \x01(\bR\rmanualCaptcha\x12%\n" +
+	"\x0ecaptcha_solver\x18\r \x01(\tR\rcaptchaSolver\x12\x17\n" +
+	"\avk_auth\x18\x0e \x01(\tR\x06vkAuth\x12&\n" +
+	"\x0fvk_session_file\x18\x0f \x01(\tR\rvkSessionFile\x12-\n" +
+	"\x13vk_cookie_file_poll\x18\x10 \x01(\bR\x10vkCookieFilePoll\x12!\n" +
+	"\fsession_mode\x18\x11 \x01(\tR\vsessionMode\x12\x1d\n" +
+	"\n" +
+	"browser_fp\x18\x12 \x01(\tR\tbrowserFp\x12\x1b\n" +
+	"\tturn_host\x18\x13 \x01(\tR\bturnHost\x12\x1b\n" +
+	"\tturn_port\x18\x14 \x01(\tR\bturnPort\x12!\n" +
+	"\fprotect_sock\x18\x15 \x01(\tR\vprotectSock\x12\x1b\n" +
+	"\twrap_mode\x18\x16 \x01(\tR\bwrapMode\x12\x1f\n" +
+	"\vwrap_cipher\x18\x17 \x01(\tR\n" +
+	"wrapCipher\x12 \n" +
+	"\fwrap_key_hex\x18\x18 \x01(\tR\n" +
+	"wrapKeyHex\x12\"\n" +
+	"\rwrap_send_key\x18\x19 \x01(\bR\vwrapSendKey\x12\x19\n" +
+	"\bproto_fp\x18\x1a \x01(\tR\aprotoFp\")\n" +
+	"\x11ConfigureResponse\x12\x14\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"N\n" +
 	"\x13SetVKCookiesRequest\x12\x18\n" +
 	"\acookies\x18\x01 \x01(\tR\acookies\x12\x1d\n" +
 	"\n" +
@@ -440,12 +763,14 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x11server_public_key\x18\x04 \x01(\tR\x0fserverPublicKey\x12\x1f\n" +
 	"\vallowed_ips\x18\x05 \x01(\tR\n" +
 	"allowedIps\x12\x10\n" +
-	"\x03mtu\x18\x06 \x01(\rR\x03mtu2\xb8\x02\n" +
+	"\x03mtu\x18\x06 \x01(\rR\x03mtu2\x96\x03\n" +
 	"\n" +
 	"AppControl\x12e\n" +
 	"\fSetVKCookies\x12).vkturn.appcontrol.v1.SetVKCookiesRequest\x1a*.vkturn.appcontrol.v1.SetVKCookiesResponse\x12e\n" +
 	"\fGetVKCookies\x12).vkturn.appcontrol.v1.GetVKCookiesRequest\x1a*.vkturn.appcontrol.v1.GetVKCookiesResponse\x12\\\n" +
-	"\tProvision\x12&.vkturn.appcontrol.v1.ProvisionRequest\x1a'.vkturn.appcontrol.v1.ProvisionResponseB=Z;github.com/cacggghp/vk-turn-proxy/appcontrolpb;appcontrolpbb\x06proto3"
+	"\tProvision\x12&.vkturn.appcontrol.v1.ProvisionRequest\x1a'.vkturn.appcontrol.v1.ProvisionResponse\x12\\\n" +
+	"\tConfigure\x12&.vkturn.appcontrol.v1.ConfigureRequest\x1a'.vkturn.appcontrol.v1.ConfigureResponseBj\n" +
+	"\x18wings.v.proto.appcontrolB\x0fAppControlProtoH\x03Z;github.com/cacggghp/vk-turn-proxy/appcontrolpb;appcontrolpbb\x06proto3"
 
 var (
 	file_proto_appcontrol_proto_rawDescOnce sync.Once
@@ -459,26 +784,30 @@ func file_proto_appcontrol_proto_rawDescGZIP() []byte {
 	return file_proto_appcontrol_proto_rawDescData
 }
 
-var file_proto_appcontrol_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_proto_appcontrol_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_proto_appcontrol_proto_goTypes = []any{
-	(*SetVKCookiesRequest)(nil),  // 0: vkturn.appcontrol.v1.SetVKCookiesRequest
-	(*SetVKCookiesResponse)(nil), // 1: vkturn.appcontrol.v1.SetVKCookiesResponse
-	(*GetVKCookiesRequest)(nil),  // 2: vkturn.appcontrol.v1.GetVKCookiesRequest
-	(*GetVKCookiesResponse)(nil), // 3: vkturn.appcontrol.v1.GetVKCookiesResponse
-	(*ProvisionRequest)(nil),     // 4: vkturn.appcontrol.v1.ProvisionRequest
-	(*ProvisionResponse)(nil),    // 5: vkturn.appcontrol.v1.ProvisionResponse
-	(*WireguardConfig)(nil),      // 6: vkturn.appcontrol.v1.WireguardConfig
+	(*ConfigureRequest)(nil),     // 0: vkturn.appcontrol.v1.ConfigureRequest
+	(*ConfigureResponse)(nil),    // 1: vkturn.appcontrol.v1.ConfigureResponse
+	(*SetVKCookiesRequest)(nil),  // 2: vkturn.appcontrol.v1.SetVKCookiesRequest
+	(*SetVKCookiesResponse)(nil), // 3: vkturn.appcontrol.v1.SetVKCookiesResponse
+	(*GetVKCookiesRequest)(nil),  // 4: vkturn.appcontrol.v1.GetVKCookiesRequest
+	(*GetVKCookiesResponse)(nil), // 5: vkturn.appcontrol.v1.GetVKCookiesResponse
+	(*ProvisionRequest)(nil),     // 6: vkturn.appcontrol.v1.ProvisionRequest
+	(*ProvisionResponse)(nil),    // 7: vkturn.appcontrol.v1.ProvisionResponse
+	(*WireguardConfig)(nil),      // 8: vkturn.appcontrol.v1.WireguardConfig
 }
 var file_proto_appcontrol_proto_depIdxs = []int32{
-	6, // 0: vkturn.appcontrol.v1.ProvisionResponse.wg:type_name -> vkturn.appcontrol.v1.WireguardConfig
-	0, // 1: vkturn.appcontrol.v1.AppControl.SetVKCookies:input_type -> vkturn.appcontrol.v1.SetVKCookiesRequest
-	2, // 2: vkturn.appcontrol.v1.AppControl.GetVKCookies:input_type -> vkturn.appcontrol.v1.GetVKCookiesRequest
-	4, // 3: vkturn.appcontrol.v1.AppControl.Provision:input_type -> vkturn.appcontrol.v1.ProvisionRequest
-	1, // 4: vkturn.appcontrol.v1.AppControl.SetVKCookies:output_type -> vkturn.appcontrol.v1.SetVKCookiesResponse
-	3, // 5: vkturn.appcontrol.v1.AppControl.GetVKCookies:output_type -> vkturn.appcontrol.v1.GetVKCookiesResponse
-	5, // 6: vkturn.appcontrol.v1.AppControl.Provision:output_type -> vkturn.appcontrol.v1.ProvisionResponse
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	8, // 0: vkturn.appcontrol.v1.ProvisionResponse.wg:type_name -> vkturn.appcontrol.v1.WireguardConfig
+	2, // 1: vkturn.appcontrol.v1.AppControl.SetVKCookies:input_type -> vkturn.appcontrol.v1.SetVKCookiesRequest
+	4, // 2: vkturn.appcontrol.v1.AppControl.GetVKCookies:input_type -> vkturn.appcontrol.v1.GetVKCookiesRequest
+	6, // 3: vkturn.appcontrol.v1.AppControl.Provision:input_type -> vkturn.appcontrol.v1.ProvisionRequest
+	0, // 4: vkturn.appcontrol.v1.AppControl.Configure:input_type -> vkturn.appcontrol.v1.ConfigureRequest
+	3, // 5: vkturn.appcontrol.v1.AppControl.SetVKCookies:output_type -> vkturn.appcontrol.v1.SetVKCookiesResponse
+	5, // 6: vkturn.appcontrol.v1.AppControl.GetVKCookies:output_type -> vkturn.appcontrol.v1.GetVKCookiesResponse
+	7, // 7: vkturn.appcontrol.v1.AppControl.Provision:output_type -> vkturn.appcontrol.v1.ProvisionResponse
+	1, // 8: vkturn.appcontrol.v1.AppControl.Configure:output_type -> vkturn.appcontrol.v1.ConfigureResponse
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -495,7 +824,7 @@ func file_proto_appcontrol_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_appcontrol_proto_rawDesc), len(file_proto_appcontrol_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

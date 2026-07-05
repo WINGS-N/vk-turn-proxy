@@ -9,6 +9,13 @@ package vkturn.appcontrol.v1;
 
 option go_package = "github.com/cacggghp/vk-turn-proxy/appcontrolpb;appcontrolpb";
 
+// The WINGS V app symlinks this file into app/src/main/proto and generates its
+// Java lite + grpc-java stubs from it, so the two sides never drift as gRPC fields
+// are added. protoc-gen-go ignores the java_* / optimize_for options below.
+option java_package = "wings.v.proto.appcontrol";
+option java_outer_classname = "AppControlProto";
+option optimize_for = LITE_RUNTIME;
+
 service AppControl {
   rpc SetVKCookies(SetVKCookiesRequest) returns (SetVKCookiesResponse);
   // GetVKCookies lets the app pull the current (possibly relay-rotated) session
@@ -16,6 +23,45 @@ service AppControl {
   // never touch stdout / logcat.
   rpc GetVKCookies(GetVKCookiesRequest) returns (GetVKCookiesResponse);
   rpc Provision(ProvisionRequest) returns (ProvisionResponse);
+  // Configure delivers the relay runtime configuration the host app used to pass
+  // as CLI flags. The relay launches with only the AppControl socket flags and
+  // blocks until the app calls Configure, then boots its engine from these fields.
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+}
+
+// ConfigureRequest mirrors the former CLI flags (clientOptions). Empty/zero
+// fields fall back to the relay's own defaults, matching the old flag behaviour.
+message ConfigureRequest {
+  string dns_mode = 1;             // -dns
+  string user_dns = 2;             // -user-dns
+  string peer = 3;                 // -peer (VK TURN endpoint)
+  string vk_link = 4;              // -vk-link (comma-joined)
+  string vk_link_secondary = 5;    // -vk-link-secondary
+  string listen = 6;               // -listen (local relay endpoint)
+  int32 threads = 7;               // -n
+  int32 creds_group_size = 8;      // -creds-group-size
+  string transport = 9;            // -transport (e.g. tcp)
+  bool udp = 10;                   // -udp
+  bool no_dtls = 11;               // -no-dtls
+  bool manual_captcha = 12;        // -manual-captcha
+  string captcha_solver = 13;      // -captcha-solver
+  string vk_auth = 14;             // -vk-auth (e.g. account)
+  string vk_session_file = 15;     // -vk-session-file
+  bool vk_cookie_file_poll = 16;   // -vk-cookie-file-poll
+  string session_mode = 17;        // -session-mode
+  string browser_fp = 18;          // -browser-fp
+  string turn_host = 19;           // -turn
+  string turn_port = 20;           // -port
+  string protect_sock = 21;        // -protect-sock
+  string wrap_mode = 22;           // -wrap-mode
+  string wrap_cipher = 23;         // -wrap-cipher
+  string wrap_key_hex = 24;        // -wrap-key
+  bool wrap_send_key = 25;         // -wrap-send-key
+  string proto_fp = 26;            // -proto-fp
+}
+
+message ConfigureResponse {
+  string error = 1;
 }
 
 message SetVKCookiesRequest {
