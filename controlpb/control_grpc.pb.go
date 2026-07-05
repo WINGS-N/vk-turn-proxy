@@ -26,6 +26,7 @@ const (
 	Relay_ListFlows_FullMethodName       = "/vkturn.control.v1.Relay/ListFlows"
 	Relay_GetFlowStats_FullMethodName    = "/vkturn.control.v1.Relay/GetFlowStats"
 	Relay_StreamFlowStats_FullMethodName = "/vkturn.control.v1.Relay/StreamFlowStats"
+	Relay_StreamFlows_FullMethodName     = "/vkturn.control.v1.Relay/StreamFlows"
 )
 
 // RelayClient is the client API for Relay service.
@@ -47,6 +48,9 @@ type RelayClient interface {
 	// shows live speed/traffic without polling each node. Same payload as
 	// GetFlowStats; the panel keeps the connection open and reads deltas.
 	StreamFlowStats(ctx context.Context, in *GetFlowStatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FlowStats], error)
+	// StreamFlows pushes the active-flow list on a fast cadence so the panel's flow
+	// graph updates live. Same payload as ListFlows.
+	StreamFlows(ctx context.Context, in *ListFlowsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Flows], error)
 }
 
 type relayClient struct {
@@ -136,6 +140,25 @@ func (c *relayClient) StreamFlowStats(ctx context.Context, in *GetFlowStatsReque
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Relay_StreamFlowStatsClient = grpc.ServerStreamingClient[FlowStats]
 
+func (c *relayClient) StreamFlows(ctx context.Context, in *ListFlowsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Flows], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Relay_ServiceDesc.Streams[1], Relay_StreamFlows_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ListFlowsRequest, Flows]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Relay_StreamFlowsClient = grpc.ServerStreamingClient[Flows]
+
 // RelayServer is the server API for Relay service.
 // All implementations must embed UnimplementedRelayServer
 // for forward compatibility.
@@ -155,6 +178,9 @@ type RelayServer interface {
 	// shows live speed/traffic without polling each node. Same payload as
 	// GetFlowStats; the panel keeps the connection open and reads deltas.
 	StreamFlowStats(*GetFlowStatsRequest, grpc.ServerStreamingServer[FlowStats]) error
+	// StreamFlows pushes the active-flow list on a fast cadence so the panel's flow
+	// graph updates live. Same payload as ListFlows.
+	StreamFlows(*ListFlowsRequest, grpc.ServerStreamingServer[Flows]) error
 	mustEmbedUnimplementedRelayServer()
 }
 
@@ -185,6 +211,9 @@ func (UnimplementedRelayServer) GetFlowStats(context.Context, *GetFlowStatsReque
 }
 func (UnimplementedRelayServer) StreamFlowStats(*GetFlowStatsRequest, grpc.ServerStreamingServer[FlowStats]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamFlowStats not implemented")
+}
+func (UnimplementedRelayServer) StreamFlows(*ListFlowsRequest, grpc.ServerStreamingServer[Flows]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamFlows not implemented")
 }
 func (UnimplementedRelayServer) mustEmbedUnimplementedRelayServer() {}
 func (UnimplementedRelayServer) testEmbeddedByValue()               {}
@@ -326,6 +355,17 @@ func _Relay_StreamFlowStats_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Relay_StreamFlowStatsServer = grpc.ServerStreamingServer[FlowStats]
 
+func _Relay_StreamFlows_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ListFlowsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RelayServer).StreamFlows(m, &grpc.GenericServerStream[ListFlowsRequest, Flows]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Relay_StreamFlowsServer = grpc.ServerStreamingServer[Flows]
+
 // Relay_ServiceDesc is the grpc.ServiceDesc for Relay service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -362,6 +402,11 @@ var Relay_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamFlowStats",
 			Handler:       _Relay_StreamFlowStats_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "StreamFlows",
+			Handler:       _Relay_StreamFlows_Handler,
 			ServerStreams: true,
 		},
 	},

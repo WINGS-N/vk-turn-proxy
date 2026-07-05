@@ -135,8 +135,33 @@ func (s *server) DeletePeer(_ context.Context, req *controlpb.DeletePeerRequest)
 }
 
 func (s *server) ListFlows(_ context.Context, _ *controlpb.ListFlowsRequest) (*controlpb.Flows, error) {
+	return s.flowsProto(), nil
+}
+
+// StreamFlows pushes the active-flow list immediately, then once per tick, so the
+// panel's flow graph updates live without re-dialing.
+func (s *server) StreamFlows(_ *controlpb.ListFlowsRequest, stream grpc.ServerStreamingServer[controlpb.Flows]) error {
+	ticker := time.NewTicker(flowStatsStreamInterval)
+	defer ticker.Stop()
+	ctx := stream.Context()
+	if err := stream.Send(s.flowsProto()); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := stream.Send(s.flowsProto()); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (s *server) flowsProto() *controlpb.Flows {
 	if s.flows == nil {
-		return &controlpb.Flows{}, nil
+		return &controlpb.Flows{}
 	}
 	src := s.flows.Flows()
 	out := make([]*controlpb.Flow, 0, len(src))
@@ -155,7 +180,7 @@ func (s *server) ListFlows(_ context.Context, _ *controlpb.ListFlowsRequest) (*c
 			StartedUnix: f.StartedUnix,
 		})
 	}
-	return &controlpb.Flows{Flows: out}, nil
+	return &controlpb.Flows{Flows: out}
 }
 
 func (s *server) GetFlowStats(_ context.Context, _ *controlpb.GetFlowStatsRequest) (*controlpb.FlowStats, error) {

@@ -842,7 +842,7 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x11DeletePeerRequest\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\tR\tpublicKey\"\x14\n" +
-	"\x12DeletePeerResponse2\xc5\x04\n" +
+	"\x12DeletePeerResponse2\x95\x05\n" +
 	"\x05Relay\x12K\n" +
 	"\tGetStatus\x12#.vkturn.control.v1.GetStatusRequest\x1a\x19.vkturn.control.v1.Status\x12J\n" +
 	"\tListPeers\x12#.vkturn.control.v1.ListPeersRequest\x1a\x18.vkturn.control.v1.Peers\x12K\n" +
@@ -852,7 +852,8 @@ const file_proto_control_proto_rawDesc = "" +
 	"DeletePeer\x12$.vkturn.control.v1.DeletePeerRequest\x1a%.vkturn.control.v1.DeletePeerResponse\x12J\n" +
 	"\tListFlows\x12#.vkturn.control.v1.ListFlowsRequest\x1a\x18.vkturn.control.v1.Flows\x12T\n" +
 	"\fGetFlowStats\x12&.vkturn.control.v1.GetFlowStatsRequest\x1a\x1c.vkturn.control.v1.FlowStats\x12Y\n" +
-	"\x0fStreamFlowStats\x12&.vkturn.control.v1.GetFlowStatsRequest\x1a\x1c.vkturn.control.v1.FlowStats0\x01B7Z5github.com/cacggghp/vk-turn-proxy/controlpb;controlpbb\x06proto3"
+	"\x0fStreamFlowStats\x12&.vkturn.control.v1.GetFlowStatsRequest\x1a\x1c.vkturn.control.v1.FlowStats0\x01\x12N\n" +
+	"\vStreamFlows\x12#.vkturn.control.v1.ListFlowsRequest\x1a\x18.vkturn.control.v1.Flows0\x01B7Z5github.com/cacggghp/vk-turn-proxy/controlpb;controlpbb\x06proto3"
 
 var (
 	file_proto_control_proto_rawDescOnce sync.Once
@@ -894,15 +895,17 @@ var file_proto_control_proto_depIdxs = []int32{
 	0,  // 7: vkturn.control.v1.Relay.ListFlows:input_type -> vkturn.control.v1.ListFlowsRequest
 	3,  // 8: vkturn.control.v1.Relay.GetFlowStats:input_type -> vkturn.control.v1.GetFlowStatsRequest
 	3,  // 9: vkturn.control.v1.Relay.StreamFlowStats:input_type -> vkturn.control.v1.GetFlowStatsRequest
-	6,  // 10: vkturn.control.v1.Relay.GetStatus:output_type -> vkturn.control.v1.Status
-	8,  // 11: vkturn.control.v1.Relay.ListPeers:output_type -> vkturn.control.v1.Peers
-	10, // 12: vkturn.control.v1.Relay.CreatePeer:output_type -> vkturn.control.v1.Peer
-	12, // 13: vkturn.control.v1.Relay.DeletePeer:output_type -> vkturn.control.v1.DeletePeerResponse
-	2,  // 14: vkturn.control.v1.Relay.ListFlows:output_type -> vkturn.control.v1.Flows
-	4,  // 15: vkturn.control.v1.Relay.GetFlowStats:output_type -> vkturn.control.v1.FlowStats
-	4,  // 16: vkturn.control.v1.Relay.StreamFlowStats:output_type -> vkturn.control.v1.FlowStats
-	10, // [10:17] is the sub-list for method output_type
-	3,  // [3:10] is the sub-list for method input_type
+	0,  // 10: vkturn.control.v1.Relay.StreamFlows:input_type -> vkturn.control.v1.ListFlowsRequest
+	6,  // 11: vkturn.control.v1.Relay.GetStatus:output_type -> vkturn.control.v1.Status
+	8,  // 12: vkturn.control.v1.Relay.ListPeers:output_type -> vkturn.control.v1.Peers
+	10, // 13: vkturn.control.v1.Relay.CreatePeer:output_type -> vkturn.control.v1.Peer
+	12, // 14: vkturn.control.v1.Relay.DeletePeer:output_type -> vkturn.control.v1.DeletePeerResponse
+	2,  // 15: vkturn.control.v1.Relay.ListFlows:output_type -> vkturn.control.v1.Flows
+	4,  // 16: vkturn.control.v1.Relay.GetFlowStats:output_type -> vkturn.control.v1.FlowStats
+	4,  // 17: vkturn.control.v1.Relay.StreamFlowStats:output_type -> vkturn.control.v1.FlowStats
+	2,  // 18: vkturn.control.v1.Relay.StreamFlows:output_type -> vkturn.control.v1.Flows
+	11, // [11:19] is the sub-list for method output_type
+	3,  // [3:11] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name
 	3,  // [3:3] is the sub-list for extension extendee
 	0,  // [0:3] is the sub-list for field type_name

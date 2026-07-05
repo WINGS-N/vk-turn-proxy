@@ -19,6 +19,9 @@ service Relay {
   // shows live speed/traffic without polling each node. Same payload as
   // GetFlowStats; the panel keeps the connection open and reads deltas.
   rpc StreamFlowStats(GetFlowStatsRequest) returns (stream FlowStats);
+  // StreamFlows pushes the active-flow list on a fast cadence so the panel's flow
+  // graph updates live. Same payload as ListFlows.
+  rpc StreamFlows(ListFlowsRequest) returns (stream Flows);
 }
 
 message ListFlowsRequest {}
