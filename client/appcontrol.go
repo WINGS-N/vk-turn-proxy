@@ -26,10 +26,23 @@ type ProvisionFunc func(ctx context.Context, clientID string, token []byte, hwid
 // with GetVKCookies instead); the stdout event path itself stays in the binary.
 var appControlActive atomic.Bool
 
+// ConfigureFunc receives the runtime configuration the host app used to pass as
+// CLI flags. It returns an error string (empty on success) surfaced to the app.
+type ConfigureFunc func(*appcontrolpb.ConfigureRequest) string
+
 type appControlServer struct {
 	appcontrolpb.UnimplementedAppControlServer
 	setCookies func(cookies, userAgent string)
 	provision  ProvisionFunc
+	configure  ConfigureFunc
+}
+
+func (s *appControlServer) Configure(_ context.Context, req *appcontrolpb.ConfigureRequest) (*appcontrolpb.ConfigureResponse, error) {
+	log.Printf("app-control: Configure peer=%q listen=%q session_mode=%q vk_auth=%q", req.GetPeer(), req.GetListen(), req.GetSessionMode(), req.GetVkAuth())
+	if s.configure == nil {
+		return &appcontrolpb.ConfigureResponse{Error: "configuration is not accepted in this mode"}, nil
+	}
+	return &appcontrolpb.ConfigureResponse{Error: s.configure(req)}, nil
 }
 
 func (s *appControlServer) GetVKCookies(context.Context, *appcontrolpb.GetVKCookiesRequest) (*appcontrolpb.GetVKCookiesResponse, error) {
@@ -84,7 +97,7 @@ func appControlAuth(token string) grpc.UnaryServerInterceptor {
 // restricted three ways: the socket is created 0600 in the caller-provided path
 // (the app's private dir), peers with a different UID are rejected (linux), and
 // a non-empty token is additionally required as a bearer credential.
-func StartAppControl(socketPath, token string, setCookies func(cookies, ua string), provision ProvisionFunc) (*grpc.Server, error) {
+func StartAppControl(socketPath, token string, setCookies func(cookies, ua string), provision ProvisionFunc, configure ConfigureFunc) (*grpc.Server, error) {
 	_ = os.Remove(socketPath)
 	lis, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -96,7 +109,7 @@ func StartAppControl(socketPath, token string, setCookies func(cookies, ua strin
 	}
 	lis = newPeerCredListener(lis, uint32(os.Getuid()))
 	gs := grpc.NewServer(grpc.ChainUnaryInterceptor(appControlAuth(token)))
-	appcontrolpb.RegisterAppControlServer(gs, &appControlServer{setCookies: setCookies, provision: provision})
+	appcontrolpb.RegisterAppControlServer(gs, &appControlServer{setCookies: setCookies, provision: provision, configure: configure})
 	appControlActive.Store(true)
 	go func() { _ = gs.Serve(lis) }()
 	return gs, nil

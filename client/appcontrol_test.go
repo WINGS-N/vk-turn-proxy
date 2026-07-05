@@ -25,7 +25,8 @@ func TestAppControl(t *testing.T) {
 				return nil, errors.New("bad request")
 			}
 			return &appcontrolpb.WireguardConfig{PrivateKey: "priv", Address: "10.66.66.2/32", Mtu: 1280}, nil
-		})
+		},
+		nil)
 	if err != nil {
 		t.Fatalf("StartAppControl: %v", err)
 	}

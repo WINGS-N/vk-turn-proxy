@@ -189,6 +189,12 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 			return nil
 		}
 
+		// gRPC-config mode: the host app launches the relay with only the AppControl
+		// socket and delivers -peer/-vk-link/... over the Configure RPC, so skip the
+		// flag-required checks here (main() blocks for Configure before booting).
+		if opts.appGRPCSocket != "" && opts.peerAddr == "" && opts.vklink == "" && opts.yalink == "" {
+			return nil
+		}
 		if opts.peerAddr == "" {
 			return fmt.Errorf("-peer is required")
 		}

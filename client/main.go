@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cacggghp/vk-turn-proxy/appcontrolpb"
 	"github.com/cacggghp/vk-turn-proxy/internal/controlpath"
 	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
@@ -2007,6 +2008,93 @@ func oneTurnConnectionLoop(
 	}
 }
 
+// configureChan carries the one-shot Configure delivered by the host app over
+// the AppControl gRPC. The relay boots from it instead of CLI flags.
+var configureChan = make(chan *appcontrolpb.ConfigureRequest, 1)
+
+// receiveConfigure is the AppControl ConfigureFunc: it hands the request to
+// main()'s awaitConfigure. Only the first Configure is accepted.
+func receiveConfigure(req *appcontrolpb.ConfigureRequest) string {
+	select {
+	case configureChan <- req:
+		return ""
+	default:
+		return "configuration already delivered"
+	}
+}
+
+// awaitConfigure blocks until the host app delivers a Configure, the context is
+// cancelled, or the wait times out. Returns nil on cancel/timeout.
+func awaitConfigure(ctx context.Context) *appcontrolpb.ConfigureRequest {
+	select {
+	case cfg := <-configureChan:
+		return cfg
+	case <-ctx.Done():
+		return nil
+	case <-time.After(120 * time.Second):
+		return nil
+	}
+}
+
+// applyConfigureToOptions folds a gRPC-delivered configuration into the parsed
+// options, mirroring the former CLI flag mapping (see options.go). Empty/zero
+// fields keep the parsed defaults.
+func applyConfigureToOptions(opts *clientOptions, c *appcontrolpb.ConfigureRequest) {
+	if c == nil {
+		return
+	}
+	if c.GetDnsMode() != "" {
+		opts.dnsMode = c.GetDnsMode()
+	}
+	opts.userDns = c.GetUserDns()
+	if c.GetPeer() != "" {
+		opts.peerAddr = c.GetPeer()
+	}
+	opts.vklink = c.GetVkLink()
+	opts.vklinkSecondary = c.GetVkLinkSecondary()
+	if c.GetListen() != "" {
+		opts.listen = c.GetListen()
+	}
+	if c.GetThreads() > 0 {
+		opts.n = int(c.GetThreads())
+	}
+	if c.GetCredsGroupSize() > 0 {
+		opts.credsGroupSize = int(c.GetCredsGroupSize())
+	}
+	if c.GetTransport() != "" {
+		opts.transport = c.GetTransport()
+	}
+	opts.udp = c.GetUdp()
+	opts.direct = c.GetNoDtls()
+	opts.manualCaptcha = c.GetManualCaptcha()
+	if c.GetCaptchaSolver() != "" {
+		opts.captchaSolver = c.GetCaptchaSolver()
+	}
+	if c.GetVkAuth() != "" {
+		opts.vkAuth = c.GetVkAuth()
+	}
+	opts.vkSessionFile = c.GetVkSessionFile()
+	opts.vkCookieFilePoll = c.GetVkCookieFilePoll()
+	if c.GetSessionMode() != "" {
+		opts.sessionMode = c.GetSessionMode()
+	}
+	if c.GetBrowserFp() != "" {
+		opts.browserFP = c.GetBrowserFp()
+	}
+	opts.host = c.GetTurnHost()
+	opts.port = c.GetTurnPort()
+	opts.protectSock = c.GetProtectSock()
+	if c.GetWrapMode() != "" {
+		opts.wrapMode = c.GetWrapMode()
+	}
+	if c.GetWrapCipher() != "" {
+		opts.wrapCipher = c.GetWrapCipher()
+	}
+	opts.wrapKeyHex = c.GetWrapKeyHex()
+	opts.wrapSendKey = c.GetWrapSendKey()
+	opts.protoFingerprint = c.GetProtoFp()
+}
+
 func main() { //nolint:cyclop
 	opts, exitCode := parseClientOptions(os.Args[1:], filepath.Base(os.Args[0]), os.Stdout, os.Stderr)
 	if exitCode != 0 && exitCode != -1 {
@@ -2051,6 +2139,33 @@ func main() { //nolint:cyclop
 		log.Fatalf("Exit...\n")
 	}()
 
+	// gRPC-config bootstrap: the host app launches the relay with only the
+	// AppControl socket flags and delivers the runtime configuration over the
+	// Configure RPC. Start AppControl first, then block for Configure before the
+	// engine (protect bridge, resolver, TURN) is built from opts.
+	if opts.appGRPCSocket != "" {
+		if _, startErr := StartAppControl(opts.appGRPCSocket, opts.appGRPCToken, setVkCookies, provisionViaWorker, receiveConfigure); startErr != nil {
+			log.Printf("app-control: %v", startErr)
+		} else {
+			log.Printf("app-control: serving on %s", opts.appGRPCSocket)
+		}
+		if opts.peerAddr == "" && opts.vklink == "" {
+			log.Printf("app-control: awaiting Configure over gRPC...")
+			cfg := awaitConfigure(ctx)
+			if cfg == nil {
+				log.Fatalf("app-control: no Configure received before timeout")
+			}
+			applyConfigureToOptions(&opts, cfg)
+			applyUserDns(opts.userDns)
+			setDnsMode(opts.dnsMode)
+			setBrowserFamily(opts.browserFP)
+			manualCaptcha = opts.manualCaptcha
+			captchaSolverVersion = opts.captchaSolver
+			log.Printf("[DNS] mode=%s (gRPC)", dnsMode())
+			log.Printf("[FP] browser=%s (gRPC)", browserFamily)
+		}
+	}
+
 	peerResolver := (*protectedResolver)(nil)
 	protect, err := newProtectBridge(opts.protectSock)
 	if err != nil {
@@ -2066,16 +2181,6 @@ func main() { //nolint:cyclop
 	peerResolver = newProtectedResolver(protect, defaultResolverAddrs)
 	manualCaptcha = opts.manualCaptcha
 	captchaSolverVersion = opts.captchaSolver
-	if opts.appGRPCSocket != "" {
-		// provisionViaWorker parks the enrollment for the next DTLS worker, which
-		// runs the PROVISION exchange as the first hello on its connection (the
-		// server dispatches PROVISION vs SESSION by the inner ClientHello type).
-		if _, err := StartAppControl(opts.appGRPCSocket, opts.appGRPCToken, setVkCookies, provisionViaWorker); err != nil {
-			log.Printf("app-control: %v", err)
-		} else {
-			log.Printf("app-control: serving on %s", opts.appGRPCSocket)
-		}
-	}
 	setVkAuthMode(opts.vkAuth)
 	if getVkAuthMode() == "account" {
 		log.Printf("[VK Auth] account mode armed")
