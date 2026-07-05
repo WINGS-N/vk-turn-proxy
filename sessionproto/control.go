@@ -114,6 +114,17 @@ func ValidateHelloShape(hello *ClientHello, expectedVersion uint32) error {
 			return fmt.Errorf("room-exchange hello is missing payload")
 		}
 		return nil
+	case ClientHelloType_CLIENT_HELLO_TYPE_PROVISION:
+		// PROVISION rides the mu/v1 WRAP channel as a non-terminal prefix hello
+		// before the session hello, so it is validated here too (not only on the
+		// raw pre-mu path). It carries a provision payload, no session data.
+		if len(hello.GetSessionId()) != 0 || hello.GetStreamId() != 0 {
+			return fmt.Errorf("provision hello must not contain session data")
+		}
+		if hello.GetProvision() == nil {
+			return fmt.Errorf("provision hello is missing payload")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported client hello type: %s", hello.GetType())
 	}
