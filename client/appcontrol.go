@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/cacggghp/vk-turn-proxy/appcontrolpb"
@@ -43,6 +44,77 @@ func (s *appControlServer) Configure(_ context.Context, req *appcontrolpb.Config
 		return &appcontrolpb.ConfigureResponse{Error: "configuration is not accepted in this mode"}, nil
 	}
 	return &appcontrolpb.ConfigureResponse{Error: s.configure(req)}, nil
+}
+
+func (s *appControlServer) GetTelemetry(context.Context, *appcontrolpb.GetTelemetryRequest) (*appcontrolpb.Telemetry, error) {
+	// The same counter is still printed as a PROXY_EVENT telemetry line for the
+	// logs; this just lets the app read it over gRPC instead of scraping stdout.
+	return &appcontrolpb.Telemetry{ConnectedStreams: int64(connectedStreams.Load())}, nil
+}
+
+func (s *appControlServer) StreamTelemetry(_ *appcontrolpb.StreamTelemetryRequest, stream grpc.ServerStreamingServer[appcontrolpb.Telemetry]) error {
+	// Push the current value immediately, then one message per change - event-driven,
+	// so the app sees stream-count updates with no poll latency.
+	if err := stream.Send(&appcontrolpb.Telemetry{ConnectedStreams: int64(connectedStreams.Load())}); err != nil {
+		return err
+	}
+	ch := telemetryHub.subscribe()
+	defer telemetryHub.unsubscribe(ch)
+	ctx := stream.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case v, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(&appcontrolpb.Telemetry{ConnectedStreams: int64(v)}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// telemetryHub fans the connected-stream count out to every active StreamTelemetry
+// subscriber. Publishes are non-blocking: a subscriber that falls behind simply
+// coalesces to the next value it reads (the counter is a snapshot, not a log).
+type telemetryBroadcaster struct {
+	mu   sync.Mutex
+	subs map[chan int32]struct{}
+}
+
+var telemetryHub = &telemetryBroadcaster{subs: make(map[chan int32]struct{})}
+
+func (h *telemetryBroadcaster) publish(v int32) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.subs {
+		// Drain a stale pending value so the newest snapshot is what waits.
+		select {
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- v:
+		default:
+		}
+	}
+}
+
+func (h *telemetryBroadcaster) subscribe() chan int32 {
+	ch := make(chan int32, 1)
+	h.mu.Lock()
+	h.subs[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *telemetryBroadcaster) unsubscribe(ch chan int32) {
+	h.mu.Lock()
+	delete(h.subs, ch)
+	h.mu.Unlock()
+	close(ch)
 }
 
 func (s *appControlServer) GetVKCookies(context.Context, *appcontrolpb.GetVKCookiesRequest) (*appcontrolpb.GetVKCookiesResponse, error) {

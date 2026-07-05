@@ -62,6 +62,9 @@ type proxyTelemetryEvent struct {
 // streams so the app can show connect progress (connected/total) while
 // connecting instead of jumping straight to fully connected.
 func emitProxyStreamsTelemetry(connected int) {
+	// Push to gRPC StreamTelemetry subscribers first (event-driven, no poll lag),
+	// then still print the JSONL line for the logs.
+	telemetryHub.publish(int32(connected))
 	emitProxyEvent(proxyTelemetryEvent{
 		Type:             "telemetry",
 		ConnectedStreams: connected,
