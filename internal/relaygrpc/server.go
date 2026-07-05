@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"strings"
+	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/controlpb"
 	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
@@ -77,9 +78,16 @@ type Options struct {
 // NewServer builds a grpc.Server serving the Relay service. When Token is set,
 // callers must present it as a bearer token; a verified client certificate
 // (mTLS) is always accepted.
+// flowStatsStreamInterval is how often StreamFlowStats pushes a snapshot. One
+// second gives the panel responsive rx/tx rates without flooding the link.
+const flowStatsStreamInterval = time.Second
+
 func NewServer(o Options) *grpc.Server {
 	s := &server{store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token, flows: o.Flows, listen: o.Listen}
-	opts := []grpc.ServerOption{grpc.ChainUnaryInterceptor(s.authUnary)}
+	opts := []grpc.ServerOption{
+		grpc.ChainUnaryInterceptor(s.authUnary),
+		grpc.ChainStreamInterceptor(s.authStream),
+	}
 	if o.Creds != nil {
 		opts = append(opts, grpc.Creds(o.Creds))
 	}
@@ -151,8 +159,12 @@ func (s *server) ListFlows(_ context.Context, _ *controlpb.ListFlowsRequest) (*c
 }
 
 func (s *server) GetFlowStats(_ context.Context, _ *controlpb.GetFlowStatsRequest) (*controlpb.FlowStats, error) {
+	return s.flowStatsProto(), nil
+}
+
+func (s *server) flowStatsProto() *controlpb.FlowStats {
 	if s.flows == nil {
-		return &controlpb.FlowStats{}, nil
+		return &controlpb.FlowStats{}
 	}
 	st := s.flows.FlowStats()
 	return &controlpb.FlowStats{
@@ -163,7 +175,29 @@ func (s *server) GetFlowStats(_ context.Context, _ *controlpb.GetFlowStatsReques
 		ServerRxBytes:             st.ServerRxBytes,
 		ServerTxBytes:             st.ServerTxBytes,
 		StreamsByProtocol:         st.StreamsByProtocol,
-	}, nil
+	}
+}
+
+// StreamFlowStats pushes a snapshot immediately, then one per tick, so the panel
+// sees live speed/traffic without re-dialing. The panel derives rx/tx rates from
+// the deltas between snapshots.
+func (s *server) StreamFlowStats(_ *controlpb.GetFlowStatsRequest, stream grpc.ServerStreamingServer[controlpb.FlowStats]) error {
+	ticker := time.NewTicker(flowStatsStreamInterval)
+	defer ticker.Stop()
+	ctx := stream.Context()
+	if err := stream.Send(s.flowStatsProto()); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := stream.Send(s.flowStatsProto()); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (s *server) toProto(p peerstore.Peer, privateKey string) *controlpb.Peer {
@@ -183,6 +217,13 @@ func (s *server) authUnary(ctx context.Context, req any, _ *grpc.UnaryServerInfo
 		return handler(ctx, req)
 	}
 	return nil, status.Error(codes.Unauthenticated, "missing or invalid credentials")
+}
+
+func (s *server) authStream(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if s.authorized(ss.Context()) {
+		return handler(srv, ss)
+	}
+	return status.Error(codes.Unauthenticated, "missing or invalid credentials")
 }
 
 func (s *server) authorized(ctx context.Context) bool {
