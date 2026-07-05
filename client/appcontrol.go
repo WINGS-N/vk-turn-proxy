@@ -117,6 +117,31 @@ func (h *telemetryBroadcaster) unsubscribe(ch chan int32) {
 	close(ch)
 }
 
+func (s *appControlServer) StreamEvents(_ *appcontrolpb.StreamEventsRequest, stream grpc.ServerStreamingServer[appcontrolpb.ProxyEvent]) error {
+	ch := eventHub.subscribe()
+	defer eventHub.unsubscribe(ch)
+	ctx := stream.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case ev, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(ev); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (s *appControlServer) SubmitVKAccountCreds(_ context.Context, req *appcontrolpb.VKAccountCredsRequest) (*appcontrolpb.VKAccountCredsResponse, error) {
+	log.Printf("app-control: SubmitVKAccountCreds link=%q urls=%d cancel=%t", req.GetLink(), len(req.GetTurnUrls()), req.GetCancel())
+	dispatchVKAccountCreds(req.GetLink(), req.GetUsername(), req.GetCredential(), req.GetTurnUrls(), req.GetCancel())
+	return &appcontrolpb.VKAccountCredsResponse{}, nil
+}
+
 func (s *appControlServer) GetVKCookies(context.Context, *appcontrolpb.GetVKCookiesRequest) (*appcontrolpb.GetVKCookiesResponse, error) {
 	cookies, ua, _ := getVkSession()
 	log.Printf("app-control: GetVKCookies (cookies=%d bytes)", len(cookies))

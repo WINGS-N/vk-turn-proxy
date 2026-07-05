@@ -320,28 +320,36 @@ func StartAccountCredsStdinReader(ctx context.Context) {
 			if msg.Type != "vk_account_creds" {
 				continue
 			}
-			link := vkHashFromLink(msg.Link)
-			if link == "" {
-				continue
-			}
-			if msg.Cancel {
-				log.Printf("[VK Auth] account creds cancel received for link %s", link)
-				resolveAccountAuth(link, accountCredsResult{err: fmt.Errorf("VK account auth cancelled by app")})
-				continue
-			}
-			addresses := turnURLsToAddresses(msg.URLs)
-			if msg.Username == "" || msg.Credential == "" || len(addresses) == 0 {
-				log.Printf("[VK Auth] ignoring incomplete account creds line for link %s", link)
-				continue
-			}
-			injectTurnCreds(link, msg.Username, msg.Credential, msg.URLs)
-			resolveAccountAuth(link, accountCredsResult{creds: injectedTurnCreds{
-				user:  msg.Username,
-				pass:  msg.Credential,
-				addrs: cloneAddrs(addresses),
-			}})
-			log.Printf("[VK Auth] received account TURN creds for link %s (urls=%d)", link, len(addresses))
+			dispatchVKAccountCreds(msg.Link, msg.Username, msg.Credential, msg.URLs, msg.Cancel)
 		}
 		log.Printf("[VK Auth] account creds stdin reader exited (err=%v)", scanner.Err())
 	}()
+}
+
+// dispatchVKAccountCreds resolves a link's pending account-auth wait with the VK
+// TURN creds the host app intercepted (or a cancel). Shared by the stdin reader
+// and the AppControl SubmitVKAccountCreds RPC so both delivery paths behave
+// identically.
+func dispatchVKAccountCreds(rawLink, username, credential string, urls []string, cancel bool) {
+	link := vkHashFromLink(rawLink)
+	if link == "" {
+		return
+	}
+	if cancel {
+		log.Printf("[VK Auth] account creds cancel received for link %s", link)
+		resolveAccountAuth(link, accountCredsResult{err: fmt.Errorf("VK account auth cancelled by app")})
+		return
+	}
+	addresses := turnURLsToAddresses(urls)
+	if username == "" || credential == "" || len(addresses) == 0 {
+		log.Printf("[VK Auth] ignoring incomplete account creds for link %s", link)
+		return
+	}
+	injectTurnCreds(link, username, credential, urls)
+	resolveAccountAuth(link, accountCredsResult{creds: injectedTurnCreds{
+		user:  username,
+		pass:  credential,
+		addrs: cloneAddrs(addresses),
+	}})
+	log.Printf("[VK Auth] received account TURN creds for link %s (urls=%d)", link, len(addresses))
 }

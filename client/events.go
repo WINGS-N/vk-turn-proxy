@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/cacggghp/vk-turn-proxy/appcontrolpb"
 )
 
 const proxyEventProtocolVersion = 1
@@ -91,7 +94,98 @@ func emitProxyEvent(payload any) {
 		log.Printf("failed to marshal proxy event: %s", err)
 		return
 	}
+	// The JSONL line stays on stdout for the log. Control now flows over the
+	// AppControl StreamEvents gRPC channel: publish the same event typed there.
 	fmt.Println("PROXY_EVENT: " + string(encoded))
+	publishProxyEvent(payload)
+}
+
+// proxyEventBroadcaster fans relay control events out to every active
+// StreamEvents subscriber. Sends are non-blocking: a subscriber that falls behind
+// drops events rather than stalling the relay - control events are re-emitted
+// (captcha / vk-auth) or superseded (status), so a rare drop is tolerable.
+type proxyEventBroadcaster struct {
+	mu   sync.Mutex
+	subs map[chan *appcontrolpb.ProxyEvent]struct{}
+}
+
+var eventHub = &proxyEventBroadcaster{subs: make(map[chan *appcontrolpb.ProxyEvent]struct{})}
+
+func (h *proxyEventBroadcaster) publish(ev *appcontrolpb.ProxyEvent) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.subs {
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+}
+
+func (h *proxyEventBroadcaster) subscribe() chan *appcontrolpb.ProxyEvent {
+	ch := make(chan *appcontrolpb.ProxyEvent, 64)
+	h.mu.Lock()
+	h.subs[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *proxyEventBroadcaster) unsubscribe(ch chan *appcontrolpb.ProxyEvent) {
+	h.mu.Lock()
+	delete(h.subs, ch)
+	h.mu.Unlock()
+	close(ch)
+}
+
+// publishProxyEvent maps a JSONL event struct to its typed ProxyEvent and pushes
+// it to StreamEvents subscribers. Payloads with no control mapping (telemetry,
+// vk_cookies_update) are logged as JSONL only and skipped here - telemetry has its
+// own StreamTelemetry RPC and the app pulls rotated cookies via GetVKCookies.
+func publishProxyEvent(payload any) {
+	var ev *appcontrolpb.ProxyEvent
+	switch p := payload.(type) {
+	case proxyStatusEvent:
+		ev = &appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_Status{
+			Status: &appcontrolpb.StatusEvent{Phase: p.Phase},
+		}}
+	case proxyStreamStatusEvent:
+		ev = &appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_Status{
+			Status: &appcontrolpb.StatusEvent{Phase: p.Phase, StreamId: int32(p.StreamID)},
+		}}
+	case proxyDtlsAliveEvent:
+		ev = &appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_Status{
+			Status: &appcontrolpb.StatusEvent{Phase: p.Phase, StreamId: int32(p.StreamID), ConnectedStreams: int32(p.ConnectedStreams)},
+		}}
+	case proxyCapsEvent:
+		ev = &appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_Caps{
+			Caps: &appcontrolpb.CapsEvent{Version: int32(p.Version), Capabilities: append([]string(nil), p.Capabilities...)},
+		}}
+	case proxyCaptchaEvent:
+		ev = &appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_Captcha{
+			Captcha: &appcontrolpb.CaptchaEvent{State: p.State, Source: p.Source, Url: p.URL, UserAgent: p.UserAgent},
+		}}
+	case proxyLockoutEvent:
+		ev = &appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_Lockout{
+			Lockout: &appcontrolpb.LockoutEvent{Seconds: int32(p.Seconds)},
+		}}
+	case vkAccountAuthEvent:
+		if p.Type == "vk_cookies_required" {
+			ev = &appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_VkCookiesRequired{
+				VkCookiesRequired: &appcontrolpb.VKCookiesRequiredEvent{},
+			}}
+		} else {
+			ev = &appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_VkAccountAuth{
+				VkAccountAuth: &appcontrolpb.VKAccountAuthEvent{
+					Phase:  strings.TrimPrefix(p.Type, "vk_account_auth_"),
+					Link:   p.Link,
+					Reason: p.Reason,
+				},
+			}}
+		}
+	default:
+		return
+	}
+	eventHub.publish(ev)
 }
 
 func applyProxyStatusState(marker string) {
