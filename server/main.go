@@ -36,7 +36,11 @@ import (
 
 const initialNegotiationTimeout = 750 * time.Millisecond
 
-const relayVersion = "dev"
+// relayVersion is the build version reported over the management gRPC. It is
+// stamped from the git tag at build time via
+// -ldflags "-X main.relayVersion=$(git describe --tags --always --dirty)"; the
+// "dev" fallback is used for un-stamped local builds.
+var relayVersion = "dev"
 
 var serverUI *serverTUI
 
