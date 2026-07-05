@@ -22,6 +22,7 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
 	"github.com/cacggghp/vk-turn-proxy/internal/pintls"
 	"github.com/cacggghp/vk-turn-proxy/internal/relaygrpc"
+	"github.com/cacggghp/vk-turn-proxy/internal/tokenaead"
 	"github.com/cacggghp/vk-turn-proxy/internal/wgapply"
 	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
@@ -1054,14 +1055,21 @@ func main() {
 			log.Printf("WireGuard interface %s up on port %d", opts.wgInterface, opts.wgListenPort)
 		}
 		var grpcCreds credentials.TransportCredentials
-		if opts.grpcCert != "" && opts.grpcKey != "" {
+		switch {
+		case opts.grpcToken != "":
+			// The token encrypts the channel with AES-256-GCM and needs no
+			// handshake, so it authenticates AND avoids the TLS cert-chain that a
+			// reduced-MTU client (k8s pod) cannot receive. Preferred over certs.
+			grpcCreds = tokenaead.Server(opts.grpcToken)
+			log.Printf("Relay management API: token-derived AES-256-GCM transport (no TLS)")
+		case opts.grpcCert != "" && opts.grpcKey != "":
 			tlsCreds, credErr := credentials.NewServerTLSFromFile(opts.grpcCert, opts.grpcKey)
 			if credErr != nil {
 				log.Fatalf("relay grpc tls: %v", credErr)
 			}
 			grpcCreds = tlsCreds
 			log.Printf("Relay management API TLS enabled")
-		} else {
+		default:
 			log.Printf("Relay management API serving without TLS (token only)")
 		}
 		grpcServer := relaygrpc.NewServer(relaygrpc.Options{
