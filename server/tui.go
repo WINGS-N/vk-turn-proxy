@@ -634,6 +634,8 @@ func renderHeader(t *serverTUI, tab tuiTab) string {
 	var b strings.Builder
 	b.WriteString(t.colorize("WINGS V VK TURN PROXY SERVER", ansiCyanBold))
 	b.WriteString("  ")
+	b.WriteString(t.colorize(relayVersion, ansiDim))
+	b.WriteString("  ")
 	b.WriteString(t.colorize(fmt.Sprintf("%s -> %s", t.listen, t.connectAddr), ansiWhite))
 	b.WriteString("  ")
 	b.WriteString(t.colorize(fmt.Sprintf("mode=%s", t.mode), ansiBlue))

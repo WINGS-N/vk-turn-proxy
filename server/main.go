@@ -1013,6 +1013,8 @@ func main() {
 		os.Exit(0)
 	}
 
+	log.Printf("WINGS V VK TURN PROXY server %s starting", relayVersion)
+
 	// On first run, snapshot the effective flags into the config file so the unit
 	// can later drop them and rely on the file. Never overwrites an existing file.
 	migrateFlagsToConfig(serverOptionsToConfigLines(opts))
