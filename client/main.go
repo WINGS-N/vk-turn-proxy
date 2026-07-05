@@ -2144,7 +2144,7 @@ func main() { //nolint:cyclop
 	// Configure RPC. Start AppControl first, then block for Configure before the
 	// engine (protect bridge, resolver, TURN) is built from opts.
 	if opts.appGRPCSocket != "" {
-		if _, startErr := StartAppControl(opts.appGRPCSocket, opts.appGRPCToken, setVkCookies, provisionViaWorker, receiveConfigure); startErr != nil {
+		if _, startErr := StartAppControl(opts.appGRPCSocket, opts.appGRPCToken, opts.appGRPCPeerUID, setVkCookies, provisionViaWorker, receiveConfigure); startErr != nil {
 			log.Printf("app-control: %v", startErr)
 		} else {
 			log.Printf("app-control: serving on %s", opts.appGRPCSocket)

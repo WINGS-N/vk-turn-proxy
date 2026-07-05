@@ -97,17 +97,35 @@ func appControlAuth(token string) grpc.UnaryServerInterceptor {
 // restricted three ways: the socket is created 0600 in the caller-provided path
 // (the app's private dir), peers with a different UID are rejected (linux), and
 // a non-empty token is additionally required as a bearer credential.
-func StartAppControl(socketPath, token string, setCookies func(cookies, ua string), provision ProvisionFunc, configure ConfigureFunc) (*grpc.Server, error) {
+//
+// peerUID is the uid the socket must accept and be owned by. A negative value
+// uses this process's own uid (the common in-process case). On the root/kernel-WG
+// path the relay runs under su as uid 0 while the host app connects as its own
+// uid, so the app passes its uid here: the socket is chowned to it (root can) and
+// the peer-cred check accepts it, otherwise the app could never reach the relay.
+func StartAppControl(socketPath, token string, peerUID int, setCookies func(cookies, ua string), provision ProvisionFunc, configure ConfigureFunc) (*grpc.Server, error) {
 	_ = os.Remove(socketPath)
 	lis, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("app-control: listen %s: %w", socketPath, err)
 	}
+	allowedUID := uint32(os.Getuid())
+	if peerUID >= 0 {
+		allowedUID = uint32(peerUID)
+	}
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		_ = lis.Close()
 		return nil, fmt.Errorf("app-control: chmod socket: %w", err)
 	}
-	lis = newPeerCredListener(lis, uint32(os.Getuid()))
+	// Hand ownership to the connecting uid when it differs from ours (root path),
+	// so the 0600 socket is reachable by the app that will connect to it.
+	if allowedUID != uint32(os.Getuid()) {
+		if err := os.Chown(socketPath, int(allowedUID), -1); err != nil {
+			_ = lis.Close()
+			return nil, fmt.Errorf("app-control: chown socket to uid %d: %w", allowedUID, err)
+		}
+	}
+	lis = newPeerCredListener(lis, allowedUID)
 	gs := grpc.NewServer(grpc.ChainUnaryInterceptor(appControlAuth(token)))
 	appcontrolpb.RegisterAppControlServer(gs, &appControlServer{setCookies: setCookies, provision: provision, configure: configure})
 	appControlActive.Store(true)
