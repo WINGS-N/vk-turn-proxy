@@ -75,44 +75,56 @@ func migrateFlagsToConfig(lines []string) {
 // serverOptionsToConfigLines renders the meaningful startup options as config
 // file lines (flag-name keys), skipping empty/false values so the generated file
 // captures only what the operator actually configured.
+// serverOptionsToConfigLines renders every server option as a config line. An
+// option carrying a meaningful (non-default) value is written active; one left at
+// its default is written COMMENTED with that default, so the generated file is a
+// complete, self-documenting template an operator can uncomment and edit. loadConfigFile
+// ignores the commented lines, so they never affect the running config.
 func serverOptionsToConfigLines(o serverOptions) []string {
-	candidates := []string{
-		configLine("listen", o.listen),
-		configLine("udp-connect", o.udpConnect),
-		configLine("tcp-connect", o.tcpConnect),
-		configLine("session-mode", o.sessionMode),
-		configLine("tui", o.tuiMode),
-		configLine("wrap-mode", o.wrapMode),
-		configLine("wrap-cipher", o.wrapCipher),
-		configLine("wrap-key", o.wrapKeyHex),
-		configLine("grpc-listen", o.grpcListen),
-		configLine("grpc-token", o.grpcToken),
-		configLine("grpc-cert", o.grpcCert),
-		configLine("grpc-key", o.grpcKey),
-		configLine("panel-grpc", o.panelGRPC),
-		configLine("node-id", o.nodeID),
-		configLine("panel-token", o.panelToken),
-		configLine("panel-ca-pin", o.panelCAPin),
-		configLine("wg-interface", o.wgInterface),
-		configLine("wg-tunnel-cidr", o.wgTunnelCIDR),
-		configLine("wg-address", o.wgAddress),
-	}
-	if o.wgApply {
-		candidates = append(candidates,
-			"wg-apply = true",
-			fmt.Sprintf("wg-listen-port = %d", o.wgListenPort),
-		)
-	}
-	if o.panelInsecure {
-		candidates = append(candidates, "panel-insecure = true")
-	}
-	out := make([]string, 0, len(candidates))
-	for _, line := range candidates {
-		if line != "" {
-			out = append(out, line)
+	str := func(key, value, def string) string {
+		value = strings.TrimSpace(value)
+		if value != "" && value != def {
+			return fmt.Sprintf("%s = %q", key, value)
 		}
+		return fmt.Sprintf("# %s = %q", key, def)
 	}
-	return out
+	boolean := func(key string, value, def bool) string {
+		if value != def {
+			return fmt.Sprintf("%s = %t", key, value)
+		}
+		return fmt.Sprintf("# %s = %t", key, def)
+	}
+	integer := func(key string, value, def int) string {
+		if value != 0 && value != def {
+			return fmt.Sprintf("%s = %d", key, value)
+		}
+		return fmt.Sprintf("# %s = %d", key, def)
+	}
+	return []string{
+		str("listen", o.listen, "0.0.0.0:56000"),
+		str("udp-connect", o.udpConnect, ""),
+		str("tcp-connect", o.tcpConnect, ""),
+		str("session-mode", o.sessionMode, "auto"),
+		str("tui", o.tuiMode, "auto"),
+		str("wrap-mode", o.wrapMode, "on"),
+		str("wrap-cipher", o.wrapCipher, "any"),
+		str("wrap-key", o.wrapKeyHex, ""),
+		boolean("wrap-accept-client-keys", o.wrapAcceptClientKeys, true),
+		str("grpc-listen", o.grpcListen, ""),
+		str("grpc-token", o.grpcToken, ""),
+		str("grpc-cert", o.grpcCert, ""),
+		str("grpc-key", o.grpcKey, ""),
+		str("panel-grpc", o.panelGRPC, ""),
+		str("node-id", o.nodeID, ""),
+		str("panel-token", o.panelToken, ""),
+		str("panel-ca-pin", o.panelCAPin, ""),
+		boolean("panel-insecure", o.panelInsecure, false),
+		str("wg-interface", o.wgInterface, "wg-wingsv"),
+		str("wg-tunnel-cidr", o.wgTunnelCIDR, "10.66.66.0/24"),
+		str("wg-address", o.wgAddress, "10.66.66.1/24"),
+		boolean("wg-apply", o.wgApply, false),
+		integer("wg-listen-port", o.wgListenPort, 51820),
+	}
 }
 
 // configLine formats a single KEY = "value" line, or "" to skip an empty value.
