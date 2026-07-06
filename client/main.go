@@ -151,6 +151,7 @@ func newDirectNet() transport.Net {
 func (directNet) ListenPacket(network string, address string) (net.PacketConn, error) {
 	conn, err := net.ListenPacket(network, address)
 	if err == nil {
+		pinConnToPhysical(conn)
 		tuneUDPBuffers(conn, "direct listen packet")
 	}
 	return conn, err
@@ -159,6 +160,7 @@ func (directNet) ListenPacket(network string, address string) (net.PacketConn, e
 func (directNet) ListenUDP(network string, locAddr *net.UDPAddr) (transport.UDPConn, error) {
 	conn, err := net.ListenUDP(network, locAddr)
 	if err == nil {
+		pinConnToPhysical(conn)
 		tuneUDPBuffers(conn, "direct listen udp")
 	}
 	return conn, err
@@ -174,19 +176,28 @@ func (directNet) ListenTCP(network string, laddr *net.TCPAddr) (transport.TCPLis
 }
 
 func (directNet) Dial(network, address string) (net.Conn, error) {
-	return net.Dial(network, address)
+	conn, err := net.Dial(network, address)
+	if err == nil {
+		pinConnToPhysical(conn)
+	}
+	return conn, err
 }
 
 func (directNet) DialUDP(network string, laddr, raddr *net.UDPAddr) (transport.UDPConn, error) {
 	conn, err := net.DialUDP(network, laddr, raddr)
 	if err == nil {
+		pinConnToPhysical(conn)
 		tuneUDPBuffers(conn, "direct dial udp")
 	}
 	return conn, err
 }
 
 func (directNet) DialTCP(network string, laddr, raddr *net.TCPAddr) (transport.TCPConn, error) {
-	return net.DialTCP(network, laddr, raddr)
+	conn, err := net.DialTCP(network, laddr, raddr)
+	if err == nil {
+		pinConnToPhysical(conn)
+	}
+	return conn, err
 }
 
 func (directNet) ResolveIPAddr(network, address string) (*net.IPAddr, error) {
