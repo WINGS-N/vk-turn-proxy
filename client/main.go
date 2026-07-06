@@ -1745,22 +1745,20 @@ func oneTurnConnection(
 		log.Printf("[STREAM %d] WRAP mode=%s; waiting for mu/v1 SessionHello to install cipher", streamID, turnParams.wrapMode)
 	}
 	// Recycle this allocation when the credential group rotates its TURN
-	// username/password (TTL refresh). Otherwise the pion client keeps refreshing
-	// CreatePermission with the stale credentials, the server rejects it (400 Bad
-	// Request), and the stream silently dies once the permission lifetime ends.
-	// turncancel() arms the relay/upstream deadlines, both I/O loops unwind, and
-	// oneTurnConnectionLoop re-fetches fresh creds and re-Allocates. The per-stream
-	// stagger recycles one stream at a time so the group is not dropped at once.
-	if turnParams.credsManager != nil {
-		accountMode := getVkAuthMode() == "account"
+	// username/password - but only in VK ID (account) mode. There the privileged
+	// token rotates frequently and pion, still holding the old username/password,
+	// gets its periodic CreatePermission refresh rejected (400 Bad Request) and the
+	// stream silently dies once the permission lifetime ends; turncancel() unwinds
+	// both I/O loops and oneTurnConnectionLoop re-Allocates with fresh creds. The
+	// per-stream stagger recycles one stream at a time so the group is not dropped
+	// at once. In anonymous mode the creds are long-lived and media keeps flowing
+	// over the bound channel across a rotation, so we keep the pre-recycler
+	// behaviour and do not tear the stream down on rotation.
+	if turnParams.credsManager != nil && getVkAuthMode() == "account" {
 		startGen := turnParams.credsManager.WorkerCredGeneration(streamID)
-		var ageDeadline time.Time
-		if accountMode {
-			// VK ID mode only: recycle before the TURN permission lapses (see
-			// accountStreamMaxAge). Jitter per stream so the first wave does not all
-			// age out in the same tick.
-			ageDeadline = time.Now().Add(accountStreamMaxAge + time.Duration(streamID)*accountStreamAgeJitter)
-		}
+		// Recycle before the TURN permission lapses (see accountStreamMaxAge). Jitter
+		// per stream so the first wave does not all age out in the same tick.
+		ageDeadline := time.Now().Add(accountStreamMaxAge + time.Duration(streamID)*accountStreamAgeJitter)
 		go func() {
 			ticker := time.NewTicker(credsRotationWatchInterval)
 			defer ticker.Stop()
@@ -1770,7 +1768,7 @@ func oneTurnConnection(
 					return
 				case <-ticker.C:
 					rotated := turnParams.credsManager.WorkerCredGeneration(streamID) != startGen
-					aged := accountMode && time.Now().After(ageDeadline)
+					aged := time.Now().After(ageDeadline)
 					if !rotated && !aged {
 						continue
 					}
