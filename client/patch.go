@@ -208,15 +208,27 @@ func applyPatch(req *appcontrolpb.PatchConfigRequest) {
 			mode = req.GetWrapMode()
 		}
 		cipherSel, key, resolvedMode, err := resolveWrapConfig(mode, req.GetWrapCipher(), req.GetWrapKeyHex())
-		if err != nil {
+		sendKey := next.wrapSendKey
+		if req.WrapSendKey != nil {
+			sendKey = req.GetWrapSendKey()
+		}
+		switch {
+		case err != nil:
 			publishPatchStatus(reqID, "wrap", "failed", err.Error())
-		} else {
+		case cur.wrapSendKey && !sendKey && resolvedMode != "off":
+			// Turning in-band key delivery off while WRAP stays active cannot be done
+			// live: new streams would negotiate WRAP without sending the key, but the
+			// server has no matching preset for an auto-generated key (and we cannot
+			// verify one), so the switch would silently break traffic. Keep the
+			// previous WRAP and tell the app it needs a restart. next.wrap* already
+			// holds the current values (copied from cur), so nothing migrates.
+			publishPatchStatus(reqID, "wrap", "reverted_needs_restart",
+				"turning off in-band WRAP key can only take effect on the next start")
+		default:
 			next.wrapCipher = cipherSel
 			next.wrapKey = key
 			next.wrapMode = resolvedMode
-			if req.WrapSendKey != nil {
-				next.wrapSendKey = req.GetWrapSendKey()
-			}
+			next.wrapSendKey = sendKey
 			wrapMigrated = true
 		}
 	}
