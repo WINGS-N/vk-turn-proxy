@@ -1302,6 +1302,10 @@ func oneDtlsConnection(
 		}
 		controlHeartbeatSupported = serverHello.GetControlHeartbeatSupported()
 		if enableErr := applyServerWrapChoice(turnParams, dtlsSnap, int(streamID), serverHello); enableErr != nil {
+			// A WRAP negotiation failure on this snapshot may mean a live WRAP change
+			// is unsafe (e.g. in-band turned off with no server preset); flag it so a
+			// migration watching this generation can roll WRAP back.
+			recordWrapFailure(dtlsSnap.gen)
 			err = enableErr
 			return
 		}

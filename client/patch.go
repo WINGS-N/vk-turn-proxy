@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/appcontrolpb"
@@ -12,6 +13,25 @@ import (
 // patchResolver re-resolves a new VK TURN endpoint during an endpoint live-patch.
 // Set once at engine build from the same resolver the boot peer used.
 var patchResolver *protectedResolver
+
+// wrapFailGen is the highest config generation on which a stream failed WRAP
+// negotiation. A WRAP live-patch watches it to decide whether to roll back.
+var wrapFailGen atomic.Uint64
+
+// recordWrapFailure is called by a worker whose WRAP negotiation failed, tagged
+// with the snapshot generation it was running. Monotonic max so a later, healthy
+// migration is not tripped by a stale failure.
+func recordWrapFailure(gen uint64) {
+	for {
+		cur := wrapFailGen.Load()
+		if gen <= cur {
+			return
+		}
+		if wrapFailGen.CompareAndSwap(cur, gen) {
+			return
+		}
+	}
+}
 
 // workerRegistry tracks the config generation each active TURN stream has adopted,
 // so a patch can tell when the whole fleet has migrated onto the new snapshot and
@@ -95,6 +115,7 @@ func applyPatch(req *appcontrolpb.PatchConfigRequest) {
 	}
 	// WRAP is patched as one coherent group: the app sends the full set (mode +
 	// cipher + key + send-key) whenever any WRAP field changes.
+	wrapMigrated := false
 	if req.WrapMode != nil || req.WrapCipher != nil || req.WrapKeyHex != nil || req.WrapSendKey != nil {
 		mode := next.wrapMode
 		if req.WrapMode != nil {
@@ -110,7 +131,7 @@ func applyPatch(req *appcontrolpb.PatchConfigRequest) {
 			if req.WrapSendKey != nil {
 				next.wrapSendKey = req.GetWrapSendKey()
 			}
-			migrateFields = append(migrateFields, "wrap")
+			wrapMigrated = true
 		}
 	}
 
@@ -134,7 +155,7 @@ func applyPatch(req *appcontrolpb.PatchConfigRequest) {
 		publishPatchStatus(reqID, f, "reverted_needs_restart", "not live-patchable yet")
 	}
 
-	if len(migrateFields) == 0 && !authChanged {
+	if len(migrateFields) == 0 && !authChanged && !wrapMigrated {
 		return
 	}
 	if authChanged {
@@ -143,8 +164,51 @@ func applyPatch(req *appcontrolpb.PatchConfigRequest) {
 	for _, f := range migrateFields {
 		publishPatchStatus(reqID, f, "applying", "")
 	}
+	if wrapMigrated {
+		publishPatchStatus(reqID, "wrap", "applying", "")
+	}
 	g := swapLive(&next)
-	go waitMigrated(reqID, migrateFields, g)
+	// The generic fields are applied once the fleet has migrated. WRAP is watched
+	// separately because it can break on a new stream (see watchWrapMigration).
+	if len(migrateFields) > 0 {
+		go waitMigrated(reqID, migrateFields, g)
+	}
+	if wrapMigrated {
+		go watchWrapMigration(reqID, *cur, g)
+	}
+}
+
+// watchWrapMigration decides the outcome of a WRAP live-change. If a new-snapshot
+// stream fails WRAP negotiation (e.g. in-band delivery was turned off but the
+// server had no preset key, so a "required" stream is rejected), the whole live
+// switch is unsafe: roll the WRAP fields back to the previous snapshot so every
+// stream keeps the old, working WRAP, and tell the app the change will only take
+// effect on the next relay restart. Otherwise, once the fleet has migrated, report
+// applied. In the common case (in-band stays on) new streams just negotiate the
+// fresh key and this reports applied with no rollback.
+func watchWrapMigration(reqID string, prev liveSnapshot, g uint64) {
+	deadline := time.Now().Add(2 * time.Minute)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		if wrapFailGen.Load() >= g {
+			// Roll WRAP back to the previous snapshot, keeping any other patched
+			// fields (endpoint/host/port) that migrated in the same swap.
+			roll := *currentLive()
+			roll.wrapCipher = prev.wrapCipher
+			roll.wrapKey = prev.wrapKey
+			roll.wrapMode = prev.wrapMode
+			roll.wrapSendKey = prev.wrapSendKey
+			swapLive(&roll)
+			publishPatchStatus(reqID, "wrap", "reverted_needs_restart",
+				"WRAP negotiation failed on a new stream; kept the previous WRAP")
+			return
+		}
+		if workers.allAtLeast(g) || time.Now().After(deadline) {
+			publishPatchStatus(reqID, "wrap", "applied", "")
+			return
+		}
+	}
 }
 
 // waitMigrated reports each field applied once the whole fleet has recycled onto
