@@ -33,6 +33,7 @@ const (
 	AppControl_Configure_FullMethodName            = "/vkturn.appcontrol.v1.AppControl/Configure"
 	AppControl_StreamEvents_FullMethodName         = "/vkturn.appcontrol.v1.AppControl/StreamEvents"
 	AppControl_SubmitVKAccountCreds_FullMethodName = "/vkturn.appcontrol.v1.AppControl/SubmitVKAccountCreds"
+	AppControl_PatchConfig_FullMethodName          = "/vkturn.appcontrol.v1.AppControl/PatchConfig"
 )
 
 // AppControlClient is the client API for AppControl service.
@@ -65,6 +66,12 @@ type AppControlClient interface {
 	// vk_account_creds stdin line. Unlike stdin it also works on the root/kernel-WG
 	// path, where the relay runs under su with no writable stdin.
 	SubmitVKAccountCreds(ctx context.Context, in *VKAccountCredsRequest, opts ...grpc.CallOption) (*VKAccountCredsResponse, error)
+	// PatchConfig live-applies a delta of runtime-mutable settings without a relay
+	// restart. Only the present fields are patched. The relay migrates its TURN
+	// worker fleet onto the new config snapshot gracefully (streams drain and recycle
+	// one at a time, traffic is not interrupted) and reports per-field progress over
+	// StreamEvents as PatchStatusEvent messages keyed by the request_id.
+	PatchConfig(ctx context.Context, in *PatchConfigRequest, opts ...grpc.CallOption) (*PatchConfigResponse, error)
 }
 
 type appControlClient struct {
@@ -173,6 +180,16 @@ func (c *appControlClient) SubmitVKAccountCreds(ctx context.Context, in *VKAccou
 	return out, nil
 }
 
+func (c *appControlClient) PatchConfig(ctx context.Context, in *PatchConfigRequest, opts ...grpc.CallOption) (*PatchConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PatchConfigResponse)
+	err := c.cc.Invoke(ctx, AppControl_PatchConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AppControlServer is the server API for AppControl service.
 // All implementations must embed UnimplementedAppControlServer
 // for forward compatibility.
@@ -203,6 +220,12 @@ type AppControlServer interface {
 	// vk_account_creds stdin line. Unlike stdin it also works on the root/kernel-WG
 	// path, where the relay runs under su with no writable stdin.
 	SubmitVKAccountCreds(context.Context, *VKAccountCredsRequest) (*VKAccountCredsResponse, error)
+	// PatchConfig live-applies a delta of runtime-mutable settings without a relay
+	// restart. Only the present fields are patched. The relay migrates its TURN
+	// worker fleet onto the new config snapshot gracefully (streams drain and recycle
+	// one at a time, traffic is not interrupted) and reports per-field progress over
+	// StreamEvents as PatchStatusEvent messages keyed by the request_id.
+	PatchConfig(context.Context, *PatchConfigRequest) (*PatchConfigResponse, error)
 	mustEmbedUnimplementedAppControlServer()
 }
 
@@ -236,6 +259,9 @@ func (UnimplementedAppControlServer) StreamEvents(*StreamEventsRequest, grpc.Ser
 }
 func (UnimplementedAppControlServer) SubmitVKAccountCreds(context.Context, *VKAccountCredsRequest) (*VKAccountCredsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitVKAccountCreds not implemented")
+}
+func (UnimplementedAppControlServer) PatchConfig(context.Context, *PatchConfigRequest) (*PatchConfigResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PatchConfig not implemented")
 }
 func (UnimplementedAppControlServer) mustEmbedUnimplementedAppControlServer() {}
 func (UnimplementedAppControlServer) testEmbeddedByValue()                    {}
@@ -388,6 +414,24 @@ func _AppControl_SubmitVKAccountCreds_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AppControl_PatchConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PatchConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AppControlServer).PatchConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AppControl_PatchConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AppControlServer).PatchConfig(ctx, req.(*PatchConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AppControl_ServiceDesc is the grpc.ServiceDesc for AppControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -418,6 +462,10 @@ var AppControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitVKAccountCreds",
 			Handler:    _AppControl_SubmitVKAccountCreds_Handler,
+		},
+		{
+			MethodName: "PatchConfig",
+			Handler:    _AppControl_PatchConfig_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

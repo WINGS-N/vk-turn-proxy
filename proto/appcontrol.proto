@@ -43,6 +43,12 @@ service AppControl {
   // vk_account_creds stdin line. Unlike stdin it also works on the root/kernel-WG
   // path, where the relay runs under su with no writable stdin.
   rpc SubmitVKAccountCreds(VKAccountCredsRequest) returns (VKAccountCredsResponse);
+  // PatchConfig live-applies a delta of runtime-mutable settings without a relay
+  // restart. Only the present fields are patched. The relay migrates its TURN
+  // worker fleet onto the new config snapshot gracefully (streams drain and recycle
+  // one at a time, traffic is not interrupted) and reports per-field progress over
+  // StreamEvents as PatchStatusEvent messages keyed by the request_id.
+  rpc PatchConfig(PatchConfigRequest) returns (PatchConfigResponse);
 }
 
 // ConfigureRequest mirrors the former CLI flags (clientOptions). Empty/zero
@@ -126,7 +132,26 @@ message ProxyEvent {
     LockoutEvent lockout = 4;
     VKAccountAuthEvent vk_account_auth = 5;
     VKCookiesRequiredEvent vk_cookies_required = 6;
+    PatchStatusEvent patch_status = 7;
   }
+}
+
+// PatchStatusEvent reports the progress of one field of a PatchConfig request.
+// request_id echoes PatchConfigRequest.request_id; field is a stable key
+// (vk_links | threads | vk_auth | peer | turn_host | turn_port | dns | wrap).
+// state:
+//   applying              - migration/flip started, field is being applied
+//   applied               - fully applied (fleet migrated / flip done)
+//   failed                - could not apply; left as it was
+//   reverted_needs_restart - a live attempt broke (e.g. WRAP in-band turned off
+//                            and the server had no preset key); the relay rolled
+//                            back to the previous value and the new one will only
+//                            take effect on the next relay restart
+message PatchStatusEvent {
+  string request_id = 1;
+  string field = 2;
+  string state = 3;
+  string message = 4;
 }
 
 // StatusEvent reports a connection-progress phase (auth_ready, turn_ready,
@@ -172,6 +197,38 @@ message VKAccountAuthEvent {
 // VKCookiesRequiredEvent asks the app to (re)deliver the VK web session so the
 // relay can mint a privileged TURN token.
 message VKCookiesRequiredEvent {}
+
+// PatchConfigRequest carries a delta: only the present fields are applied. Scalar
+// fields use proto3 optional presence; vk_links uses a wrapper message so an
+// absent patch (do not touch links) is distinct from patching to an empty pool.
+// Field names mirror ConfigureRequest.
+message PatchConfigRequest {
+  string request_id = 1;
+  optional string dns_mode = 2;       // instant global flip
+  optional string user_dns = 3;
+  optional string peer = 4;           // VK TURN endpoint (per-worker migration)
+  optional int32 threads = 5;         // worker count ramp up / drain down
+  optional string vk_auth = 6;        // account | anonymous (bidirectional)
+  optional string turn_host = 7;
+  optional string turn_port = 8;
+  optional string wrap_mode = 9;
+  optional string wrap_cipher = 10;
+  optional string wrap_key_hex = 11;
+  optional bool wrap_send_key = 12;   // WRAP in-band key delivery
+  VKLinksPatch vk_links = 13;         // presence => set the pool to these links
+  optional int32 creds_group_size = 14;
+}
+
+message VKLinksPatch {
+  repeated string links = 1;
+}
+
+message PatchConfigResponse {
+  bool accepted = 1;
+  // Populated when the whole patch was rejected outright (malformed / nothing
+  // patchable). Per-field outcomes still arrive as PatchStatusEvent.
+  string error = 2;
+}
 
 message VKAccountCredsRequest {
   string link = 1;

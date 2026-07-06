@@ -777,6 +777,7 @@ type ProxyEvent struct {
 	//	*ProxyEvent_Lockout
 	//	*ProxyEvent_VkAccountAuth
 	//	*ProxyEvent_VkCookiesRequired
+	//	*ProxyEvent_PatchStatus
 	Event         isProxyEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -873,6 +874,15 @@ func (x *ProxyEvent) GetVkCookiesRequired() *VKCookiesRequiredEvent {
 	return nil
 }
 
+func (x *ProxyEvent) GetPatchStatus() *PatchStatusEvent {
+	if x != nil {
+		if x, ok := x.Event.(*ProxyEvent_PatchStatus); ok {
+			return x.PatchStatus
+		}
+	}
+	return nil
+}
+
 type isProxyEvent_Event interface {
 	isProxyEvent_Event()
 }
@@ -901,6 +911,10 @@ type ProxyEvent_VkCookiesRequired struct {
 	VkCookiesRequired *VKCookiesRequiredEvent `protobuf:"bytes,6,opt,name=vk_cookies_required,json=vkCookiesRequired,proto3,oneof"`
 }
 
+type ProxyEvent_PatchStatus struct {
+	PatchStatus *PatchStatusEvent `protobuf:"bytes,7,opt,name=patch_status,json=patchStatus,proto3,oneof"`
+}
+
 func (*ProxyEvent_Status) isProxyEvent_Event() {}
 
 func (*ProxyEvent_Caps) isProxyEvent_Event() {}
@@ -912,6 +926,88 @@ func (*ProxyEvent_Lockout) isProxyEvent_Event() {}
 func (*ProxyEvent_VkAccountAuth) isProxyEvent_Event() {}
 
 func (*ProxyEvent_VkCookiesRequired) isProxyEvent_Event() {}
+
+func (*ProxyEvent_PatchStatus) isProxyEvent_Event() {}
+
+// PatchStatusEvent reports the progress of one field of a PatchConfig request.
+// request_id echoes PatchConfigRequest.request_id; field is a stable key
+// (vk_links | threads | vk_auth | peer | turn_host | turn_port | dns | wrap).
+// state:
+//
+//	applying              - migration/flip started, field is being applied
+//	applied               - fully applied (fleet migrated / flip done)
+//	failed                - could not apply; left as it was
+//	reverted_needs_restart - a live attempt broke (e.g. WRAP in-band turned off
+//	                         and the server had no preset key); the relay rolled
+//	                         back to the previous value and the new one will only
+//	                         take effect on the next relay restart
+type PatchStatusEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Field         string                 `protobuf:"bytes,2,opt,name=field,proto3" json:"field,omitempty"`
+	State         string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
+	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PatchStatusEvent) Reset() {
+	*x = PatchStatusEvent{}
+	mi := &file_proto_appcontrol_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchStatusEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchStatusEvent) ProtoMessage() {}
+
+func (x *PatchStatusEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchStatusEvent.ProtoReflect.Descriptor instead.
+func (*PatchStatusEvent) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PatchStatusEvent) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *PatchStatusEvent) GetField() string {
+	if x != nil {
+		return x.Field
+	}
+	return ""
+}
+
+func (x *PatchStatusEvent) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *PatchStatusEvent) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
 
 // StatusEvent reports a connection-progress phase (auth_ready, turn_ready,
 // dtls_ready, dtls_alive, ...). stream_id attributes it to a TURN stream (0 for
@@ -928,7 +1024,7 @@ type StatusEvent struct {
 
 func (x *StatusEvent) Reset() {
 	*x = StatusEvent{}
-	mi := &file_proto_appcontrol_proto_msgTypes[13]
+	mi := &file_proto_appcontrol_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -940,7 +1036,7 @@ func (x *StatusEvent) String() string {
 func (*StatusEvent) ProtoMessage() {}
 
 func (x *StatusEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[13]
+	mi := &file_proto_appcontrol_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -953,7 +1049,7 @@ func (x *StatusEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusEvent.ProtoReflect.Descriptor instead.
 func (*StatusEvent) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{13}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *StatusEvent) GetPhase() string {
@@ -988,7 +1084,7 @@ type CapsEvent struct {
 
 func (x *CapsEvent) Reset() {
 	*x = CapsEvent{}
-	mi := &file_proto_appcontrol_proto_msgTypes[14]
+	mi := &file_proto_appcontrol_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1000,7 +1096,7 @@ func (x *CapsEvent) String() string {
 func (*CapsEvent) ProtoMessage() {}
 
 func (x *CapsEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[14]
+	mi := &file_proto_appcontrol_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1013,7 +1109,7 @@ func (x *CapsEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CapsEvent.ProtoReflect.Descriptor instead.
 func (*CapsEvent) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{14}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CapsEvent) GetVersion() int32 {
@@ -1045,7 +1141,7 @@ type CaptchaEvent struct {
 
 func (x *CaptchaEvent) Reset() {
 	*x = CaptchaEvent{}
-	mi := &file_proto_appcontrol_proto_msgTypes[15]
+	mi := &file_proto_appcontrol_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1057,7 +1153,7 @@ func (x *CaptchaEvent) String() string {
 func (*CaptchaEvent) ProtoMessage() {}
 
 func (x *CaptchaEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[15]
+	mi := &file_proto_appcontrol_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1070,7 +1166,7 @@ func (x *CaptchaEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptchaEvent.ProtoReflect.Descriptor instead.
 func (*CaptchaEvent) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{15}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CaptchaEvent) GetState() string {
@@ -1111,7 +1207,7 @@ type LockoutEvent struct {
 
 func (x *LockoutEvent) Reset() {
 	*x = LockoutEvent{}
-	mi := &file_proto_appcontrol_proto_msgTypes[16]
+	mi := &file_proto_appcontrol_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1123,7 +1219,7 @@ func (x *LockoutEvent) String() string {
 func (*LockoutEvent) ProtoMessage() {}
 
 func (x *LockoutEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[16]
+	mi := &file_proto_appcontrol_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1136,7 +1232,7 @@ func (x *LockoutEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LockoutEvent.ProtoReflect.Descriptor instead.
 func (*LockoutEvent) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{16}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *LockoutEvent) GetSeconds() int32 {
@@ -1160,7 +1256,7 @@ type VKAccountAuthEvent struct {
 
 func (x *VKAccountAuthEvent) Reset() {
 	*x = VKAccountAuthEvent{}
-	mi := &file_proto_appcontrol_proto_msgTypes[17]
+	mi := &file_proto_appcontrol_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1268,7 @@ func (x *VKAccountAuthEvent) String() string {
 func (*VKAccountAuthEvent) ProtoMessage() {}
 
 func (x *VKAccountAuthEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[17]
+	mi := &file_proto_appcontrol_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1185,7 +1281,7 @@ func (x *VKAccountAuthEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VKAccountAuthEvent.ProtoReflect.Descriptor instead.
 func (*VKAccountAuthEvent) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{17}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *VKAccountAuthEvent) GetPhase() string {
@@ -1219,7 +1315,7 @@ type VKCookiesRequiredEvent struct {
 
 func (x *VKCookiesRequiredEvent) Reset() {
 	*x = VKCookiesRequiredEvent{}
-	mi := &file_proto_appcontrol_proto_msgTypes[18]
+	mi := &file_proto_appcontrol_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1231,7 +1327,7 @@ func (x *VKCookiesRequiredEvent) String() string {
 func (*VKCookiesRequiredEvent) ProtoMessage() {}
 
 func (x *VKCookiesRequiredEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[18]
+	mi := &file_proto_appcontrol_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1244,7 +1340,257 @@ func (x *VKCookiesRequiredEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VKCookiesRequiredEvent.ProtoReflect.Descriptor instead.
 func (*VKCookiesRequiredEvent) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{18}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{19}
+}
+
+// PatchConfigRequest carries a delta: only the present fields are applied. Scalar
+// fields use proto3 optional presence; vk_links uses a wrapper message so an
+// absent patch (do not touch links) is distinct from patching to an empty pool.
+// Field names mirror ConfigureRequest.
+type PatchConfigRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	RequestId      string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	DnsMode        *string                `protobuf:"bytes,2,opt,name=dns_mode,json=dnsMode,proto3,oneof" json:"dns_mode,omitempty"` // instant global flip
+	UserDns        *string                `protobuf:"bytes,3,opt,name=user_dns,json=userDns,proto3,oneof" json:"user_dns,omitempty"`
+	Peer           *string                `protobuf:"bytes,4,opt,name=peer,proto3,oneof" json:"peer,omitempty"`                   // VK TURN endpoint (per-worker migration)
+	Threads        *int32                 `protobuf:"varint,5,opt,name=threads,proto3,oneof" json:"threads,omitempty"`            // worker count ramp up / drain down
+	VkAuth         *string                `protobuf:"bytes,6,opt,name=vk_auth,json=vkAuth,proto3,oneof" json:"vk_auth,omitempty"` // account | anonymous (bidirectional)
+	TurnHost       *string                `protobuf:"bytes,7,opt,name=turn_host,json=turnHost,proto3,oneof" json:"turn_host,omitempty"`
+	TurnPort       *string                `protobuf:"bytes,8,opt,name=turn_port,json=turnPort,proto3,oneof" json:"turn_port,omitempty"`
+	WrapMode       *string                `protobuf:"bytes,9,opt,name=wrap_mode,json=wrapMode,proto3,oneof" json:"wrap_mode,omitempty"`
+	WrapCipher     *string                `protobuf:"bytes,10,opt,name=wrap_cipher,json=wrapCipher,proto3,oneof" json:"wrap_cipher,omitempty"`
+	WrapKeyHex     *string                `protobuf:"bytes,11,opt,name=wrap_key_hex,json=wrapKeyHex,proto3,oneof" json:"wrap_key_hex,omitempty"`
+	WrapSendKey    *bool                  `protobuf:"varint,12,opt,name=wrap_send_key,json=wrapSendKey,proto3,oneof" json:"wrap_send_key,omitempty"` // WRAP in-band key delivery
+	VkLinks        *VKLinksPatch          `protobuf:"bytes,13,opt,name=vk_links,json=vkLinks,proto3" json:"vk_links,omitempty"`                      // presence => set the pool to these links
+	CredsGroupSize *int32                 `protobuf:"varint,14,opt,name=creds_group_size,json=credsGroupSize,proto3,oneof" json:"creds_group_size,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *PatchConfigRequest) Reset() {
+	*x = PatchConfigRequest{}
+	mi := &file_proto_appcontrol_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchConfigRequest) ProtoMessage() {}
+
+func (x *PatchConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchConfigRequest.ProtoReflect.Descriptor instead.
+func (*PatchConfigRequest) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *PatchConfigRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetDnsMode() string {
+	if x != nil && x.DnsMode != nil {
+		return *x.DnsMode
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetUserDns() string {
+	if x != nil && x.UserDns != nil {
+		return *x.UserDns
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetPeer() string {
+	if x != nil && x.Peer != nil {
+		return *x.Peer
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetThreads() int32 {
+	if x != nil && x.Threads != nil {
+		return *x.Threads
+	}
+	return 0
+}
+
+func (x *PatchConfigRequest) GetVkAuth() string {
+	if x != nil && x.VkAuth != nil {
+		return *x.VkAuth
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetTurnHost() string {
+	if x != nil && x.TurnHost != nil {
+		return *x.TurnHost
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetTurnPort() string {
+	if x != nil && x.TurnPort != nil {
+		return *x.TurnPort
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetWrapMode() string {
+	if x != nil && x.WrapMode != nil {
+		return *x.WrapMode
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetWrapCipher() string {
+	if x != nil && x.WrapCipher != nil {
+		return *x.WrapCipher
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetWrapKeyHex() string {
+	if x != nil && x.WrapKeyHex != nil {
+		return *x.WrapKeyHex
+	}
+	return ""
+}
+
+func (x *PatchConfigRequest) GetWrapSendKey() bool {
+	if x != nil && x.WrapSendKey != nil {
+		return *x.WrapSendKey
+	}
+	return false
+}
+
+func (x *PatchConfigRequest) GetVkLinks() *VKLinksPatch {
+	if x != nil {
+		return x.VkLinks
+	}
+	return nil
+}
+
+func (x *PatchConfigRequest) GetCredsGroupSize() int32 {
+	if x != nil && x.CredsGroupSize != nil {
+		return *x.CredsGroupSize
+	}
+	return 0
+}
+
+type VKLinksPatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Links         []string               `protobuf:"bytes,1,rep,name=links,proto3" json:"links,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VKLinksPatch) Reset() {
+	*x = VKLinksPatch{}
+	mi := &file_proto_appcontrol_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VKLinksPatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VKLinksPatch) ProtoMessage() {}
+
+func (x *VKLinksPatch) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VKLinksPatch.ProtoReflect.Descriptor instead.
+func (*VKLinksPatch) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *VKLinksPatch) GetLinks() []string {
+	if x != nil {
+		return x.Links
+	}
+	return nil
+}
+
+type PatchConfigResponse struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Accepted bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	// Populated when the whole patch was rejected outright (malformed / nothing
+	// patchable). Per-field outcomes still arrive as PatchStatusEvent.
+	Error         string `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PatchConfigResponse) Reset() {
+	*x = PatchConfigResponse{}
+	mi := &file_proto_appcontrol_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchConfigResponse) ProtoMessage() {}
+
+func (x *PatchConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_appcontrol_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchConfigResponse.ProtoReflect.Descriptor instead.
+func (*PatchConfigResponse) Descriptor() ([]byte, []int) {
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *PatchConfigResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *PatchConfigResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
 }
 
 type VKAccountCredsRequest struct {
@@ -1260,7 +1606,7 @@ type VKAccountCredsRequest struct {
 
 func (x *VKAccountCredsRequest) Reset() {
 	*x = VKAccountCredsRequest{}
-	mi := &file_proto_appcontrol_proto_msgTypes[19]
+	mi := &file_proto_appcontrol_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1272,7 +1618,7 @@ func (x *VKAccountCredsRequest) String() string {
 func (*VKAccountCredsRequest) ProtoMessage() {}
 
 func (x *VKAccountCredsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[19]
+	mi := &file_proto_appcontrol_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1285,7 +1631,7 @@ func (x *VKAccountCredsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VKAccountCredsRequest.ProtoReflect.Descriptor instead.
 func (*VKAccountCredsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{19}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *VKAccountCredsRequest) GetLink() string {
@@ -1331,7 +1677,7 @@ type VKAccountCredsResponse struct {
 
 func (x *VKAccountCredsResponse) Reset() {
 	*x = VKAccountCredsResponse{}
-	mi := &file_proto_appcontrol_proto_msgTypes[20]
+	mi := &file_proto_appcontrol_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1343,7 +1689,7 @@ func (x *VKAccountCredsResponse) String() string {
 func (*VKAccountCredsResponse) ProtoMessage() {}
 
 func (x *VKAccountCredsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[20]
+	mi := &file_proto_appcontrol_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1356,7 +1702,7 @@ func (x *VKAccountCredsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VKAccountCredsResponse.ProtoReflect.Descriptor instead.
 func (*VKAccountCredsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{20}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{24}
 }
 
 type WireguardConfig struct {
@@ -1373,7 +1719,7 @@ type WireguardConfig struct {
 
 func (x *WireguardConfig) Reset() {
 	*x = WireguardConfig{}
-	mi := &file_proto_appcontrol_proto_msgTypes[21]
+	mi := &file_proto_appcontrol_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1385,7 +1731,7 @@ func (x *WireguardConfig) String() string {
 func (*WireguardConfig) ProtoMessage() {}
 
 func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_appcontrol_proto_msgTypes[21]
+	mi := &file_proto_appcontrol_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1398,7 +1744,7 @@ func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WireguardConfig.ProtoReflect.Descriptor instead.
 func (*WireguardConfig) Descriptor() ([]byte, []int) {
-	return file_proto_appcontrol_proto_rawDescGZIP(), []int{21}
+	return file_proto_appcontrol_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *WireguardConfig) GetPrivateKey() string {
@@ -1504,7 +1850,7 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x16StreamTelemetryRequest\"8\n" +
 	"\tTelemetry\x12+\n" +
 	"\x11connected_streams\x18\x01 \x01(\x03R\x10connectedStreams\"\x15\n" +
-	"\x13StreamEventsRequest\"\xbd\x03\n" +
+	"\x13StreamEventsRequest\"\x8a\x04\n" +
 	"\n" +
 	"ProxyEvent\x12;\n" +
 	"\x06status\x18\x01 \x01(\v2!.vkturn.appcontrol.v1.StatusEventH\x00R\x06status\x125\n" +
@@ -1512,8 +1858,15 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\acaptcha\x18\x03 \x01(\v2\".vkturn.appcontrol.v1.CaptchaEventH\x00R\acaptcha\x12>\n" +
 	"\alockout\x18\x04 \x01(\v2\".vkturn.appcontrol.v1.LockoutEventH\x00R\alockout\x12R\n" +
 	"\x0fvk_account_auth\x18\x05 \x01(\v2(.vkturn.appcontrol.v1.VKAccountAuthEventH\x00R\rvkAccountAuth\x12^\n" +
-	"\x13vk_cookies_required\x18\x06 \x01(\v2,.vkturn.appcontrol.v1.VKCookiesRequiredEventH\x00R\x11vkCookiesRequiredB\a\n" +
-	"\x05event\"m\n" +
+	"\x13vk_cookies_required\x18\x06 \x01(\v2,.vkturn.appcontrol.v1.VKCookiesRequiredEventH\x00R\x11vkCookiesRequired\x12K\n" +
+	"\fpatch_status\x18\a \x01(\v2&.vkturn.appcontrol.v1.PatchStatusEventH\x00R\vpatchStatusB\a\n" +
+	"\x05event\"w\n" +
+	"\x10PatchStatusEvent\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
+	"\x05field\x18\x02 \x01(\tR\x05field\x12\x14\n" +
+	"\x05state\x18\x03 \x01(\tR\x05state\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"m\n" +
 	"\vStatusEvent\x12\x14\n" +
 	"\x05phase\x18\x01 \x01(\tR\x05phase\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\x05R\bstreamId\x12+\n" +
@@ -1533,7 +1886,49 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x05phase\x18\x01 \x01(\tR\x05phase\x12\x12\n" +
 	"\x04link\x18\x02 \x01(\tR\x04link\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"\x18\n" +
-	"\x16VKCookiesRequiredEvent\"\x9c\x01\n" +
+	"\x16VKCookiesRequiredEvent\"\xc0\x05\n" +
+	"\x12PatchConfigRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1e\n" +
+	"\bdns_mode\x18\x02 \x01(\tH\x00R\adnsMode\x88\x01\x01\x12\x1e\n" +
+	"\buser_dns\x18\x03 \x01(\tH\x01R\auserDns\x88\x01\x01\x12\x17\n" +
+	"\x04peer\x18\x04 \x01(\tH\x02R\x04peer\x88\x01\x01\x12\x1d\n" +
+	"\athreads\x18\x05 \x01(\x05H\x03R\athreads\x88\x01\x01\x12\x1c\n" +
+	"\avk_auth\x18\x06 \x01(\tH\x04R\x06vkAuth\x88\x01\x01\x12 \n" +
+	"\tturn_host\x18\a \x01(\tH\x05R\bturnHost\x88\x01\x01\x12 \n" +
+	"\tturn_port\x18\b \x01(\tH\x06R\bturnPort\x88\x01\x01\x12 \n" +
+	"\twrap_mode\x18\t \x01(\tH\aR\bwrapMode\x88\x01\x01\x12$\n" +
+	"\vwrap_cipher\x18\n" +
+	" \x01(\tH\bR\n" +
+	"wrapCipher\x88\x01\x01\x12%\n" +
+	"\fwrap_key_hex\x18\v \x01(\tH\tR\n" +
+	"wrapKeyHex\x88\x01\x01\x12'\n" +
+	"\rwrap_send_key\x18\f \x01(\bH\n" +
+	"R\vwrapSendKey\x88\x01\x01\x12=\n" +
+	"\bvk_links\x18\r \x01(\v2\".vkturn.appcontrol.v1.VKLinksPatchR\avkLinks\x12-\n" +
+	"\x10creds_group_size\x18\x0e \x01(\x05H\vR\x0ecredsGroupSize\x88\x01\x01B\v\n" +
+	"\t_dns_modeB\v\n" +
+	"\t_user_dnsB\a\n" +
+	"\x05_peerB\n" +
+	"\n" +
+	"\b_threadsB\n" +
+	"\n" +
+	"\b_vk_authB\f\n" +
+	"\n" +
+	"_turn_hostB\f\n" +
+	"\n" +
+	"_turn_portB\f\n" +
+	"\n" +
+	"_wrap_modeB\x0e\n" +
+	"\f_wrap_cipherB\x0f\n" +
+	"\r_wrap_key_hexB\x10\n" +
+	"\x0e_wrap_send_keyB\x13\n" +
+	"\x11_creds_group_size\"$\n" +
+	"\fVKLinksPatch\x12\x14\n" +
+	"\x05links\x18\x01 \x03(\tR\x05links\"G\n" +
+	"\x13PatchConfigResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\x9c\x01\n" +
 	"\x15VKAccountCredsRequest\x12\x12\n" +
 	"\x04link\x18\x01 \x01(\tR\x04link\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\x1e\n" +
@@ -1552,7 +1947,7 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x11server_public_key\x18\x04 \x01(\tR\x0fserverPublicKey\x12\x1f\n" +
 	"\vallowed_ips\x18\x05 \x01(\tR\n" +
 	"allowedIps\x12\x10\n" +
-	"\x03mtu\x18\x06 \x01(\rR\x03mtu2\xa8\x06\n" +
+	"\x03mtu\x18\x06 \x01(\rR\x03mtu2\x8c\a\n" +
 	"\n" +
 	"AppControl\x12e\n" +
 	"\fSetVKCookies\x12).vkturn.appcontrol.v1.SetVKCookiesRequest\x1a*.vkturn.appcontrol.v1.SetVKCookiesResponse\x12e\n" +
@@ -1562,7 +1957,8 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x0fStreamTelemetry\x12,.vkturn.appcontrol.v1.StreamTelemetryRequest\x1a\x1f.vkturn.appcontrol.v1.Telemetry0\x01\x12\\\n" +
 	"\tConfigure\x12&.vkturn.appcontrol.v1.ConfigureRequest\x1a'.vkturn.appcontrol.v1.ConfigureResponse\x12]\n" +
 	"\fStreamEvents\x12).vkturn.appcontrol.v1.StreamEventsRequest\x1a .vkturn.appcontrol.v1.ProxyEvent0\x01\x12q\n" +
-	"\x14SubmitVKAccountCreds\x12+.vkturn.appcontrol.v1.VKAccountCredsRequest\x1a,.vkturn.appcontrol.v1.VKAccountCredsResponseBj\n" +
+	"\x14SubmitVKAccountCreds\x12+.vkturn.appcontrol.v1.VKAccountCredsRequest\x1a,.vkturn.appcontrol.v1.VKAccountCredsResponse\x12b\n" +
+	"\vPatchConfig\x12(.vkturn.appcontrol.v1.PatchConfigRequest\x1a).vkturn.appcontrol.v1.PatchConfigResponseBj\n" +
 	"\x18wings.v.proto.appcontrolB\x0fAppControlProtoH\x03Z;github.com/cacggghp/vk-turn-proxy/appcontrolpb;appcontrolpbb\x06proto3"
 
 var (
@@ -1577,7 +1973,7 @@ func file_proto_appcontrol_proto_rawDescGZIP() []byte {
 	return file_proto_appcontrol_proto_rawDescData
 }
 
-var file_proto_appcontrol_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_proto_appcontrol_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_proto_appcontrol_proto_goTypes = []any{
 	(*ConfigureRequest)(nil),       // 0: vkturn.appcontrol.v1.ConfigureRequest
 	(*ConfigureResponse)(nil),      // 1: vkturn.appcontrol.v1.ConfigureResponse
@@ -1592,45 +1988,53 @@ var file_proto_appcontrol_proto_goTypes = []any{
 	(*Telemetry)(nil),              // 10: vkturn.appcontrol.v1.Telemetry
 	(*StreamEventsRequest)(nil),    // 11: vkturn.appcontrol.v1.StreamEventsRequest
 	(*ProxyEvent)(nil),             // 12: vkturn.appcontrol.v1.ProxyEvent
-	(*StatusEvent)(nil),            // 13: vkturn.appcontrol.v1.StatusEvent
-	(*CapsEvent)(nil),              // 14: vkturn.appcontrol.v1.CapsEvent
-	(*CaptchaEvent)(nil),           // 15: vkturn.appcontrol.v1.CaptchaEvent
-	(*LockoutEvent)(nil),           // 16: vkturn.appcontrol.v1.LockoutEvent
-	(*VKAccountAuthEvent)(nil),     // 17: vkturn.appcontrol.v1.VKAccountAuthEvent
-	(*VKCookiesRequiredEvent)(nil), // 18: vkturn.appcontrol.v1.VKCookiesRequiredEvent
-	(*VKAccountCredsRequest)(nil),  // 19: vkturn.appcontrol.v1.VKAccountCredsRequest
-	(*VKAccountCredsResponse)(nil), // 20: vkturn.appcontrol.v1.VKAccountCredsResponse
-	(*WireguardConfig)(nil),        // 21: vkturn.appcontrol.v1.WireguardConfig
+	(*PatchStatusEvent)(nil),       // 13: vkturn.appcontrol.v1.PatchStatusEvent
+	(*StatusEvent)(nil),            // 14: vkturn.appcontrol.v1.StatusEvent
+	(*CapsEvent)(nil),              // 15: vkturn.appcontrol.v1.CapsEvent
+	(*CaptchaEvent)(nil),           // 16: vkturn.appcontrol.v1.CaptchaEvent
+	(*LockoutEvent)(nil),           // 17: vkturn.appcontrol.v1.LockoutEvent
+	(*VKAccountAuthEvent)(nil),     // 18: vkturn.appcontrol.v1.VKAccountAuthEvent
+	(*VKCookiesRequiredEvent)(nil), // 19: vkturn.appcontrol.v1.VKCookiesRequiredEvent
+	(*PatchConfigRequest)(nil),     // 20: vkturn.appcontrol.v1.PatchConfigRequest
+	(*VKLinksPatch)(nil),           // 21: vkturn.appcontrol.v1.VKLinksPatch
+	(*PatchConfigResponse)(nil),    // 22: vkturn.appcontrol.v1.PatchConfigResponse
+	(*VKAccountCredsRequest)(nil),  // 23: vkturn.appcontrol.v1.VKAccountCredsRequest
+	(*VKAccountCredsResponse)(nil), // 24: vkturn.appcontrol.v1.VKAccountCredsResponse
+	(*WireguardConfig)(nil),        // 25: vkturn.appcontrol.v1.WireguardConfig
 }
 var file_proto_appcontrol_proto_depIdxs = []int32{
-	21, // 0: vkturn.appcontrol.v1.ProvisionResponse.wg:type_name -> vkturn.appcontrol.v1.WireguardConfig
-	13, // 1: vkturn.appcontrol.v1.ProxyEvent.status:type_name -> vkturn.appcontrol.v1.StatusEvent
-	14, // 2: vkturn.appcontrol.v1.ProxyEvent.caps:type_name -> vkturn.appcontrol.v1.CapsEvent
-	15, // 3: vkturn.appcontrol.v1.ProxyEvent.captcha:type_name -> vkturn.appcontrol.v1.CaptchaEvent
-	16, // 4: vkturn.appcontrol.v1.ProxyEvent.lockout:type_name -> vkturn.appcontrol.v1.LockoutEvent
-	17, // 5: vkturn.appcontrol.v1.ProxyEvent.vk_account_auth:type_name -> vkturn.appcontrol.v1.VKAccountAuthEvent
-	18, // 6: vkturn.appcontrol.v1.ProxyEvent.vk_cookies_required:type_name -> vkturn.appcontrol.v1.VKCookiesRequiredEvent
-	2,  // 7: vkturn.appcontrol.v1.AppControl.SetVKCookies:input_type -> vkturn.appcontrol.v1.SetVKCookiesRequest
-	4,  // 8: vkturn.appcontrol.v1.AppControl.GetVKCookies:input_type -> vkturn.appcontrol.v1.GetVKCookiesRequest
-	6,  // 9: vkturn.appcontrol.v1.AppControl.Provision:input_type -> vkturn.appcontrol.v1.ProvisionRequest
-	8,  // 10: vkturn.appcontrol.v1.AppControl.GetTelemetry:input_type -> vkturn.appcontrol.v1.GetTelemetryRequest
-	9,  // 11: vkturn.appcontrol.v1.AppControl.StreamTelemetry:input_type -> vkturn.appcontrol.v1.StreamTelemetryRequest
-	0,  // 12: vkturn.appcontrol.v1.AppControl.Configure:input_type -> vkturn.appcontrol.v1.ConfigureRequest
-	11, // 13: vkturn.appcontrol.v1.AppControl.StreamEvents:input_type -> vkturn.appcontrol.v1.StreamEventsRequest
-	19, // 14: vkturn.appcontrol.v1.AppControl.SubmitVKAccountCreds:input_type -> vkturn.appcontrol.v1.VKAccountCredsRequest
-	3,  // 15: vkturn.appcontrol.v1.AppControl.SetVKCookies:output_type -> vkturn.appcontrol.v1.SetVKCookiesResponse
-	5,  // 16: vkturn.appcontrol.v1.AppControl.GetVKCookies:output_type -> vkturn.appcontrol.v1.GetVKCookiesResponse
-	7,  // 17: vkturn.appcontrol.v1.AppControl.Provision:output_type -> vkturn.appcontrol.v1.ProvisionResponse
-	10, // 18: vkturn.appcontrol.v1.AppControl.GetTelemetry:output_type -> vkturn.appcontrol.v1.Telemetry
-	10, // 19: vkturn.appcontrol.v1.AppControl.StreamTelemetry:output_type -> vkturn.appcontrol.v1.Telemetry
-	1,  // 20: vkturn.appcontrol.v1.AppControl.Configure:output_type -> vkturn.appcontrol.v1.ConfigureResponse
-	12, // 21: vkturn.appcontrol.v1.AppControl.StreamEvents:output_type -> vkturn.appcontrol.v1.ProxyEvent
-	20, // 22: vkturn.appcontrol.v1.AppControl.SubmitVKAccountCreds:output_type -> vkturn.appcontrol.v1.VKAccountCredsResponse
-	15, // [15:23] is the sub-list for method output_type
-	7,  // [7:15] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	25, // 0: vkturn.appcontrol.v1.ProvisionResponse.wg:type_name -> vkturn.appcontrol.v1.WireguardConfig
+	14, // 1: vkturn.appcontrol.v1.ProxyEvent.status:type_name -> vkturn.appcontrol.v1.StatusEvent
+	15, // 2: vkturn.appcontrol.v1.ProxyEvent.caps:type_name -> vkturn.appcontrol.v1.CapsEvent
+	16, // 3: vkturn.appcontrol.v1.ProxyEvent.captcha:type_name -> vkturn.appcontrol.v1.CaptchaEvent
+	17, // 4: vkturn.appcontrol.v1.ProxyEvent.lockout:type_name -> vkturn.appcontrol.v1.LockoutEvent
+	18, // 5: vkturn.appcontrol.v1.ProxyEvent.vk_account_auth:type_name -> vkturn.appcontrol.v1.VKAccountAuthEvent
+	19, // 6: vkturn.appcontrol.v1.ProxyEvent.vk_cookies_required:type_name -> vkturn.appcontrol.v1.VKCookiesRequiredEvent
+	13, // 7: vkturn.appcontrol.v1.ProxyEvent.patch_status:type_name -> vkturn.appcontrol.v1.PatchStatusEvent
+	21, // 8: vkturn.appcontrol.v1.PatchConfigRequest.vk_links:type_name -> vkturn.appcontrol.v1.VKLinksPatch
+	2,  // 9: vkturn.appcontrol.v1.AppControl.SetVKCookies:input_type -> vkturn.appcontrol.v1.SetVKCookiesRequest
+	4,  // 10: vkturn.appcontrol.v1.AppControl.GetVKCookies:input_type -> vkturn.appcontrol.v1.GetVKCookiesRequest
+	6,  // 11: vkturn.appcontrol.v1.AppControl.Provision:input_type -> vkturn.appcontrol.v1.ProvisionRequest
+	8,  // 12: vkturn.appcontrol.v1.AppControl.GetTelemetry:input_type -> vkturn.appcontrol.v1.GetTelemetryRequest
+	9,  // 13: vkturn.appcontrol.v1.AppControl.StreamTelemetry:input_type -> vkturn.appcontrol.v1.StreamTelemetryRequest
+	0,  // 14: vkturn.appcontrol.v1.AppControl.Configure:input_type -> vkturn.appcontrol.v1.ConfigureRequest
+	11, // 15: vkturn.appcontrol.v1.AppControl.StreamEvents:input_type -> vkturn.appcontrol.v1.StreamEventsRequest
+	23, // 16: vkturn.appcontrol.v1.AppControl.SubmitVKAccountCreds:input_type -> vkturn.appcontrol.v1.VKAccountCredsRequest
+	20, // 17: vkturn.appcontrol.v1.AppControl.PatchConfig:input_type -> vkturn.appcontrol.v1.PatchConfigRequest
+	3,  // 18: vkturn.appcontrol.v1.AppControl.SetVKCookies:output_type -> vkturn.appcontrol.v1.SetVKCookiesResponse
+	5,  // 19: vkturn.appcontrol.v1.AppControl.GetVKCookies:output_type -> vkturn.appcontrol.v1.GetVKCookiesResponse
+	7,  // 20: vkturn.appcontrol.v1.AppControl.Provision:output_type -> vkturn.appcontrol.v1.ProvisionResponse
+	10, // 21: vkturn.appcontrol.v1.AppControl.GetTelemetry:output_type -> vkturn.appcontrol.v1.Telemetry
+	10, // 22: vkturn.appcontrol.v1.AppControl.StreamTelemetry:output_type -> vkturn.appcontrol.v1.Telemetry
+	1,  // 23: vkturn.appcontrol.v1.AppControl.Configure:output_type -> vkturn.appcontrol.v1.ConfigureResponse
+	12, // 24: vkturn.appcontrol.v1.AppControl.StreamEvents:output_type -> vkturn.appcontrol.v1.ProxyEvent
+	24, // 25: vkturn.appcontrol.v1.AppControl.SubmitVKAccountCreds:output_type -> vkturn.appcontrol.v1.VKAccountCredsResponse
+	22, // 26: vkturn.appcontrol.v1.AppControl.PatchConfig:output_type -> vkturn.appcontrol.v1.PatchConfigResponse
+	18, // [18:27] is the sub-list for method output_type
+	9,  // [9:18] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_proto_appcontrol_proto_init() }
@@ -1645,14 +2049,16 @@ func file_proto_appcontrol_proto_init() {
 		(*ProxyEvent_Lockout)(nil),
 		(*ProxyEvent_VkAccountAuth)(nil),
 		(*ProxyEvent_VkCookiesRequired)(nil),
+		(*ProxyEvent_PatchStatus)(nil),
 	}
+	file_proto_appcontrol_proto_msgTypes[20].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_appcontrol_proto_rawDesc), len(file_proto_appcontrol_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
