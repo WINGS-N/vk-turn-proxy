@@ -15,12 +15,9 @@ import (
 // Set once at engine build from the same resolver the boot peer used.
 var patchResolver *protectedResolver
 
-// patchLinkTracker / patchCredsManager back a live VK-links patch: swap the link
-// pool and invalidate the group cache so streams re-fetch on their next recycle.
-var (
-	patchLinkTracker  *linkHealthTracker
-	patchCredsManager *groupedCredsManager
-)
+// patchLinkTracker backs a live VK-links patch: swap the link pool in place. The
+// new pool is picked up on the next natural creds rotation, so no forced re-fetch.
+var patchLinkTracker *linkHealthTracker
 
 // wrapFailGen is the highest config generation on which a stream failed WRAP
 // negotiation. A WRAP live-patch watches it to decide whether to roll back.
@@ -231,17 +228,18 @@ func applyPatch(req *appcontrolpb.PatchConfigRequest) {
 		go workers.resize(reqID, int(req.GetThreads()))
 	}
 
-	// VK links: swap the pool and invalidate the group cache so each stream, when it
-	// recycles below, re-fetches creds from the new links. Non-aggressive: the fleet
-	// migrates one stream at a time, existing streams keep serving until they roll.
-	linksChanged := false
+	// VK links: swap the pool only. A TURN credential, once fetched, works
+	// independently of the join link it came from (the link just mints the
+	// allocation), so existing streams keep serving on their current creds and the
+	// new pool is picked up on the next natural creds rotation (TTL) or by newly
+	// spawned workers. No forced re-fetch or recycle - traffic is never interrupted.
 	if links := req.GetVkLinks(); links != nil {
-		if patchLinkTracker == nil || patchCredsManager == nil {
+		if patchLinkTracker == nil {
 			publishPatchStatus(reqID, "vk_links", "failed", "VK links are not patchable in this mode")
 		} else {
+			publishPatchStatus(reqID, "vk_links", "applying", "")
 			patchLinkTracker.setPrimaryLinks(links.GetLinks())
-			patchCredsManager.invalidateAllGroups()
-			linksChanged = true
+			publishPatchStatus(reqID, "vk_links", "applied", "")
 		}
 	}
 
@@ -265,14 +263,11 @@ func applyPatch(req *appcontrolpb.PatchConfigRequest) {
 		publishPatchStatus(reqID, f, "reverted_needs_restart", "not live-patchable yet")
 	}
 
-	if len(migrateFields) == 0 && !authChanged && !wrapMigrated && !linksChanged {
+	if len(migrateFields) == 0 && !authChanged && !wrapMigrated {
 		return
 	}
 	if authChanged {
 		migrateFields = append(migrateFields, "vk_auth")
-	}
-	if linksChanged {
-		migrateFields = append(migrateFields, "vk_links")
 	}
 	for _, f := range migrateFields {
 		publishPatchStatus(reqID, f, "applying", "")

@@ -177,18 +177,6 @@ func (m *groupedCredsManager) ReportWorkerError(workerID int, err error) {
 	}
 }
 
-// invalidateAllGroups marks every group's cached creds stale so the next acquire
-// re-fetches from the current VK link pool. Used by a live VK-links patch so groups
-// migrate onto the new links (each stream re-fetches when it recycles).
-func (m *groupedCredsManager) invalidateAllGroups() {
-	for _, g := range m.groups {
-		g.mu.Lock()
-		g.valid = false
-		g.cond.Broadcast()
-		g.mu.Unlock()
-	}
-}
-
 func (m *groupedCredsManager) invalidateGroupsBoundTo(h *linkHealth) {
 	for _, g := range m.groups {
 		g.mu.Lock()

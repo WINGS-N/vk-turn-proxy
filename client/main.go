@@ -2419,9 +2419,8 @@ func main() { //nolint:cyclop
 			return turnCred{user: user, pass: pass, addrs: addrs, lifetime: lifetime}, nil
 		}
 		vkLinkManager = newGroupedCredsManager(ctx, numGroups, credsGroupSize, tracker, vkFetch)
-		// Expose the tracker + manager for live VK-links patching.
+		// Expose the tracker for live VK-links patching.
 		patchLinkTracker = tracker
-		patchCredsManager = vkLinkManager
 		log.Printf(
 			"VK creds: %d primary link(s), secondary=%t, %d groups × %d workers (n=%d)",
 			len(extracted),
