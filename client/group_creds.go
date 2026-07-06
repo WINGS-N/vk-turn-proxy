@@ -162,10 +162,10 @@ func (m *groupedCredsManager) ReportWorkerError(workerID int, err error) {
 	if !valid {
 		return
 	}
-	if idx < 0 || idx >= len(m.tracker.primary) {
+	link := m.tracker.primaryAt(idx)
+	if link == nil {
 		return
 	}
-	link := m.tracker.primary[idx]
 	if g.cred.isSecondaryLink {
 		if m.tracker.secondary != nil {
 			link = m.tracker.secondary
@@ -174,6 +174,18 @@ func (m *groupedCredsManager) ReportWorkerError(workerID int, err error) {
 	m.tracker.MarkWorkerError(link, kind)
 	if !link.isAlive(time.Now().UnixMilli()) {
 		m.invalidateGroupsBoundTo(link)
+	}
+}
+
+// invalidateAllGroups marks every group's cached creds stale so the next acquire
+// re-fetches from the current VK link pool. Used by a live VK-links patch so groups
+// migrate onto the new links (each stream re-fetches when it recycles).
+func (m *groupedCredsManager) invalidateAllGroups() {
+	for _, g := range m.groups {
+		g.mu.Lock()
+		g.valid = false
+		g.cond.Broadcast()
+		g.mu.Unlock()
 	}
 }
 
@@ -343,7 +355,7 @@ func (m *groupedCredsManager) fetchForGroup(g *credGroup, allowInteractive bool)
 	g.mu.Lock()
 	preferIdx := g.assignedIdx
 	g.mu.Unlock()
-	primaryCount := len(m.tracker.primary)
+	primaryCount := m.tracker.primaryLen()
 	if primaryCount > 0 {
 		if preferIdx < 0 {
 			preferIdx = 0

@@ -62,10 +62,62 @@ func (h *linkHealth) markDead(d time.Duration) {
 }
 
 type linkHealthTracker struct {
+	// mu guards primary, which PatchConfig can replace at runtime (live VK links).
+	// secondary is boot-only. Per-link health lives in the *linkHealth atomics, so
+	// only the slice itself needs the lock.
+	mu        sync.RWMutex
 	primary   []*linkHealth
 	secondary *linkHealth
 	stopCh    chan struct{}
 	stopOnce  sync.Once
+}
+
+// setPrimaryLinks replaces the primary VK link set, preserving the health/cooldown
+// state of any URL that survives the change. A patch to an empty set is ignored so
+// resolution never loses every link.
+func (t *linkHealthTracker) setPrimaryLinks(newLinks []string) {
+	cleaned := make([]*linkHealth, 0, len(newLinks))
+	seen := make(map[string]struct{}, len(newLinks))
+	t.mu.Lock()
+	existing := make(map[string]*linkHealth, len(t.primary))
+	for _, h := range t.primary {
+		existing[h.url] = h
+	}
+	for idx, raw := range newLinks {
+		normalized := strings.TrimSpace(raw)
+		if normalized == "" {
+			continue
+		}
+		if _, dup := seen[normalized]; dup {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		if h, ok := existing[normalized]; ok {
+			h.indexHint = idx
+			cleaned = append(cleaned, h)
+		} else {
+			cleaned = append(cleaned, &linkHealth{url: normalized, indexHint: idx})
+		}
+	}
+	if len(cleaned) > 0 {
+		t.primary = cleaned
+	}
+	t.mu.Unlock()
+}
+
+func (t *linkHealthTracker) primaryLen() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.primary)
+}
+
+func (t *linkHealthTracker) primaryAt(idx int) *linkHealth {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if idx < 0 || idx >= len(t.primary) {
+		return nil
+	}
+	return t.primary[idx]
 }
 
 func newLinkHealthTracker(primary []string, secondary string) (*linkHealthTracker, error) {
@@ -147,8 +199,10 @@ func halveCounter(c *atomic.Int32) {
 }
 
 func (t *linkHealthTracker) allLinks() []*linkHealth {
+	t.mu.RLock()
 	all := make([]*linkHealth, 0, len(t.primary)+1)
 	all = append(all, t.primary...)
+	t.mu.RUnlock()
 	if t.secondary != nil {
 		all = append(all, t.secondary)
 	}
@@ -157,6 +211,8 @@ func (t *linkHealthTracker) allLinks() []*linkHealth {
 
 func (t *linkHealthTracker) PickPrimary(preferIdx int) *linkHealth {
 	now := time.Now().UnixMilli()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	n := len(t.primary)
 	if n == 0 {
 		return nil
