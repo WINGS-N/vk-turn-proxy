@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +45,7 @@ type Store struct {
 // New creates a store for the given tunnel CIDR (for example 10.66.66.0/24) and
 // interface name, generating a fresh server keypair. applier programs peers onto
 // the live interface; pass nil (or wgapply.Noop{}) to keep peers in memory only.
-func New(cidr, iface string, applier wgapply.Applier) (*Store, error) {
+func New(cidr, iface, keyFile string, applier wgapply.Applier) (*Store, error) {
 	prefix, err := netip.ParsePrefix(cidr)
 	if err != nil {
 		return nil, fmt.Errorf("peerstore: parse cidr: %w", err)
@@ -51,7 +53,7 @@ func New(cidr, iface string, applier wgapply.Applier) (*Store, error) {
 	if !prefix.Addr().Is4() {
 		return nil, errors.New("peerstore: only IPv4 tunnel CIDRs are supported")
 	}
-	priv, pub, err := generateKeypair()
+	priv, pub, err := loadOrCreateKey(keyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +169,33 @@ func (s *Store) allocateLocked() (netip.Addr, error) {
 		}
 	}
 	return netip.Addr{}, errors.New("peerstore: address pool exhausted")
+}
+
+// loadOrCreateKey returns the node's WireGuard keypair. An empty path generates
+// an ephemeral key (regenerated each start). A non-empty path persists the private
+// key (0600) and reuses it, so the node's public key stays stable across restarts
+// and already-provisioned peers keep working. A corrupt file is regenerated.
+func loadOrCreateKey(path string) (privB64, pubB64 string, err error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return generateKeypair()
+	}
+	if data, rerr := os.ReadFile(path); rerr == nil {
+		stored := strings.TrimSpace(string(data))
+		if raw, derr := base64.StdEncoding.DecodeString(stored); derr == nil && len(raw) == 32 {
+			if key, kerr := ecdh.X25519().NewPrivateKey(raw); kerr == nil {
+				return stored, base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()), nil
+			}
+		}
+	}
+	privB64, pubB64, err = generateKeypair()
+	if err != nil {
+		return "", "", err
+	}
+	if werr := os.WriteFile(path, []byte(privB64+"\n"), 0o600); werr != nil {
+		return "", "", fmt.Errorf("peerstore: persist wg key: %w", werr)
+	}
+	return privB64, pubB64, nil
 }
 
 func generateKeypair() (privB64, pubB64 string, err error) {

@@ -1050,7 +1050,7 @@ func main() {
 			applier = wc
 			defer func() { _ = wc.Close() }()
 		}
-		peers, err := peerstore.New(opts.wgTunnelCIDR, opts.wgInterface, applier)
+		peers, err := peerstore.New(opts.wgTunnelCIDR, opts.wgInterface, opts.wgKeyFile, applier)
 		if err != nil {
 			log.Fatalf("relay peerstore: %v", err)
 		}

@@ -21,7 +21,7 @@ func (f *fakeApplier) Close() error { return nil }
 
 func TestPeerstoreProgramsInterface(t *testing.T) {
 	fa := &fakeApplier{}
-	s, err := New("10.66.66.0/24", "wg0", fa)
+	s, err := New("10.66.66.0/24", "wg0", "", fa)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestPeerstoreProgramsInterface(t *testing.T) {
 
 func TestPeerstoreIdempotentDoesNotReapply(t *testing.T) {
 	fa := &fakeApplier{}
-	s, _ := New("10.66.66.0/24", "wg0", fa)
+	s, _ := New("10.66.66.0/24", "wg0", "", fa)
 	c, _ := s.Create("pubkey", "")
 	if _, err := s.Create("pubkey", ""); err != nil {
 		t.Fatalf("Create again: %v", err)

@@ -36,6 +36,7 @@ type serverOptions struct {
 	wgApply      bool   // program peers onto a live kernel WireGuard interface (needs root)
 	wgListenPort int    // WireGuard interface listen port
 	wgAddress    string // WireGuard interface address (CIDR), e.g. 10.66.66.1/24
+	wgKeyFile    string // path to persist the WG server key (empty = ephemeral)
 
 	panelGRPC     string // panel Provisioning gRPC endpoint for DTLS PROVISION (empty = disabled)
 	panelToken    string // bearer token identifying this node to the panel
@@ -72,6 +73,7 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.BoolVar(&opts.wgApply, "wg-apply", false, "program peers onto a live kernel WireGuard interface (requires root)")
 	fs.IntVar(&opts.wgListenPort, "wg-listen-port", 51820, "WireGuard interface listen port")
 	fs.StringVar(&opts.wgAddress, "wg-address", "10.66.66.1/24", "WireGuard interface address (CIDR)")
+	fs.StringVar(&opts.wgKeyFile, "wg-key-file", "", "path to persist the WireGuard server key so its public key is stable across restarts (empty = regenerated each start)")
 	fs.StringVar(&opts.panelGRPC, "panel-grpc", "", "panel Provisioning gRPC endpoint enabling the DTLS PROVISION path")
 	fs.StringVar(&opts.panelToken, "panel-token", "", "bearer token identifying this node to the panel")
 	fs.StringVar(&opts.panelCAPin, "panel-ca-pin", "", "panel CA SPKI pin (sha256/<base64>) for a self-signed panel; empty verifies the panel via system trust")
