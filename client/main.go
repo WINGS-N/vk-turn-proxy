@@ -1210,6 +1210,10 @@ func oneDtlsConnection(
 	statusEnabled bool,
 ) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
+	// Adopt the current live snapshot for this DTLS connection: peer (endpoint) and
+	// WRAP negotiation both come from it, so a stream that migrated to a new
+	// endpoint negotiates that endpoint's WRAP in the same reconnect.
+	dtlsSnap := currentLive()
 	var err error
 	defer func() { c <- err }()
 	if runtime != nil {
@@ -1240,7 +1244,7 @@ func oneDtlsConnection(
 			}
 		}
 	}()
-	dtlsConn, err1 := dtlsFunc(dtlsctx, conn1, peer)
+	dtlsConn, err1 := dtlsFunc(dtlsctx, conn1, dtlsSnap.peer)
 	if err1 != nil {
 		err = fmt.Errorf("failed to connect DTLS: %s", err1)
 		return
@@ -1271,10 +1275,10 @@ func oneDtlsConnection(
 		// Propose our WRAP ciphers (in preference order) and optionally
 		// our key. The server picks one in ServerHello; we Enable wrap
 		// on this worker's per-conn StatefulConn afterwards.
-		supportedWrap := clientSupportedWrapCiphers(turnParams)
+		supportedWrap := clientSupportedWrapCiphers(dtlsSnap.wrapCipher)
 		var keyProposal []byte
-		if turnParams.wrapSendKey && len(turnParams.wrapKey) == wrap.KeyLen {
-			keyProposal = turnParams.wrapKey
+		if dtlsSnap.wrapSendKey && len(dtlsSnap.wrapKey) == wrap.KeyLen {
+			keyProposal = dtlsSnap.wrapKey
 		}
 		hello, err1 := buildSessionHelloForVersionWithWrap(
 			protocolVersion, sessionID, streamID, supportedWrap, keyProposal,
@@ -1297,7 +1301,7 @@ func oneDtlsConnection(
 			return
 		}
 		controlHeartbeatSupported = serverHello.GetControlHeartbeatSupported()
-		if enableErr := applyServerWrapChoice(turnParams, int(streamID), serverHello); enableErr != nil {
+		if enableErr := applyServerWrapChoice(turnParams, dtlsSnap, int(streamID), serverHello); enableErr != nil {
 			err = enableErr
 			return
 		}
@@ -1537,6 +1541,53 @@ type turnParams struct {
 	recycleGate chan struct{}
 }
 
+// liveSnapshot is the mutable, versioned view of the runtime-patchable config a
+// worker adopts at (re)allocation time. PatchConfig swaps in a new snapshot and
+// bumps configGeneration; the per-worker migration watcher then recycles each
+// stream one at a time so the fleet drains onto the new snapshot without dropping
+// traffic. A worker reads the snapshot once per allocation, so old-snapshot and
+// new-snapshot streams coexist during a migration - which is exactly why WRAP and
+// endpoint travel together per stream (a stream on the new endpoint also carries
+// the new WRAP, see the PatchConfig handler).
+type liveSnapshot struct {
+	host string
+	port string
+	// peer is the resolved VK TURN endpoint this stream dials. WRAP and peer live
+	// in the same snapshot on purpose: a stream that migrates to a new endpoint
+	// also adopts that endpoint's WRAP in one coherent step, so a new-endpoint WRAP
+	// is never applied to an old-endpoint stream.
+	peer        *net.UDPAddr
+	wrapCipher  sessionproto.WrapCipher
+	wrapKey     []byte
+	wrapMode    string
+	wrapSendKey bool
+	// gen is the config generation this snapshot represents (0 = boot). Set by
+	// swapLive; workers record it in the registry so a patch can tell when the whole
+	// fleet has migrated.
+	gen uint64
+}
+
+var (
+	liveCfg          atomic.Pointer[liveSnapshot]
+	configGeneration atomic.Uint64
+)
+
+func currentLive() *liveSnapshot {
+	if s := liveCfg.Load(); s != nil {
+		return s
+	}
+	return &liveSnapshot{}
+}
+
+// swapLive installs a new snapshot (stamped with the next generation) so running
+// workers migrate onto it via their migration watcher. Returns the new generation.
+func swapLive(s *liveSnapshot) uint64 {
+	g := configGeneration.Add(1)
+	s.gen = g
+	liveCfg.Store(s)
+	return g
+}
+
 const (
 	// credsRotationWatchInterval is how often a running TURN worker checks
 	// whether its credential group rotated (TTL refresh).
@@ -1573,6 +1624,12 @@ func oneTurnConnection(
 	statusEnabled bool,
 ) {
 	time.Sleep(time.Duration(rand.Intn(400)+100) * time.Millisecond)
+	// Adopt the current live config snapshot for this allocation. A PatchConfig
+	// swaps in a new snapshot and bumps configGeneration; the migration watcher
+	// below recycles the stream, and the reconnect re-enters here reading the fresh
+	// snapshot. So each stream carries one coherent snapshot for its lifetime.
+	snap := currentLive()
+	workers.set(streamID, snap.gen)
 	var err error
 	// recycling marks an intentional self-recycle (creds rotation / max age):
 	// turncancel() closes relayConn and the in-flight DTLS write trips a
@@ -1601,11 +1658,11 @@ func oneTurnConnection(
 		err = fmt.Errorf("failed to parse TURN server address: %s", err1)
 		return
 	}
-	if turnParams.host != "" {
-		urlhost = turnParams.host
+	if snap.host != "" {
+		urlhost = snap.host
 	}
-	if turnParams.port != "" {
-		urlport = turnParams.port
+	if snap.port != "" {
+		urlport = snap.port
 	}
 	var turnServerAddr string
 	turnServerAddr = net.JoinHostPort(urlhost, urlport)
@@ -1741,9 +1798,43 @@ func oneTurnConnection(
 		turnParams.wrapStates.Store(streamID, statefulRelay)
 		defer turnParams.wrapStates.Delete(streamID)
 	}
-	if turnParams.wrapMode != "" && turnParams.wrapMode != "off" {
-		log.Printf("[STREAM %d] WRAP mode=%s; waiting for mu/v1 SessionHello to install cipher", streamID, turnParams.wrapMode)
+	if snap.wrapMode != "" && snap.wrapMode != "off" {
+		log.Printf("[STREAM %d] WRAP mode=%s; waiting for mu/v1 SessionHello to install cipher", streamID, snap.wrapMode)
 	}
+	// Migration watcher: when a PatchConfig bumps configGeneration, drain and
+	// recycle this stream so the reconnect adopts the new live snapshot. Runs in
+	// every mode (unlike the account recycler below), staggered through recycleGate
+	// so the fleet migrates one stream at a time and traffic is never dropped
+	// wholesale.
+	startConfigGen := snap.gen
+	go func() {
+		ticker := time.NewTicker(credsRotationWatchInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-turnctx.Done():
+				return
+			case <-ticker.C:
+				if configGeneration.Load() == startConfigGen {
+					continue
+				}
+				if turnParams.recycleGate != nil {
+					select {
+					case turnParams.recycleGate <- struct{}{}:
+					case <-turnctx.Done():
+						return
+					}
+					time.AfterFunc(recycleSettleWindow, func() {
+						<-turnParams.recycleGate
+					})
+				}
+				log.Printf("[STREAM %d] migrating TURN allocation to new config snapshot", streamID)
+				recycling.Store(true)
+				turncancel()
+				return
+			}
+		}
+	}()
 	// Recycle this allocation when the credential group rotates its TURN
 	// username/password - but only in VK ID (account) mode. There the privileged
 	// token rotates frequently and pion, still holding the old username/password,
@@ -1822,7 +1913,7 @@ func oneTurnConnection(
 
 			addr.Store(addr1) // store peer
 
-			_, err1 = statefulRelay.WriteTo(buf[:n], peer)
+			_, err1 = statefulRelay.WriteTo(buf[:n], snap.peer)
 			if err1 != nil {
 				if !shouldSuppressWorkerError(turnctx, err1) {
 					log.Printf("Failed: %s", err1)
@@ -1950,6 +2041,9 @@ func oneTurnConnectionLoop(
 	probeOnly bool,
 	statusEnabled bool,
 ) {
+	// Deregister from the migration registry when this worker ends for good (drain
+	// or shutdown), so a patch's applied-detection is not blocked by a dead stream.
+	defer workers.remove(streamID)
 	for {
 		select {
 		case <-ctx.Done():
@@ -2352,6 +2446,17 @@ func main() { //nolint:cyclop
 		wrapStates:   &sync.Map{},
 		recycleGate:  make(chan struct{}, recycleConcurrency),
 	}
+	// Seed the live snapshot from the boot config; PatchConfig swaps it later.
+	patchResolver = peerResolver
+	liveCfg.Store(&liveSnapshot{
+		host:        opts.host,
+		port:        opts.port,
+		peer:        peer,
+		wrapCipher:  wrapCipherSel,
+		wrapKey:     wrapKey,
+		wrapMode:    wrapMode,
+		wrapSendKey: opts.wrapSendKey,
+	})
 	sessionID := []byte(nil)
 
 	if requestedTransport == sessionproto.TransportMode_TRANSPORT_MODE_TCP {

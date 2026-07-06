@@ -122,6 +122,19 @@ func (h *proxyEventBroadcaster) publish(ev *appcontrolpb.ProxyEvent) {
 	}
 }
 
+// publishPatchStatus reports the progress of one PatchConfig field over the same
+// StreamEvents channel the app already listens on.
+func publishPatchStatus(requestID, field, state, message string) {
+	eventHub.publish(&appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_PatchStatus{
+		PatchStatus: &appcontrolpb.PatchStatusEvent{
+			RequestId: requestID,
+			Field:     field,
+			State:     state,
+			Message:   message,
+		},
+	}})
+}
+
 func (h *proxyEventBroadcaster) subscribe() chan *appcontrolpb.ProxyEvent {
 	ch := make(chan *appcontrolpb.ProxyEvent, 64)
 	h.mu.Lock()

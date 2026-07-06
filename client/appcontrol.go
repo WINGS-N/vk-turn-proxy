@@ -136,6 +136,14 @@ func (s *appControlServer) StreamEvents(_ *appcontrolpb.StreamEventsRequest, str
 	}
 }
 
+func (s *appControlServer) PatchConfig(_ context.Context, req *appcontrolpb.PatchConfigRequest) (*appcontrolpb.PatchConfigResponse, error) {
+	log.Printf("app-control: PatchConfig request_id=%q", req.GetRequestId())
+	// Apply asynchronously: migration drains and recycles streams over several
+	// seconds; the app tracks progress via PatchStatusEvent, not this response.
+	go applyPatch(req)
+	return &appcontrolpb.PatchConfigResponse{Accepted: true}, nil
+}
+
 func (s *appControlServer) SubmitVKAccountCreds(_ context.Context, req *appcontrolpb.VKAccountCredsRequest) (*appcontrolpb.VKAccountCredsResponse, error) {
 	log.Printf("app-control: SubmitVKAccountCreds link=%q urls=%d cancel=%t", req.GetLink(), len(req.GetTurnUrls()), req.GetCancel())
 	dispatchVKAccountCreds(req.GetLink(), req.GetUsername(), req.GetCredential(), req.GetTurnUrls(), req.GetCancel())

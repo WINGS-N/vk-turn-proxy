@@ -16,11 +16,8 @@ import (
 //
 // Returns nil when WRAP is fully disabled (wrapCipher == NONE /
 // UNSPECIFIED) so the SessionHello carries no negotiation fields.
-func clientSupportedWrapCiphers(p *turnParams) []sessionproto.WrapCipher {
-	if p == nil {
-		return nil
-	}
-	switch p.wrapCipher {
+func clientSupportedWrapCiphers(cipher sessionproto.WrapCipher) []sessionproto.WrapCipher {
+	switch cipher {
 	case sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM:
 		return []sessionproto.WrapCipher{
 			sessionproto.WrapCipher_WRAP_CIPHER_SRTP_AES_256_GCM,
@@ -48,12 +45,12 @@ func clientSupportedWrapCiphers(p *turnParams) []sessionproto.WrapCipher {
 // When a non-NONE cipher arrives, we Enable wrap on this worker's
 // per-conn StatefulConn so subsequent DTLS ApplicationData records go
 // SRTP-shaped from the next outbound write.
-func applyServerWrapChoice(p *turnParams, streamID int, hello *sessionproto.ServerHello) error {
-	if p == nil {
+func applyServerWrapChoice(p *turnParams, snap *liveSnapshot, streamID int, hello *sessionproto.ServerHello) error {
+	if p == nil || snap == nil {
 		return nil
 	}
 	selected := hello.GetSelectedWrapCipher()
-	if p.wrapMode == "" || p.wrapMode == "off" {
+	if snap.wrapMode == "" || snap.wrapMode == "off" {
 		if selected != sessionproto.WrapCipher_WRAP_CIPHER_UNSPECIFIED &&
 			selected != sessionproto.WrapCipher_WRAP_CIPHER_NONE {
 			log.Printf("[STREAM %d] server selected WRAP cipher=%s but local mode is off; ignoring", streamID, selected)
@@ -63,14 +60,14 @@ func applyServerWrapChoice(p *turnParams, streamID int, hello *sessionproto.Serv
 
 	if selected == sessionproto.WrapCipher_WRAP_CIPHER_UNSPECIFIED ||
 		selected == sessionproto.WrapCipher_WRAP_CIPHER_NONE {
-		if p.wrapMode == "required" {
+		if snap.wrapMode == "required" {
 			return fmt.Errorf("server declined WRAP (selected=%s) but local mode is required", selected)
 		}
 		log.Printf("[STREAM %d] server declined WRAP (selected=%s); staying raw", streamID, selected)
 		return nil
 	}
 
-	cipher, err := wrap.New(selected, p.wrapKey, false)
+	cipher, err := wrap.New(selected, snap.wrapKey, false)
 	if err != nil {
 		return fmt.Errorf("WRAP cipher init for selected=%s: %w", selected, err)
 	}
