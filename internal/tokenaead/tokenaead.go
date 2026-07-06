@@ -28,9 +28,9 @@ import (
 )
 
 const (
-	keyLen        = 32          // AES-256
-	nonceLen      = 12          // GCM standard nonce
-	maxPlainChunk = 16 * 1024   // per-record plaintext cap
+	keyLen        = 32        // AES-256
+	nonceLen      = 12        // GCM standard nonce
+	maxPlainChunk = 16 * 1024 // per-record plaintext cap
 	protocolName  = "wingsv-token-aes256gcm"
 	hkdfSalt      = "wingsv-mgmt-grpc-v1"
 )

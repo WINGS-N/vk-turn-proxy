@@ -127,15 +127,6 @@ func serverOptionsToConfigLines(o serverOptions) []string {
 	}
 }
 
-// configLine formats a single KEY = "value" line, or "" to skip an empty value.
-func configLine(key, value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s = %q", key, value)
-}
-
 func loadConfigFile() map[string]string {
 	path := strings.TrimSpace(os.Getenv("WINGS_VKTP_CONFIG"))
 	if path == "" {
