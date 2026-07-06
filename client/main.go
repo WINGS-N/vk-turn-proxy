@@ -1087,6 +1087,33 @@ func startDtlsTurnWorkers(
 		)
 	}
 
+	// Stash a single-worker spawner for the active (non-probe) session so a
+	// thread-count PatchConfig can ramp the fleet up at runtime. A worker spawned
+	// this way reads the current live snapshot on connect (endpoint/WRAP/etc.).
+	if !probeOnly && statusEnabled {
+		workers.setSpawn(func(streamID byte) {
+			startDtlsTurnWorker(
+				wg,
+				ctx,
+				peer,
+				listenConn,
+				inboundChan,
+				params,
+				t,
+				sessionMode,
+				sessionID,
+				protocolVersion,
+				streamID,
+				nil,
+				nil,
+				nil,
+				runtime,
+				probeOnly,
+				statusEnabled,
+			)
+		})
+	}
+
 	if !delayAdditionalWorkers {
 		spawnAdditionalWorkers()
 		return wg
@@ -1165,9 +1192,18 @@ func startDtlsTurnWorker(
 	statusEnabled bool,
 ) {
 	connchan := make(chan net.PacketConn)
+	// Real (non-probe) workers get their own cancelable context registered with the
+	// supervisor, so a thread-count patch can drain individual streams. Probe workers
+	// are transient and stay on the parent context.
+	workerCtx := ctx
+	if !probeOnly {
+		var workerCancel context.CancelFunc
+		workerCtx, workerCancel = context.WithCancel(ctx)
+		workers.register(int(streamID), workerCancel)
+	}
 	wg.Go(func() {
 		oneDtlsConnectionLoop(
-			ctx,
+			workerCtx,
 			params,
 			peer,
 			listenConn,
@@ -1186,7 +1222,7 @@ func startDtlsTurnWorker(
 		)
 	})
 	wg.Go(func() {
-		oneTurnConnectionLoop(ctx, params, peer, connchan, t, int(streamID), runtime, probeOnly, statusEnabled)
+		oneTurnConnectionLoop(workerCtx, params, peer, connchan, t, int(streamID), runtime, probeOnly, statusEnabled)
 	})
 }
 
@@ -1633,7 +1669,9 @@ func oneTurnConnection(
 	// below recycles the stream, and the reconnect re-enters here reading the fresh
 	// snapshot. So each stream carries one coherent snapshot for its lifetime.
 	snap := currentLive()
-	workers.set(streamID, snap.gen)
+	if !probeOnly {
+		workers.set(streamID, snap.gen)
+	}
 	var err error
 	// recycling marks an intentional self-recycle (creds rotation / max age):
 	// turncancel() closes relayConn and the in-flight DTLS write trips a
@@ -1810,35 +1848,37 @@ func oneTurnConnection(
 	// every mode (unlike the account recycler below), staggered through recycleGate
 	// so the fleet migrates one stream at a time and traffic is never dropped
 	// wholesale.
-	startConfigGen := snap.gen
-	go func() {
-		ticker := time.NewTicker(credsRotationWatchInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-turnctx.Done():
-				return
-			case <-ticker.C:
-				if configGeneration.Load() == startConfigGen {
-					continue
-				}
-				if turnParams.recycleGate != nil {
-					select {
-					case turnParams.recycleGate <- struct{}{}:
-					case <-turnctx.Done():
-						return
+	if !probeOnly {
+		startConfigGen := snap.gen
+		go func() {
+			ticker := time.NewTicker(credsRotationWatchInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-turnctx.Done():
+					return
+				case <-ticker.C:
+					if configGeneration.Load() == startConfigGen {
+						continue
 					}
-					time.AfterFunc(recycleSettleWindow, func() {
-						<-turnParams.recycleGate
-					})
+					if turnParams.recycleGate != nil {
+						select {
+						case turnParams.recycleGate <- struct{}{}:
+						case <-turnctx.Done():
+							return
+						}
+						time.AfterFunc(recycleSettleWindow, func() {
+							<-turnParams.recycleGate
+						})
+					}
+					log.Printf("[STREAM %d] migrating TURN allocation to new config snapshot", streamID)
+					recycling.Store(true)
+					turncancel()
+					return
 				}
-				log.Printf("[STREAM %d] migrating TURN allocation to new config snapshot", streamID)
-				recycling.Store(true)
-				turncancel()
-				return
 			}
-		}
-	}()
+		}()
+	}
 	// Recycle this allocation when the credential group rotates its TURN
 	// username/password - but only in VK ID (account) mode. There the privileged
 	// token rotates frequently and pion, still holding the old username/password,

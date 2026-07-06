@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,16 +34,21 @@ func recordWrapFailure(gen uint64) {
 	}
 }
 
-// workerRegistry tracks the config generation each active TURN stream has adopted,
-// so a patch can tell when the whole fleet has migrated onto the new snapshot and
-// report the field as applied. It is also the seam the thread ramp/drain supervisor
-// builds on (a later step).
+// workerRegistry tracks the active TURN streams: the config generation each has
+// adopted (so a patch can tell when the fleet has migrated) and each one's cancel
+// func (so a thread-count patch can drain individual streams). spawn creates one
+// more worker for the active session and is stashed by startDtlsTurnWorkers.
 type workerRegistry struct {
-	mu  sync.Mutex
-	gen map[int]uint64
+	mu      sync.Mutex
+	gen     map[int]uint64
+	cancels map[int]context.CancelFunc
+	spawn   func(streamID byte)
 }
 
-var workers = &workerRegistry{gen: make(map[int]uint64)}
+var workers = &workerRegistry{
+	gen:     make(map[int]uint64),
+	cancels: make(map[int]context.CancelFunc),
+}
 
 func (r *workerRegistry) set(id int, g uint64) {
 	r.mu.Lock()
@@ -50,9 +56,22 @@ func (r *workerRegistry) set(id int, g uint64) {
 	r.mu.Unlock()
 }
 
+func (r *workerRegistry) register(id int, cancel context.CancelFunc) {
+	r.mu.Lock()
+	r.cancels[id] = cancel
+	r.mu.Unlock()
+}
+
 func (r *workerRegistry) remove(id int) {
 	r.mu.Lock()
 	delete(r.gen, id)
+	delete(r.cancels, id)
+	r.mu.Unlock()
+}
+
+func (r *workerRegistry) setSpawn(fn func(streamID byte)) {
+	r.mu.Lock()
+	r.spawn = fn
 	r.mu.Unlock()
 }
 
@@ -67,6 +86,69 @@ func (r *workerRegistry) allAtLeast(g uint64) bool {
 		}
 	}
 	return true
+}
+
+// resize ramps the worker fleet up or down to target, one stream at a time so
+// neither a spawn wave nor a drain wave hits at once. Ramp-up spawns fresh workers
+// on the lowest free stream ids; ramp-down cancels the highest ids (their traffic
+// re-routes over the surviving WG streams). Reports threads applied when done.
+func (r *workerRegistry) resize(reqID string, target int) {
+	if target < 1 {
+		target = 1
+	}
+	if target > 250 {
+		// stream ids are a byte on the wire; leave headroom under 256.
+		target = 250
+	}
+	r.mu.Lock()
+	spawn := r.spawn
+	ids := make([]int, 0, len(r.cancels))
+	used := make(map[int]bool, len(r.cancels))
+	for id := range r.cancels {
+		ids = append(ids, id)
+		used[id] = true
+	}
+	r.mu.Unlock()
+	sort.Ints(ids)
+	cur := len(ids)
+	if target == cur || (target > cur && spawn == nil) {
+		publishPatchStatus(reqID, "threads", "applied", "")
+		return
+	}
+	publishPatchStatus(reqID, "threads", "applying", "")
+	if target > cur {
+		need := target - cur
+		go func() {
+			spawned := 0
+			for id := 0; id < 256 && spawned < need; id++ {
+				if used[id] {
+					continue
+				}
+				spawn(byte(id))
+				spawned++
+				time.Sleep(500 * time.Millisecond)
+			}
+			publishPatchStatus(reqID, "threads", "applied", "")
+		}()
+		return
+	}
+	drop := append([]int(nil), ids[target:]...) // highest (cur-target) ids
+	go func() {
+		for i := len(drop) - 1; i >= 0; i-- {
+			r.cancelWorker(drop[i])
+			time.Sleep(500 * time.Millisecond)
+		}
+		publishPatchStatus(reqID, "threads", "applied", "")
+	}()
+}
+
+func (r *workerRegistry) cancelWorker(id int) {
+	r.mu.Lock()
+	c := r.cancels[id]
+	r.mu.Unlock()
+	if c != nil {
+		c()
+	}
 }
 
 // applyPatch applies a PatchConfig delta live. DNS flips instantly; the snapshot
@@ -133,6 +215,13 @@ func applyPatch(req *appcontrolpb.PatchConfigRequest) {
 			}
 			wrapMigrated = true
 		}
+	}
+
+	// Thread count: spawn or drain workers to reach the target, one at a time.
+	// Independent of the snapshot migration (it changes the fleet size, not the
+	// per-stream config).
+	if req.Threads != nil {
+		go workers.resize(reqID, int(req.GetThreads()))
 	}
 
 	// VK auth mode: the global is read per credential fetch and per recycle, so a
@@ -234,9 +323,6 @@ func waitMigrated(reqID string, fields []string, g uint64) {
 //nolint:unused
 func needsRestartFields(req *appcontrolpb.PatchConfigRequest) []string {
 	var out []string
-	if req.Threads != nil {
-		out = append(out, "threads")
-	}
 	if req.GetVkLinks() != nil {
 		out = append(out, "vk_links")
 	}
