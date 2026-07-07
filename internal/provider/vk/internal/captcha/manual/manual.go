@@ -496,9 +496,7 @@ func solveViaProxy(ctx context.Context, redirectURI string, dialer net.Dialer, p
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			Log.Errorf("[Captcha Proxy] %s %s: %v", r.Method, r.URL.String(), err)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = fmt.Fprintf(w, "ошибка прокси капчи: %s %s: %v", r.Method, r.URL.String(), err)
+			http.Error(w, "ошибка прокси капчи, детали в консоли клиента", http.StatusBadGateway)
 		},
 		ModifyResponse: func(res *http.Response) error {
 			rewriteProxyCookies(res.Header)
