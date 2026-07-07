@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/samosvalishe/free-turn-proxy/compare/v1.7.0...v1.7.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **captcha:** устойчивый разбор debug_info и сигнал дрейфа версии скрипта ([3b33d33](https://github.com/samosvalishe/free-turn-proxy/commit/3b33d33b9e3c2d8d459b479e8d8a94fc562f18cb))
+
 ## [1.7.0](https://github.com/samosvalishe/free-turn-proxy/compare/v1.6.0...v1.7.0) (2026-07-02)
 
 
