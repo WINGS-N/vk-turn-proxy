@@ -77,6 +77,59 @@ func TestEncodeCaptchaPoW(t *testing.T) {
 	}
 }
 
+func TestExtractDebugInfo(t *testing.T) {
+	const hash = "59f60d917b13be6a22c076adb2c17df37302c5314d8353a27e72f9fbcc9b4838"
+	tests := []struct {
+		name         string
+		body         string
+		want         string
+		wantFallback bool
+		fail         bool
+	}{
+		{
+			name: "primary vk format",
+			body: `x,debug_info:(null===(r=window.vk)||void 0===r?void 0:r.brlefapmjnpg)||"` + hash + `"});var a`,
+			want: hash,
+		},
+		{
+			name:         "windowed fallback no or-wrapper",
+			body:         `debug_info: someRuntimeCall(),foo:"` + hash + `"`,
+			want:         hash,
+			wantFallback: true,
+		},
+		{
+			name: "no hash near marker",
+			body: `debug_info:window.vk.x||"tooshort"`,
+			fail: true,
+		},
+		{
+			name: "no marker",
+			body: `nothing here`,
+			fail: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, usedFallback, err := extractDebugInfo([]byte(tt.body))
+			if tt.fail {
+				if err == nil {
+					t.Fatalf("expected error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("extractDebugInfo = %q, want %q", got, tt.want)
+			}
+			if usedFallback != tt.wantFallback {
+				t.Fatalf("usedFallback = %v, want %v", usedFallback, tt.wantFallback)
+			}
+		})
+	}
+}
+
 func TestCaptchaDomainFromRedirectURI(t *testing.T) {
 	tests := []struct {
 		name        string

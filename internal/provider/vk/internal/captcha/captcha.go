@@ -36,7 +36,7 @@ func SetLogger(l logx.Logger) { Log = logx.OrNop(l) }
 
 const (
 	captchaAPIVersion        = "5.131"
-	captchaScriptVersion     = "1.1.1370"
+	captchaScriptVersion     = "1.1.1374"
 	captchaAPIOrigin         = "https://id.vk.ru"
 	captchaDomain            = "vk.ru"
 	captchaDeviceInfo        = `{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1032,"innerWidth":1147,"innerHeight":945,"devicePixelRatio":1,"language":"ru-RU","languages":["ru-RU"],"webdriver":false,"hardwareConcurrency":8,"deviceMemory":16,"connectionEffectiveType":"4g","notificationsPermission":"denied"}`
@@ -49,6 +49,7 @@ var (
 	reCaptchaWindowInit = regexp.MustCompile(`(?s)window\.init\s*=\s*(\{.*?})\s*;`)
 	reCaptchaScriptSrc  = regexp.MustCompile(`src="(https://[^"]+not_robot_captcha[^"]+)"`)
 	reCaptchaDebugInfo  = regexp.MustCompile(`debug_info:(?:[^"]*\|\|)?"([a-fA-F0-9]{64})"`)
+	reCaptchaHex64      = regexp.MustCompile(`"([a-fA-F0-9]{64})"`)
 	reCaptchaVersion    = regexp.MustCompile(`vkid/([0-9.]*)/not_robot_captcha\.js`)
 
 	errCaptchaRateLimit = errors.New("captcha session rate limit reached")
@@ -57,6 +58,7 @@ var (
 	captchaMaxAttempts = 2
 
 	captchaDebugCache  sync.Map // scriptURL -> string
+	captchaVersionSeen sync.Map // script version -> struct{} (drift warned once)
 	captchaHeaderOrder = []string{
 		"host",
 		"content-length",
@@ -224,11 +226,7 @@ func (s *captchaSession) solveOnce(captchaErr *Error) (string, error) {
 	}
 	s.logger().Debugf("[Captcha] browser_fp source=%s len=%d", browserFPSource, len(browserFP))
 
-	if m := reCaptchaVersion.FindStringSubmatch(page.ScriptURL); len(m) > 1 {
-		if m[1] != captchaScriptVersion {
-			s.logger().Debugf("[Captcha] script version drift: known=%s latest=%s", captchaScriptVersion, m[1])
-		}
-	}
+	s.warnVersionDrift(page.ScriptURL)
 
 	debugInfo, err := s.fetchDebugInfo(page.ScriptURL)
 	if err != nil {
@@ -331,14 +329,52 @@ func (s *captchaSession) fetchDebugInfo(scriptURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	m := reCaptchaDebugInfo.FindSubmatch(body)
-	if len(m) < 2 {
-		return "", errors.New("debug_info match not found")
+	v, usedFallback, err := extractDebugInfo(body)
+	if err != nil {
+		return "", err
 	}
-	v := string(m[1])
+	if usedFallback {
+		s.logger().Warnf("[Captcha] debug_info primary pattern missed; used windowed fallback (script format drift)")
+	}
 	captchaDebugCache.Store(scriptURL, v)
 	s.logger().Debugf("[Captcha] debug_info fetched url=%s", scriptURL)
 	return v, nil
+}
+
+// warnVersionDrift предупреждает один раз на версию, если VK отдал скрипт новее
+// оттестированного baseline: wire мог измениться, надо перепроверить против live.
+func (s *captchaSession) warnVersionDrift(scriptURL string) {
+	m := reCaptchaVersion.FindStringSubmatch(scriptURL)
+	if len(m) < 2 || m[1] == "" || m[1] == captchaScriptVersion {
+		return
+	}
+	if _, seen := captchaVersionSeen.LoadOrStore(m[1], struct{}{}); seen {
+		return
+	}
+	s.logger().Warnf("[Captcha] script version %s differs from tested %s; wire unverified - re-check if BOT-rejections rise", m[1], captchaScriptVersion)
+}
+
+// extractDebugInfo достаёт fallback-константу debug_info из тела скрипта.
+// VK-формат: `debug_info:(...window.vk.X)||"<64hex>"`; имя window.vk.X плавает
+// от билда к билду, поэтому основной паттерн ловит только hash-литерал.
+// usedFallback=true - основной паттерн промазал, взят первый 64-hex в окне после
+// `debug_info` (страховка смены обёртки). Иначе - ошибка со снапшотом окна.
+func extractDebugInfo(body []byte) (value string, usedFallback bool, err error) {
+	if m := reCaptchaDebugInfo.FindSubmatch(body); len(m) >= 2 {
+		return string(m[1]), false, nil
+	}
+	idx := bytes.Index(body, []byte("debug_info"))
+	if idx < 0 {
+		return "", false, errors.New("debug_info marker not found in script")
+	}
+	end := idx + 256
+	if end > len(body) {
+		end = len(body)
+	}
+	if m := reCaptchaHex64.FindSubmatch(body[idx:end]); len(m) >= 2 {
+		return string(m[1]), true, nil
+	}
+	return "", false, fmt.Errorf("debug_info match not found near: %q", body[idx:end])
 }
 
 func parseCaptchaPage(html string) (*captchaPage, error) {
