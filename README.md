@@ -17,7 +17,7 @@
 ### Зависимости
 
 - **Go** ≥ 1.26 - `https://go.dev/dl/`
-- **Task** (runner) — `go install github.com/go-task/task/v3/cmd/task@v3.40.0` или `winget install Task.Task` / `brew install go-task`
+- **Task** (runner) - `go install github.com/go-task/task/v3/cmd/task@v3.40.0` или `winget install Task.Task` / `brew install go-task`
 
 Остальные dev-инструменты (`golangci-lint`, `govulncheck`, `goimports`, `goreleaser`) ставит сам Task:
 
