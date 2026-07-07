@@ -34,7 +34,7 @@ task build:all      # кросс-сборка всех target через gorelea
 task build:ios      # сборка XCFramework для iOS в dist/Mobile.xcframework
 task build:android  # сборка AAR архива для Android в dist/mobile.aar
 task test           # go test -race
-task test:cover     # тесты + покрытие → cover.html
+task test:cover     # тесты + покрытие -> cover.html
 task lint           # golangci-lint
 task fmt            # gofmt + goimports (форматирование)
 task fmt:check      # проверить форматирование (используется в CI)
