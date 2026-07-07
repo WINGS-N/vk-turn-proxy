@@ -10,13 +10,13 @@
 
 ## О проекте
 
-**Free Turn Proxy** — универсальный прокси-туннель для инкапсуляции UDP/TCP трафика поверх протокола TURN. Клиент извлекает временные TURN-учётки из ссылок на WebRTC-звонки и прозрачно маршрутизирует ваш VPN-трафик (WireGuard, Xray/VLESS) до сервера на VPS, используя DTLS и мощные механизмы маскировки пакетов.
+**Free Turn Proxy** - универсальный прокси-туннель для инкапсуляции UDP/TCP трафика поверх протокола TURN. Клиент извлекает временные TURN-учётки из ссылок на WebRTC-звонки и прозрачно маршрутизирует ваш VPN-трафик (WireGuard, Xray/VLESS) до сервера на VPS, используя DTLS и мощные механизмы маскировки пакетов.
 
 ## Разработка
 
 ### Зависимости
 
-- **Go** ≥ 1.26 — `https://go.dev/dl/`
+- **Go** ≥ 1.26 - `https://go.dev/dl/`
 - **Task** (runner) — `go install github.com/go-task/task/v3/cmd/task@v3.40.0` или `winget install Task.Task` / `brew install go-task`
 
 Остальные dev-инструменты (`golangci-lint`, `govulncheck`, `goimports`, `goreleaser`) ставит сам Task:
