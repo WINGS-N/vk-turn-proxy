@@ -54,11 +54,9 @@ type AutoSolveFunc func(
 	profile browserprofile.Profile,
 ) (token string, err error)
 
-// ManualSolveFunc открывает локальный браузерный fallback. Возвращает либо
-// success_token (token != ""), либо captcha_key - в зависимости от пути
-// ошибки VK.
+// ManualSolveFunc открывает локальный браузерный fallback и возвращает success_token.
 type ManualSolveFunc func(
 	ctx context.Context,
 	captchaErr *captcha.Error,
 	dialer net.Dialer,
-) (token, key string, err error)
+) (token string, err error)

@@ -113,14 +113,9 @@ func (*Provider) Name() string { return "vk" }
 
 // DefaultManualSolver - стандартный manual-captcha solver, использует
 // internal/provider/vk/internal/captcha/manual (HTTP-сервер 127.0.0.1:8765 + браузер).
-func DefaultManualSolver(ctx context.Context, e *captcha.Error, d net.Dialer) (string, string, error) {
-	if e.RedirectURI != "" {
-		t, err := manualcaptcha.SolveViaProxy(ctx, e.RedirectURI, d)
-		return t, "", err
+func DefaultManualSolver(ctx context.Context, e *captcha.Error, d net.Dialer) (string, error) {
+	if e.RedirectURI == "" {
+		return "", fmt.Errorf("no redirect_uri")
 	}
-	if e.CaptchaImg != "" {
-		k, err := manualcaptcha.SolveViaHTTP(ctx, e.CaptchaImg)
-		return "", k, err
-	}
-	return "", "", fmt.Errorf("no redirect_uri or captcha_img")
+	return manualcaptcha.SolveViaProxy(ctx, e.RedirectURI, d)
 }

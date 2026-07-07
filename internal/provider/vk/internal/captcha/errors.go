@@ -11,7 +11,6 @@ type Error struct {
 	ErrorCode               int
 	ErrorMsg                string
 	CaptchaSid              string
-	CaptchaImg              string
 	RedirectURI             string
 	IsSoundCaptchaAvailable bool
 	SessionToken            string
@@ -41,8 +40,6 @@ func ParseError(errData map[string]any) *Error {
 			captchaSid = fmt.Sprintf("%.0f", sidNum)
 		}
 	}
-
-	captchaImg, _ := errData["captcha_img"].(string)
 
 	errorMsg, ok := errData["error_msg"].(string)
 	if !ok {
@@ -88,7 +85,6 @@ func ParseError(errData map[string]any) *Error {
 		ErrorCode:               code,
 		ErrorMsg:                errorMsg,
 		CaptchaSid:              captchaSid,
-		CaptchaImg:              captchaImg,
 		RedirectURI:             redirectURI,
 		IsSoundCaptchaAvailable: isSound,
 		SessionToken:            sessionToken,

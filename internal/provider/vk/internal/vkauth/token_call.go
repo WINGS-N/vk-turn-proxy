@@ -127,7 +127,6 @@ func (c *Client) solveCaptcha(
 	}
 
 	var successToken string
-	var captchaKey string
 	var solveErr error
 
 	switch solveMode {
@@ -158,21 +157,19 @@ func (c *Client) solveCaptcha(
 
 		type manualRes struct {
 			token string
-			key   string
 			err   error
 		}
 		resCh := make(chan manualRes, 1)
 		go func() {
-			t, k, e := c.manualSolve(manualCtx, captchaErr, c.dialer)
-			resCh <- manualRes{t, k, e}
+			t, e := c.manualSolve(manualCtx, captchaErr, c.dialer)
+			resCh <- manualRes{t, e}
 		}()
 
 		select {
 		case res := <-resCh:
 			successToken = res.token
-			captchaKey = res.key
 			solveErr = res.err
-			if successToken != "" || captchaKey != "" {
+			if successToken != "" {
 				if solveErr != nil {
 					c.log.Debugf("[STREAM %d] [Captcha] Token received (ignoring cleanup error: %v)", streamID, solveErr)
 					solveErr = nil
@@ -198,7 +195,7 @@ func (c *Client) solveCaptcha(
 		if hasNextSolveMode {
 			c.log.Infof("[STREAM %d] [Captcha] Falling back to %s",
 				streamID, CaptchaSolveModeLabel(nextSolveMode))
-			return buildCaptchaRetryData(link, escapedName, token1, captchaErr, "", captchaKey), nil
+			return buildCaptchaRetryData(link, escapedName, token1, captchaErr, ""), nil
 		}
 		c.engageLockout(60 * time.Second)
 		if c.streamsFn() == 0 {
@@ -211,21 +208,15 @@ func (c *Client) solveCaptcha(
 	if captchaErr.CaptchaAttempt == "0" || captchaErr.CaptchaAttempt == "" {
 		captchaErr.CaptchaAttempt = "1"
 	}
-	return buildCaptchaRetryData(link, escapedName, token1, captchaErr, successToken, captchaKey), nil
+	return buildCaptchaRetryData(link, escapedName, token1, captchaErr, successToken), nil
 }
 
 // buildCaptchaRetryData формирует тело POST для следующей попытки captcha.
-func buildCaptchaRetryData(link, escapedName, token1 string, captchaErr *captcha.Error, successToken, captchaKey string) string {
+func buildCaptchaRetryData(link, escapedName, token1 string, captchaErr *captcha.Error, successToken string) string {
 	if captchaErr.CaptchaSid == "" {
 		return fmt.Sprintf(
 			"vk_join_link=https://vk.ru/call/join/%s&name=%s&success_token=%s&access_token=%s",
 			link, escapedName, neturl.QueryEscape(successToken), token1,
-		)
-	}
-	if captchaKey != "" {
-		return fmt.Sprintf(
-			"vk_join_link=https://vk.ru/call/join/%s&name=%s&captcha_key=%s&captcha_sid=%s&access_token=%s",
-			link, escapedName, neturl.QueryEscape(captchaKey), captchaErr.CaptchaSid, token1,
 		)
 	}
 	return fmt.Sprintf(
