@@ -3,18 +3,14 @@
 package main
 
 import (
+	"log"
+	"net"
+	"net/netip"
+	"strings"
 	"sync"
 	"syscall"
 
 	"golang.org/x/sys/windows"
-)
-
-// Winsock options that force a socket's outgoing interface, regardless of the routing
-// table. Not always exported by x/sys/windows. IP_UNICAST_IF takes the interface index
-// in network byte order; IPV6_UNICAST_IF takes it in host byte order.
-const (
-	sockIPUnicastIF   = 31
-	sockIPv6UnicastIF = 31
 )
 
 var (
@@ -23,10 +19,21 @@ var (
 	physIf6  uint32
 )
 
+// initBypass resolves and caches the physical interface indices eagerly at process start,
+// before any tunnel exists. Doing it lazily on the first pinned socket is a race on a slow
+// host: if the WireGuard interface comes up before vkturn opens its first underlay socket,
+// GetBestInterfaceEx would pick the tunnel as the best route to 8.8.8.8 and cache THAT, so
+// the bypass would then pin every underlay socket back into the tunnel it is carrying - a
+// loop that makes the TURN workers drop right after connect. Calling this in main (well
+// ahead of Configure and the WireGuard interface) pins the cache to the real link.
+func initBypass() {
+	if4, if6 := physicalInterfaces()
+	log.Printf("[bypass] physical egress cached if4=%d if6=%d (pinning underlay sockets here)", if4, if6)
+}
+
 // physicalInterfaces returns the interface indices of the best route to the public
-// internet for IPv4/IPv6, cached. vkturn resolves these before the tunnel is up (its
-// underlay sockets are created at Configure, ahead of the WireGuard interface), so the
-// best route is the real physical link, not the tunnel.
+// internet for IPv4/IPv6, cached. Resolved eagerly via initBypass at startup so the best
+// route is the real physical link, not a tunnel that comes up later.
 func physicalInterfaces() (uint32, uint32) {
 	physOnce.Do(func() {
 		physIf4 = bestInterface(&windows.SockaddrInet4{Addr: [4]byte{8, 8, 8, 8}})
@@ -43,24 +50,34 @@ func bestInterface(sa windows.Sockaddr) uint32 {
 	return idx
 }
 
-func htonl(v uint32) uint32 {
-	return (v&0xff)<<24 | (v&0xff00)<<8 | (v&0xff0000)>>8 | (v>>24)&0xff
+// pinFDToPhysical is retained as the directNet Control hook but is now a no-op (see below).
+func pinFDToPhysical(fd uintptr) {
+	// Intentionally a no-op. IP_UNICAST_IF forces the egress interface but not the source
+	// address: the route lookup still finds the tunnel's full-tunnel route and stamps the
+	// tunnel's IP as the source, a martian the upstream router drops. The underlay bypass on
+	// Windows is done purely by /32 routes via the physical gateway (see reportUnderlayDest
+	// -> the host app's AddBypassRoute), which the WireGuard Windows client and the working
+	// wg-tun.exe reference also rely on. Pinning here on top of those routes only muddied the
+	// path and destabilized the TURN sockets, so it is disabled.
+	_ = fd
 }
 
-// pinFDToPhysical forces the socket's egress onto the physical interface so it bypasses
-// the full-tunnel default route. It is the Windows analogue of the Linux fwmark bypass
-// for vkturn's underlay: with 0.0.0.0/0 routed into the tunnel, vkturn's traffic to the
-// VK TURN relays would otherwise loop back into the tunnel it is itself carrying. The
-// wrong-family setsockopt fails harmlessly and is ignored.
-func pinFDToPhysical(fd uintptr) {
-	if4, if6 := physicalInterfaces()
-	h := windows.Handle(fd)
-	if if4 != 0 {
-		_ = windows.SetsockoptInt(h, windows.IPPROTO_IP, sockIPUnicastIF, int(htonl(if4)))
+// reportUnderlayDest announces a dialed underlay destination (host:port or bare IP) to the
+// host app over StreamUnderlayIPs, so it can install a /32 physical-gateway bypass route.
+// Only public IPv4 is reported; loopback/private/multicast are skipped.
+func reportUnderlayDest(hostport string) {
+	host := strings.TrimSpace(hostport)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
 	}
-	if if6 != 0 {
-		_ = windows.SetsockoptInt(h, windows.IPPROTO_IPV6, sockIPv6UnicastIF, int(if6))
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.Is4() {
+		return
 	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() {
+		return
+	}
+	underlayIPHub.publish(ip.String())
 }
 
 // pinConnToPhysical pins an already-created socket-backed conn to the physical interface.

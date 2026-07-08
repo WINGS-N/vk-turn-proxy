@@ -279,6 +279,8 @@ const captchaLockoutDuration = 60 * time.Second
 
 var (
 	activeLocalPeer        atomic.Value
+	localWriteOnce         sync.Once
+	outboundWriteOnce      sync.Once
 	manualCaptcha          bool
 	captchaSolverVersion   string
 	globalCaptchaLockout   atomic.Int64
@@ -1433,6 +1435,11 @@ func oneDtlsConnection(
 					dtlsWriteMu.Lock()
 					_, err1 := dtlsConn.Write(pkt.Data[:pkt.N])
 					dtlsWriteMu.Unlock()
+					if err1 == nil {
+						outboundWriteOnce.Do(func() {
+							log.Printf("[local] first WG write to DTLS stream %d (%d bytes)", streamID, pkt.N)
+						})
+					}
 					if err1 == nil && runtime != nil {
 						runtime.NoteOutbound(streamID, pkt.N)
 					}
@@ -1516,6 +1523,9 @@ func oneDtlsConnection(
 			if !ok {
 				continue
 			}
+			localWriteOnce.Do(func() {
+				log.Printf("[local] first server->WG write to %s (%d bytes)", addr1, n)
+			})
 
 			_, err1 = listenConn.WriteTo(buf[:n], addr1)
 			if err1 != nil {
@@ -1725,6 +1735,7 @@ func oneTurnConnection(
 		return
 	}
 	turnServerAddr = turnServerUdpAddr.String()
+	reportUnderlayDest(turnServerAddr) // Windows: install a /32 physical bypass route for it
 	// Dial TURN Server
 	var cfg *turn.ClientConfig
 	var turnConn net.PacketConn
@@ -2251,6 +2262,9 @@ func main() { //nolint:cyclop
 		os.Exit(0)
 	}
 	log.Printf("WINGS V VK TURN PROXY client %s starting", clientVersion)
+	// Cache the physical egress interface now, before any tunnel exists (Windows underlay
+	// bypass); off Windows this is a no-op.
+	initBypass()
 	applyUserDns(opts.userDns)
 	setDnsMode(opts.dnsMode)
 	log.Printf("[DNS] mode=%s", dnsMode())
@@ -2356,6 +2370,7 @@ func main() { //nolint:cyclop
 	if err != nil {
 		panic(err)
 	}
+	reportUnderlayDest(peer.String()) // Windows: physical bypass route for the peer server
 	requestedSessionMode, err := sessionproto.ParseMode(opts.sessionMode)
 	if err != nil {
 		log.Panicf("Invalid session mode: %v", err)
@@ -2579,6 +2594,7 @@ func main() { //nolint:cyclop
 				current := activeLocalPeer.Load()
 				if current == nil {
 					activeLocalPeer.Store(addr)
+					log.Printf("[local] first WG packet from %s (%d bytes) - forwarding into tunnel", addr, nRead)
 				} else if currentAddr, ok := current.(net.Addr); !ok || currentAddr.String() != addr.String() {
 					activeLocalPeer.Store(addr)
 				}

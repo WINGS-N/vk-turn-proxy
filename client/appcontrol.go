@@ -117,6 +117,81 @@ func (h *telemetryBroadcaster) unsubscribe(ch chan int32) {
 	close(ch)
 }
 
+func (s *appControlServer) StreamUnderlayIPs(_ *appcontrolpb.StreamUnderlayIPsRequest, stream grpc.ServerStreamingServer[appcontrolpb.UnderlayIP]) error {
+	ch, snapshot := underlayIPHub.subscribe()
+	defer underlayIPHub.unsubscribe(ch)
+	// Replay every IP pinned before this subscriber connected (the app subscribes after
+	// the tunnel is up, by which point the underlay is already dialed), then live ones.
+	for _, ip := range snapshot {
+		if err := stream.Send(&appcontrolpb.UnderlayIP{Ip: ip}); err != nil {
+			return err
+		}
+	}
+	ctx := stream.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case ip, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(&appcontrolpb.UnderlayIP{Ip: ip}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// underlayIPHub remembers every remote IP the relay pinned to the physical interface and
+// fans additions out to StreamUnderlayIPs subscribers, replaying the known set to each new
+// one. Only populated on Windows (see reportUnderlayDest); a no-op elsewhere.
+type underlayIPBroadcaster struct {
+	mu    sync.Mutex
+	known map[string]struct{}
+	subs  map[chan string]struct{}
+}
+
+var underlayIPHub = &underlayIPBroadcaster{known: map[string]struct{}{}, subs: map[chan string]struct{}{}}
+
+func (h *underlayIPBroadcaster) publish(ip string) {
+	if ip == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.known[ip]; ok {
+		return
+	}
+	h.known[ip] = struct{}{}
+	log.Printf("[bypass] underlay IP %s (announcing to host app)", ip)
+	for ch := range h.subs {
+		select {
+		case ch <- ip:
+		default:
+		}
+	}
+}
+
+func (h *underlayIPBroadcaster) subscribe() (chan string, []string) {
+	ch := make(chan string, 64)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.subs[ch] = struct{}{}
+	snapshot := make([]string, 0, len(h.known))
+	for ip := range h.known {
+		snapshot = append(snapshot, ip)
+	}
+	return ch, snapshot
+}
+
+func (h *underlayIPBroadcaster) unsubscribe(ch chan string) {
+	h.mu.Lock()
+	delete(h.subs, ch)
+	h.mu.Unlock()
+	close(ch)
+}
+
 func (s *appControlServer) StreamEvents(_ *appcontrolpb.StreamEventsRequest, stream grpc.ServerStreamingServer[appcontrolpb.ProxyEvent]) error {
 	ch := eventHub.subscribe()
 	defer eventHub.unsubscribe(ch)

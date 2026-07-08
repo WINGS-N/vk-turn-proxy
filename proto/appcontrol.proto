@@ -49,6 +49,13 @@ service AppControl {
   // one at a time, traffic is not interrupted) and reports per-field progress over
   // StreamEvents as PatchStatusEvent messages keyed by the request_id.
   rpc PatchConfig(PatchConfigRequest) returns (PatchConfigResponse);
+  // StreamUnderlayIPs pushes each remote IP the relay pins to the physical interface for
+  // its own underlay (the VK TURN and peer servers it dials). On Windows the host app
+  // installs a matching /32 bypass route via the physical gateway: per-socket interface
+  // pinning alone leaves the tunnel's source address on the packet, which the upstream
+  // router drops, so the underlay must be excluded from the full tunnel by route too. The
+  // relay also logs each IP.
+  rpc StreamUnderlayIPs(StreamUnderlayIPsRequest) returns (stream UnderlayIP);
 }
 
 // ConfigureRequest mirrors the former CLI flags (clientOptions). Empty/zero
@@ -121,6 +128,13 @@ message Telemetry {
 }
 
 message StreamEventsRequest {}
+
+message StreamUnderlayIPsRequest {}
+
+// UnderlayIP is one remote IP the relay pinned to the physical interface for its underlay.
+message UnderlayIP {
+  string ip = 1;
+}
 
 // ProxyEvent is one relay control event. It carries exactly one of the variants
 // below - the same information the relay prints as a PROXY_EVENT JSONL line.

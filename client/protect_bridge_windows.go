@@ -20,5 +20,8 @@ func (b *protectBridge) Control(network, address string, rawConn syscall.RawConn
 	if b == nil {
 		return nil
 	}
+	// The address is a resolved host:port here (DoH, VK API/auth, DTLS control), so announce
+	// it for a physical bypass route too, not just the per-socket interface pin.
+	reportUnderlayDest(address)
 	return rawConn.Control(pinFDToPhysical)
 }
