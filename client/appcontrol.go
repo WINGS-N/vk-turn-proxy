@@ -154,24 +154,9 @@ type underlayIPBroadcaster struct {
 
 var underlayIPHub = &underlayIPBroadcaster{known: map[string]struct{}{}, subs: map[chan string]struct{}{}}
 
-func (h *underlayIPBroadcaster) publish(ip string) {
-	if ip == "" {
-		return
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if _, ok := h.known[ip]; ok {
-		return
-	}
-	h.known[ip] = struct{}{}
-	log.Printf("[bypass] underlay IP %s (announcing to host app)", ip)
-	for ch := range h.subs {
-		select {
-		case ch <- ip:
-		default:
-		}
-	}
-}
+// publish lives in bypass_windows.go: the underlay hub is only populated on
+// Windows (reportUnderlayDest), so keeping the method there avoids an unused
+// warning on the platforms that never call it.
 
 func (h *underlayIPBroadcaster) subscribe() (chan string, []string) {
 	ch := make(chan string, 64)

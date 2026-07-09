@@ -80,6 +80,27 @@ func reportUnderlayDest(hostport string) {
 	underlayIPHub.publish(ip.String())
 }
 
+// publish records a newly pinned underlay IP and fans it out to StreamUnderlayIPs
+// subscribers. Defined here because only the Windows bypass path populates the hub.
+func (h *underlayIPBroadcaster) publish(ip string) {
+	if ip == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.known[ip]; ok {
+		return
+	}
+	h.known[ip] = struct{}{}
+	log.Printf("[bypass] underlay IP %s (announcing to host app)", ip)
+	for ch := range h.subs {
+		select {
+		case ch <- ip:
+		default:
+		}
+	}
+}
+
 // pinConnToPhysical pins an already-created socket-backed conn to the physical interface.
 func pinConnToPhysical(conn any) {
 	sc, ok := conn.(interface {
