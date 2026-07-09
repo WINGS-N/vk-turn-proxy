@@ -381,6 +381,17 @@ func getVkCredsWithFallback(link string, resolver *protectedResolver, allowInter
 		return "", "", nil, 0, fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active for %s", remaining.Round(time.Second))
 	}
 
+	// bypass mode: try the VK Calls captcha-free path (api.vk.me / VK Connect)
+	// first. On any failure fall through to the legacy captcha-solving flow, so
+	// the v2/v1 solvers still cover the case if VK gates the new path.
+	if strings.EqualFold(captchaSolverVersion, "bypass") {
+		user, pass, addresses, lifetime, err := getVkCredsViaVKCalls(link, resolver)
+		if err == nil {
+			return user, pass, addresses, lifetime, nil
+		}
+		log.Printf("VK Calls bypass path failed, falling back to legacy captcha flow: %v", err)
+	}
+
 	profile := getRandomProfile()
 	name := generateName()
 	escapedName := neturl.QueryEscape(name)

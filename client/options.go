@@ -80,7 +80,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.BoolVar(&opts.udp, "udp", false, "connect to TURN with UDP")
 	fs.BoolVar(&opts.direct, "no-dtls", false, "connect without obfuscation. DO NOT USE")
 	fs.BoolVar(&opts.manualCaptcha, "manual-captcha", false, "skip automatic captcha solving and use manual captcha flow immediately")
-	fs.StringVar(&opts.captchaSolver, "captcha-solver", "v2", "auto captcha solver implementation: v1|v2 (v2 = improved, v1 = legacy fallback)")
+	fs.StringVar(&opts.captchaSolver, "captcha-solver", "v2", "captcha handling: bypass|v2|v1 (bypass = VK Calls captcha-free path via api.vk.me, legacy solver as fallback; v2 = improved solver; v1 = legacy solver)")
 	fs.StringVar(&opts.vkAuth, "vk-auth", "anonymous", "VK auth mode: anonymous|account (account = relay emits PROXY_EVENT vk_account_auth_required with the VK join URL; the host app opens it in a WebView, signs in, intercepts the VK turn_server creds, and sends them back on a vk_account_creds stdin line; vk_account_auth_complete/_failed signal the outcome)")
 	fs.StringVar(&opts.tcpFlavor, "tcp-flavor", "auto", "TCP transport flavor override: auto|direct|legacy (auto = negotiate; direct = smux over DTLS; legacy = KCP+smux)")
 	fs.IntVar(&opts.credsGroupSize, "creds-group-size", 12, "workers per TURN identity (smaller = more identities, less per-identity rate limit; larger = fewer auth calls)")
@@ -131,7 +131,7 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 		opts.yalink = strings.TrimSpace(opts.yalink)
 		opts.peerAddr = strings.TrimSpace(opts.peerAddr)
 		opts.captchaSolver = strings.ToLower(strings.TrimSpace(opts.captchaSolver))
-		if opts.captchaSolver != "v1" && opts.captchaSolver != "v2" {
+		if opts.captchaSolver != "v1" && opts.captchaSolver != "v2" && opts.captchaSolver != "bypass" {
 			opts.captchaSolver = "v2"
 		}
 		opts.vkAuth = strings.ToLower(strings.TrimSpace(opts.vkAuth))
