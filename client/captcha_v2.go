@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -24,7 +25,7 @@ import (
 
 const (
 	captchaV2APIVersion    = "5.131"
-	captchaV2ScriptVersion = "1.1.1324"
+	captchaV2ScriptVersion = "1.1.1374"
 	captchaV2DeviceInfo    = `{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1080,"innerWidth":1920,"innerHeight":951,"devicePixelRatio":1,"language":"en-US","languages":["en-US","en"],"webdriver":false,"hardwareConcurrency":8,"notificationsPermission":"denied"}`
 )
 
@@ -34,11 +35,13 @@ var (
 	reCaptchaV2WindowInit = regexp.MustCompile(`(?s)window\.init\s*=\s*(\{.*?})\s*;`)
 	reCaptchaV2ScriptSrc  = regexp.MustCompile(`src="(https://[^"]+not_robot_captcha[^"]+)"`)
 	reCaptchaV2DebugInfo  = regexp.MustCompile(`debug_info:(?:[^"]*\|\|)?"([a-fA-F0-9]{64})"`)
+	reCaptchaV2Hex64      = regexp.MustCompile(`"([a-fA-F0-9]{64})"`)
 	reCaptchaV2Version    = regexp.MustCompile(`vkid/([0-9.]*)/not_robot_captcha\.js`)
 
 	errCaptchaV2RateLimit = errors.New("captcha session rate limit reached")
 
 	captchaV2DebugCache  sync.Map // scriptURL -> string
+	captchaV2VersionSeen sync.Map // script version -> struct{} (drift warned once)
 	captchaV2HeaderOrder = []string{
 		"host",
 		"content-length",
@@ -210,11 +213,7 @@ func (s *captchaV2Session) solveOnce(captchaErr *vkCaptchaError) (string, error)
 		return "", err
 	}
 
-	if m := reCaptchaV2Version.FindStringSubmatch(page.ScriptURL); len(m) > 1 {
-		if m[1] != captchaV2ScriptVersion {
-			log.Printf("v2 captcha script version drift: known=%s latest=%s", captchaV2ScriptVersion, m[1])
-		}
-	}
+	s.warnVersionDrift(page.ScriptURL)
 
 	debugInfo, err := s.fetchDebugInfo(page.ScriptURL)
 	if err != nil {
@@ -291,14 +290,54 @@ func (s *captchaV2Session) fetchDebugInfo(scriptURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	m := reCaptchaV2DebugInfo.FindSubmatch(body)
-	if len(m) < 2 {
-		return "", errors.New("debug_info match not found")
+	v, usedFallback, err := extractDebugInfoV2(body)
+	if err != nil {
+		return "", err
 	}
-	v := string(m[1])
+	if usedFallback {
+		log.Printf("v2 captcha debug_info primary pattern missed; used windowed fallback (script format drift)")
+	}
 	captchaV2DebugCache.Store(scriptURL, v)
 	log.Printf("v2 captcha debug_info fetched url=%s", scriptURL)
 	return v, nil
+}
+
+// warnVersionDrift warns once per script version when VK serves a not_robot_captcha
+// script newer than the tested baseline: the wire format may have changed, so the
+// PoW/answer encoding should be re-checked against live if BOT rejections rise.
+func (s *captchaV2Session) warnVersionDrift(scriptURL string) {
+	m := reCaptchaV2Version.FindStringSubmatch(scriptURL)
+	if len(m) < 2 || m[1] == "" || m[1] == captchaV2ScriptVersion {
+		return
+	}
+	if _, seen := captchaV2VersionSeen.LoadOrStore(m[1], struct{}{}); seen {
+		return
+	}
+	log.Printf("v2 captcha script version %s differs from tested %s; wire unverified - re-check if BOT rejections rise", m[1], captchaV2ScriptVersion)
+}
+
+// extractDebugInfoV2 pulls the debug_info 64-hex constant out of the captcha
+// script body. VK's format is `debug_info:(...window.vk.X)||"<64hex>"` where the
+// window.vk.X wrapper name drifts between builds, so the primary pattern matches
+// only the hash literal. When it misses (wrapper changed), fall back to the first
+// 64-hex literal in a window right after the debug_info marker. usedFallback flags
+// that the wrapper drifted so the caller can log it.
+func extractDebugInfoV2(body []byte) (value string, usedFallback bool, err error) {
+	if m := reCaptchaV2DebugInfo.FindSubmatch(body); len(m) >= 2 {
+		return string(m[1]), false, nil
+	}
+	idx := bytes.Index(body, []byte("debug_info"))
+	if idx < 0 {
+		return "", false, errors.New("debug_info marker not found in script")
+	}
+	end := idx + 256
+	if end > len(body) {
+		end = len(body)
+	}
+	if m := reCaptchaV2Hex64.FindSubmatch(body[idx:end]); len(m) >= 2 {
+		return string(m[1]), true, nil
+	}
+	return "", false, fmt.Errorf("debug_info match not found near: %q", body[idx:end])
 }
 
 func parseCaptchaV2Page(html string) (*captchaV2Page, error) {
