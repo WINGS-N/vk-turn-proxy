@@ -57,8 +57,13 @@ type ConfigureRequest struct {
 	WrapKeyHex       string                 `protobuf:"bytes,24,opt,name=wrap_key_hex,json=wrapKeyHex,proto3" json:"wrap_key_hex,omitempty"`                      // -wrap-key
 	WrapSendKey      bool                   `protobuf:"varint,25,opt,name=wrap_send_key,json=wrapSendKey,proto3" json:"wrap_send_key,omitempty"`                  // -wrap-send-key
 	ProtoFp          string                 `protobuf:"bytes,26,opt,name=proto_fp,json=protoFp,proto3" json:"proto_fp,omitempty"`                                 // -proto-fp
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// client_id is the managed client's panel id. The relay never needs it for the
+	// data path, but a managed client announces it in its mu SESSION hello so the
+	// node can attribute the session and echo that client's traffic-limit usage
+	// back in the heartbeat. Empty for a non-managed (anonymous) client.
+	ClientId      string `protobuf:"bytes,27,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ConfigureRequest) Reset() {
@@ -269,6 +274,13 @@ func (x *ConfigureRequest) GetWrapSendKey() bool {
 func (x *ConfigureRequest) GetProtoFp() string {
 	if x != nil {
 		return x.ProtoFp
+	}
+	return ""
+}
+
+func (x *ConfigureRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
 	}
 	return ""
 }
@@ -1963,7 +1975,7 @@ var File_proto_appcontrol_proto protoreflect.FileDescriptor
 
 const file_proto_appcontrol_proto_rawDesc = "" +
 	"\n" +
-	"\x16proto/appcontrol.proto\x12\x14vkturn.appcontrol.v1\"\xc2\x06\n" +
+	"\x16proto/appcontrol.proto\x12\x14vkturn.appcontrol.v1\"\xdf\x06\n" +
 	"\x10ConfigureRequest\x12\x19\n" +
 	"\bdns_mode\x18\x01 \x01(\tR\adnsMode\x12\x19\n" +
 	"\buser_dns\x18\x02 \x01(\tR\auserDns\x12\x12\n" +
@@ -1994,7 +2006,8 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\fwrap_key_hex\x18\x18 \x01(\tR\n" +
 	"wrapKeyHex\x12\"\n" +
 	"\rwrap_send_key\x18\x19 \x01(\bR\vwrapSendKey\x12\x19\n" +
-	"\bproto_fp\x18\x1a \x01(\tR\aprotoFp\")\n" +
+	"\bproto_fp\x18\x1a \x01(\tR\aprotoFp\x12\x1b\n" +
+	"\tclient_id\x18\x1b \x01(\tR\bclientId\")\n" +
 	"\x11ConfigureResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\"N\n" +
 	"\x13SetVKCookiesRequest\x12\x18\n" +

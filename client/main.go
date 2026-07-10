@@ -29,6 +29,7 @@ import (
 	"github.com/cacggghp/vk-turn-proxy/internal/controlpath"
 	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
+	sessionmuv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/mu/v1"
 	"github.com/cbeuw/connutil"
 	"github.com/google/uuid"
 	"github.com/pion/dtls/v3"
@@ -1496,10 +1497,14 @@ func oneDtlsConnection(
 				continue
 			}
 			if payload, ok := sessionproto.ParseControlHeartbeatResponse(buf[:n]); ok {
-				if _, parseErr := sessionproto.ParseHeartbeatMessage(payload); parseErr != nil {
+				if hb, parseErr := sessionproto.ParseHeartbeatMessage(payload); parseErr != nil {
 					log.Printf("Failed to parse control heartbeat response: %s", parseErr)
-				} else if !probeOnly && (statusEnabled || proxyDtlsReadyState.Load()) {
-					emitProxyDtlsAliveStatus(int(streamID))
+				} else {
+					// Surface any managed-client traffic-limit usage the node echoed.
+					publishTrafficUsage(hb)
+					if !probeOnly && (statusEnabled || proxyDtlsReadyState.Load()) {
+						emitProxyDtlsAliveStatus(int(streamID))
+					}
 				}
 				continue
 			}
@@ -2262,6 +2267,9 @@ func applyConfigureToOptions(opts *clientOptions, c *appcontrolpb.ConfigureReque
 	opts.wrapKeyHex = c.GetWrapKeyHex()
 	opts.wrapSendKey = c.GetWrapSendKey()
 	opts.protoFingerprint = c.GetProtoFp()
+	// Announce the managed client id in mu SESSION hellos so the node can echo this
+	// client's traffic-limit usage back in the heartbeat. Empty for anonymous.
+	sessionmuv1.SetSessionClientID(c.GetClientId())
 }
 
 func main() { //nolint:cyclop

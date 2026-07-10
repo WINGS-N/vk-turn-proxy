@@ -87,6 +87,11 @@ message ConfigureRequest {
   string wrap_key_hex = 24;        // -wrap-key
   bool wrap_send_key = 25;         // -wrap-send-key
   string proto_fp = 26;            // -proto-fp
+  // client_id is the managed client's panel id. The relay never needs it for the
+  // data path, but a managed client announces it in its mu SESSION hello so the
+  // node can attribute the session and echo that client's traffic-limit usage
+  // back in the heartbeat. Empty for a non-managed (anonymous) client.
+  string client_id = 27;
 }
 
 message ConfigureResponse {

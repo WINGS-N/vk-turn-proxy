@@ -2,11 +2,36 @@ package v1
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 )
 
 const ProtocolVersion uint32 = 1
+
+// sessionClientID is the managed client's panel id, announced in every mu SESSION
+// hello so the node can attribute the session for traffic-limit reporting. It is
+// a per-process singleton (one libvkturn serves one client), set once from the
+// app's Configure and empty for a non-managed client.
+var sessionClientID atomic.Pointer[string]
+
+// SetSessionClientID records the managed client id to announce in SESSION hellos.
+// An empty id clears it (non-managed client).
+func SetSessionClientID(id string) {
+	if id == "" {
+		sessionClientID.Store(nil)
+		return
+	}
+	v := id
+	sessionClientID.Store(&v)
+}
+
+func currentSessionClientID() string {
+	if p := sessionClientID.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
 
 func BuildProbeHello() ([]byte, error) {
 	return BuildProbeHelloWithTransport(
@@ -111,6 +136,7 @@ func BuildSessionHelloWithWrap(
 		),
 		SupportedWrapCiphers: append([]sessionproto.WrapCipher(nil), supportedWrapCiphers...),
 		WrapKeyProposal:      keyCopy,
+		ClientId:             currentSessionClientID(),
 	})
 }
 

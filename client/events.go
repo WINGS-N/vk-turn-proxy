@@ -6,9 +6,11 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/appcontrolpb"
+	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 )
 
 const proxyEventProtocolVersion = 1
@@ -120,6 +122,34 @@ func (h *proxyEventBroadcaster) publish(ev *appcontrolpb.ProxyEvent) {
 		default:
 		}
 	}
+}
+
+var lastTrafficUsage atomic.Pointer[appcontrolpb.TrafficUsageEvent]
+
+// publishTrafficUsage forwards a heartbeat's managed-client traffic-limit usage to
+// the app over StreamEvents, de-duplicating unchanged readings so the frequent
+// per-stream heartbeats do not flood the app. A heartbeat without usage
+// (traffic_present false) is ignored - the session's client is anonymous or
+// uncapped, or the node/panel is an older build.
+func publishTrafficUsage(hb *sessionproto.Heartbeat) {
+	if hb == nil || !hb.GetTrafficPresent() {
+		return
+	}
+	ev := &appcontrolpb.TrafficUsageEvent{
+		LimitBytes:     hb.GetTrafficLimitBytes(),
+		UsedBytes:      hb.GetTrafficUsedBytes(),
+		RemainingBytes: hb.GetTrafficRemainingBytes(),
+		Disabled:       hb.GetTrafficDisabled(),
+	}
+	if prev := lastTrafficUsage.Load(); prev != nil &&
+		prev.GetLimitBytes() == ev.GetLimitBytes() &&
+		prev.GetUsedBytes() == ev.GetUsedBytes() &&
+		prev.GetRemainingBytes() == ev.GetRemainingBytes() &&
+		prev.GetDisabled() == ev.GetDisabled() {
+		return
+	}
+	lastTrafficUsage.Store(ev)
+	eventHub.publish(&appcontrolpb.ProxyEvent{Event: &appcontrolpb.ProxyEvent_TrafficUsage{TrafficUsage: ev}})
 }
 
 // publishPatchStatus reports the progress of one PatchConfig field over the same
