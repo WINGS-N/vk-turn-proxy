@@ -116,7 +116,6 @@ func serverOptionsToConfigLines(o serverOptions) []string {
 		str("grpc-key", o.grpcKey, ""),
 		str("panel-grpc", o.panelGRPC, ""),
 		str("node-id", o.nodeID, ""),
-		str("panel-token", o.panelToken, ""),
 		str("panel-ca-pin", o.panelCAPin, ""),
 		boolean("panel-insecure", o.panelInsecure, false),
 		str("wg-interface", o.wgInterface, "wg-wingsv"),

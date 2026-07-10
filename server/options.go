@@ -39,7 +39,6 @@ type serverOptions struct {
 	wgKeyFile    string // path to persist the WG server key (empty = ephemeral)
 
 	panelGRPC     string // panel Provisioning gRPC endpoint for DTLS PROVISION (empty = disabled)
-	panelToken    string // bearer token identifying this node to the panel
 	panelCAPin    string // panel CA SPKI pin (sha256/<base64>) for a self-signed panel; empty uses system trust
 	panelInsecure bool   // dial the panel over plaintext h2c (trusted local network only)
 	nodeID        string // this node's id as registered in the panel
@@ -75,7 +74,6 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.StringVar(&opts.wgAddress, "wg-address", "10.66.66.1/24", "WireGuard interface address (CIDR)")
 	fs.StringVar(&opts.wgKeyFile, "wg-key-file", "", "path to persist the WireGuard server key so its public key is stable across restarts (empty = regenerated each start)")
 	fs.StringVar(&opts.panelGRPC, "panel-grpc", "", "panel Provisioning gRPC endpoint enabling the DTLS PROVISION path")
-	fs.StringVar(&opts.panelToken, "panel-token", "", "bearer token identifying this node to the panel")
 	fs.StringVar(&opts.panelCAPin, "panel-ca-pin", "", "panel CA SPKI pin (sha256/<base64>) for a self-signed panel; empty verifies the panel via system trust")
 	fs.BoolVar(&opts.panelInsecure, "panel-insecure", false, "dial the panel over plaintext h2c instead of TLS (trusted local network only)")
 	fs.StringVar(&opts.nodeID, "node-id", "", "this node's id as registered in the panel")
@@ -114,6 +112,12 @@ func parseServerOptions(args []string, program string, stdout, stderr io.Writer)
 			opts.wrapCipher = "any"
 		}
 		opts.wrapKeyHex = strings.TrimSpace(opts.wrapKeyHex)
+
+		// One node credential wires both directions: grpc-token authenticates the
+		// panel's inbound management calls (AES-GCM transport) and doubles as the
+		// bearer on the node's outbound provisioning calls, which the panel verifies
+		// against the same value. There is no separate panel-token.
+		opts.grpcToken = strings.TrimSpace(opts.grpcToken)
 
 		if opts.wbStreamRoomID != "" {
 			if opts.udpConnect == "" && opts.connect == "" {
