@@ -10,6 +10,11 @@ option go_package = "github.com/cacggghp/vk-turn-proxy/provisioningpb;provisioni
 
 service Provisioning {
   rpc ResolveClientConfig(ResolveClientConfigRequest) returns (ResolveClientConfigResponse);
+  // GetClientUsage returns the traffic-limit usage of the capped or disabled
+  // managed clients that hold a wg peer on the calling node. The relay polls it
+  // and surfaces used/remaining to the app (e.g. in its DTLS heartbeat) and can
+  // also enforce a hard cutoff. Clients with no cap and not disabled are omitted.
+  rpc GetClientUsage(GetClientUsageRequest) returns (GetClientUsageResponse);
 }
 
 message ResolveClientConfigRequest {
@@ -21,6 +26,25 @@ message ResolveClientConfigRequest {
 
 message ResolveClientConfigResponse {
   WireguardConfig wg = 1;
+}
+
+message GetClientUsageRequest {
+  string node_id = 1;
+}
+
+message GetClientUsageResponse {
+  repeated ClientUsage usage = 1;
+}
+
+// ClientUsage is one managed client's traffic-limit state on the calling node,
+// keyed by its wg peer public key so the relay can match it to a live session.
+message ClientUsage {
+  string public_key = 1;
+  string client_id = 2;
+  uint64 limit_bytes = 3;
+  uint64 used_bytes = 4;
+  uint64 remaining_bytes = 5;
+  bool disabled = 6;
 }
 
 message WireguardConfig {

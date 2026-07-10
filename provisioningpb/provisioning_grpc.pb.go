@@ -25,6 +25,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Provisioning_ResolveClientConfig_FullMethodName = "/wingsv.provisioning.v1.Provisioning/ResolveClientConfig"
+	Provisioning_GetClientUsage_FullMethodName      = "/wingsv.provisioning.v1.Provisioning/GetClientUsage"
 )
 
 // ProvisioningClient is the client API for Provisioning service.
@@ -32,6 +33,11 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ProvisioningClient interface {
 	ResolveClientConfig(ctx context.Context, in *ResolveClientConfigRequest, opts ...grpc.CallOption) (*ResolveClientConfigResponse, error)
+	// GetClientUsage returns the traffic-limit usage of the capped or disabled
+	// managed clients that hold a wg peer on the calling node. The relay polls it
+	// and surfaces used/remaining to the app (e.g. in its DTLS heartbeat) and can
+	// also enforce a hard cutoff. Clients with no cap and not disabled are omitted.
+	GetClientUsage(ctx context.Context, in *GetClientUsageRequest, opts ...grpc.CallOption) (*GetClientUsageResponse, error)
 }
 
 type provisioningClient struct {
@@ -52,11 +58,26 @@ func (c *provisioningClient) ResolveClientConfig(ctx context.Context, in *Resolv
 	return out, nil
 }
 
+func (c *provisioningClient) GetClientUsage(ctx context.Context, in *GetClientUsageRequest, opts ...grpc.CallOption) (*GetClientUsageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetClientUsageResponse)
+	err := c.cc.Invoke(ctx, Provisioning_GetClientUsage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ProvisioningServer is the server API for Provisioning service.
 // All implementations must embed UnimplementedProvisioningServer
 // for forward compatibility.
 type ProvisioningServer interface {
 	ResolveClientConfig(context.Context, *ResolveClientConfigRequest) (*ResolveClientConfigResponse, error)
+	// GetClientUsage returns the traffic-limit usage of the capped or disabled
+	// managed clients that hold a wg peer on the calling node. The relay polls it
+	// and surfaces used/remaining to the app (e.g. in its DTLS heartbeat) and can
+	// also enforce a hard cutoff. Clients with no cap and not disabled are omitted.
+	GetClientUsage(context.Context, *GetClientUsageRequest) (*GetClientUsageResponse, error)
 	mustEmbedUnimplementedProvisioningServer()
 }
 
@@ -69,6 +90,9 @@ type UnimplementedProvisioningServer struct{}
 
 func (UnimplementedProvisioningServer) ResolveClientConfig(context.Context, *ResolveClientConfigRequest) (*ResolveClientConfigResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ResolveClientConfig not implemented")
+}
+func (UnimplementedProvisioningServer) GetClientUsage(context.Context, *GetClientUsageRequest) (*GetClientUsageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetClientUsage not implemented")
 }
 func (UnimplementedProvisioningServer) mustEmbedUnimplementedProvisioningServer() {}
 func (UnimplementedProvisioningServer) testEmbeddedByValue()                      {}
@@ -109,6 +133,24 @@ func _Provisioning_ResolveClientConfig_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Provisioning_GetClientUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetClientUsageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProvisioningServer).GetClientUsage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Provisioning_GetClientUsage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProvisioningServer).GetClientUsage(ctx, req.(*GetClientUsageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Provisioning_ServiceDesc is the grpc.ServiceDesc for Provisioning service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -119,6 +161,10 @@ var Provisioning_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResolveClientConfig",
 			Handler:    _Provisioning_ResolveClientConfig_Handler,
+		},
+		{
+			MethodName: "GetClientUsage",
+			Handler:    _Provisioning_GetClientUsage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

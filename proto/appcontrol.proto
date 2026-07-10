@@ -147,7 +147,20 @@ message ProxyEvent {
     VKAccountAuthEvent vk_account_auth = 5;
     VKCookiesRequiredEvent vk_cookies_required = 6;
     PatchStatusEvent patch_status = 7;
+    TrafficUsageEvent traffic_usage = 8;
   }
+}
+
+// TrafficUsageEvent reports the managed client's traffic-limit usage the relay
+// received from the panel over its DTLS heartbeat, so the app can show the user
+// how much of the cap is used / remaining. used + remaining + limit are bytes;
+// limit_bytes 0 means no cap; disabled marks a manual cutoff. Emitted whenever a
+// heartbeat carries fresh usage for this session's managed client.
+message TrafficUsageEvent {
+  uint64 limit_bytes = 1;
+  uint64 used_bytes = 2;
+  uint64 remaining_bytes = 3;
+  bool disabled = 4;
 }
 
 // PatchStatusEvent reports the progress of one field of a PatchConfig request.

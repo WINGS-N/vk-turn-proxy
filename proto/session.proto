@@ -55,6 +55,11 @@ message ClientHello {
   // its WireGuard config. The node forwards client_id + token to the panel over
   // gRPC for verification; it never mints a config on its own.
   ProvisionRequest provision = 12;
+  // Managed clients announce their panel client id on every SESSION hello (it is
+  // not a secret, unlike the provision token) so the node can attribute the
+  // session to a client and report that client's traffic-limit usage back in the
+  // heartbeat.
+  string client_id = 13;
 }
 
 message ProvisionRequest {
@@ -121,4 +126,12 @@ message Heartbeat {
   string control_path = 7;
   string provider = 8;
   TransportMode transport = 9;
+  // Managed-client traffic-limit state the node fetched from the panel and echoes
+  // to the app so it can show used/remaining. traffic_present distinguishes "the
+  // node has usage for this client" from an absent/zero reading; limit 0 = no cap.
+  bool traffic_present = 10;
+  uint64 traffic_limit_bytes = 11;
+  uint64 traffic_used_bytes = 12;
+  uint64 traffic_remaining_bytes = 13;
+  bool traffic_disabled = 14;
 }

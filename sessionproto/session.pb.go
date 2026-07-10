@@ -296,7 +296,12 @@ type ClientHello struct {
 	// Set on CLIENT_HELLO_TYPE_PROVISION: the app asks the node to mint (or return)
 	// its WireGuard config. The node forwards client_id + token to the panel over
 	// gRPC for verification; it never mints a config on its own.
-	Provision     *ProvisionRequest `protobuf:"bytes,12,opt,name=provision,proto3" json:"provision,omitempty"`
+	Provision *ProvisionRequest `protobuf:"bytes,12,opt,name=provision,proto3" json:"provision,omitempty"`
+	// Managed clients announce their panel client id on every SESSION hello (it is
+	// not a secret, unlike the provision token) so the node can attribute the
+	// session to a client and report that client's traffic-limit usage back in the
+	// heartbeat.
+	ClientId      string `protobuf:"bytes,13,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -413,6 +418,13 @@ func (x *ClientHello) GetProvision() *ProvisionRequest {
 		return x.Provision
 	}
 	return nil
+}
+
+func (x *ClientHello) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
 }
 
 type ProvisionRequest struct {
@@ -877,8 +889,16 @@ type Heartbeat struct {
 	ControlPath      string                 `protobuf:"bytes,7,opt,name=control_path,json=controlPath,proto3" json:"control_path,omitempty"`
 	Provider         string                 `protobuf:"bytes,8,opt,name=provider,proto3" json:"provider,omitempty"`
 	Transport        TransportMode          `protobuf:"varint,9,opt,name=transport,proto3,enum=sessionproto.TransportMode" json:"transport,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Managed-client traffic-limit state the node fetched from the panel and echoes
+	// to the app so it can show used/remaining. traffic_present distinguishes "the
+	// node has usage for this client" from an absent/zero reading; limit 0 = no cap.
+	TrafficPresent        bool   `protobuf:"varint,10,opt,name=traffic_present,json=trafficPresent,proto3" json:"traffic_present,omitempty"`
+	TrafficLimitBytes     uint64 `protobuf:"varint,11,opt,name=traffic_limit_bytes,json=trafficLimitBytes,proto3" json:"traffic_limit_bytes,omitempty"`
+	TrafficUsedBytes      uint64 `protobuf:"varint,12,opt,name=traffic_used_bytes,json=trafficUsedBytes,proto3" json:"traffic_used_bytes,omitempty"`
+	TrafficRemainingBytes uint64 `protobuf:"varint,13,opt,name=traffic_remaining_bytes,json=trafficRemainingBytes,proto3" json:"traffic_remaining_bytes,omitempty"`
+	TrafficDisabled       bool   `protobuf:"varint,14,opt,name=traffic_disabled,json=trafficDisabled,proto3" json:"traffic_disabled,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -974,11 +994,46 @@ func (x *Heartbeat) GetTransport() TransportMode {
 	return TransportMode_TRANSPORT_MODE_UNSPECIFIED
 }
 
+func (x *Heartbeat) GetTrafficPresent() bool {
+	if x != nil {
+		return x.TrafficPresent
+	}
+	return false
+}
+
+func (x *Heartbeat) GetTrafficLimitBytes() uint64 {
+	if x != nil {
+		return x.TrafficLimitBytes
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetTrafficUsedBytes() uint64 {
+	if x != nil {
+		return x.TrafficUsedBytes
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetTrafficRemainingBytes() uint64 {
+	if x != nil {
+		return x.TrafficRemainingBytes
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetTrafficDisabled() bool {
+	if x != nil {
+		return x.TrafficDisabled
+	}
+	return false
+}
+
 var File_proto_session_proto protoreflect.FileDescriptor
 
 const file_proto_session_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/session.proto\x12\fsessionproto\"\xdd\x05\n" +
+	"\x13proto/session.proto\x12\fsessionproto\"\xfa\x05\n" +
 	"\vClientHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x121\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1d.sessionproto.ClientHelloTypeR\x04type\x12\x1d\n" +
@@ -993,7 +1048,8 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x16supported_wrap_ciphers\x18\n" +
 	" \x03(\x0e2\x18.sessionproto.WrapCipherR\x14supportedWrapCiphers\x12*\n" +
 	"\x11wrap_key_proposal\x18\v \x01(\fR\x0fwrapKeyProposal\x12<\n" +
-	"\tprovision\x18\f \x01(\v2\x1e.sessionproto.ProvisionRequestR\tprovision\"x\n" +
+	"\tprovision\x18\f \x01(\v2\x1e.sessionproto.ProvisionRequestR\tprovision\x12\x1b\n" +
+	"\tclient_id\x18\r \x01(\tR\bclientId\"x\n" +
 	"\x10ProvisionRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\fR\x05token\x12\x12\n" +
@@ -1034,7 +1090,7 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x14supported_transports\x18\x06 \x03(\x0e2\x1b.sessionproto.TransportModeR\x13supportedTransports\x12T\n" +
 	"\x15supported_tcp_flavors\x18\a \x03(\x0e2 .sessionproto.TcpTransportFlavorR\x13supportedTcpFlavors\x12P\n" +
 	"\x13selected_tcp_flavor\x18\b \x01(\x0e2 .sessionproto.TcpTransportFlavorR\x11selectedTcpFlavor\x12J\n" +
-	"\x14selected_wrap_cipher\x18\t \x01(\x0e2\x18.sessionproto.WrapCipherR\x12selectedWrapCipher\"\xd2\x02\n" +
+	"\x14selected_wrap_cipher\x18\t \x01(\x0e2\x18.sessionproto.WrapCipherR\x12selectedWrapCipher\"\xbc\x04\n" +
 	"\tHeartbeat\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\"\n" +
 	"\rwall_clock_ms\x18\x02 \x01(\x03R\vwallClockMs\x12%\n" +
@@ -1044,7 +1100,13 @@ const file_proto_session_proto_rawDesc = "" +
 	"\fsession_mode\x18\x06 \x01(\tR\vsessionMode\x12!\n" +
 	"\fcontrol_path\x18\a \x01(\tR\vcontrolPath\x12\x1a\n" +
 	"\bprovider\x18\b \x01(\tR\bprovider\x129\n" +
-	"\ttransport\x18\t \x01(\x0e2\x1b.sessionproto.TransportModeR\ttransport*\xb6\x01\n" +
+	"\ttransport\x18\t \x01(\x0e2\x1b.sessionproto.TransportModeR\ttransport\x12'\n" +
+	"\x0ftraffic_present\x18\n" +
+	" \x01(\bR\x0etrafficPresent\x12.\n" +
+	"\x13traffic_limit_bytes\x18\v \x01(\x04R\x11trafficLimitBytes\x12,\n" +
+	"\x12traffic_used_bytes\x18\f \x01(\x04R\x10trafficUsedBytes\x126\n" +
+	"\x17traffic_remaining_bytes\x18\r \x01(\x04R\x15trafficRemainingBytes\x12)\n" +
+	"\x10traffic_disabled\x18\x0e \x01(\bR\x0ftrafficDisabled*\xb6\x01\n" +
 	"\x0fClientHelloType\x12!\n" +
 	"\x1dCLIENT_HELLO_TYPE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17CLIENT_HELLO_TYPE_PROBE\x10\x01\x12\x1d\n" +

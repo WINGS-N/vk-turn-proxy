@@ -138,6 +138,180 @@ func (x *ResolveClientConfigResponse) GetWg() *WireguardConfig {
 	return nil
 }
 
+type GetClientUsageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetClientUsageRequest) Reset() {
+	*x = GetClientUsageRequest{}
+	mi := &file_proto_provisioning_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetClientUsageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetClientUsageRequest) ProtoMessage() {}
+
+func (x *GetClientUsageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_provisioning_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetClientUsageRequest.ProtoReflect.Descriptor instead.
+func (*GetClientUsageRequest) Descriptor() ([]byte, []int) {
+	return file_proto_provisioning_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *GetClientUsageRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+type GetClientUsageResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Usage         []*ClientUsage         `protobuf:"bytes,1,rep,name=usage,proto3" json:"usage,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetClientUsageResponse) Reset() {
+	*x = GetClientUsageResponse{}
+	mi := &file_proto_provisioning_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetClientUsageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetClientUsageResponse) ProtoMessage() {}
+
+func (x *GetClientUsageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_provisioning_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetClientUsageResponse.ProtoReflect.Descriptor instead.
+func (*GetClientUsageResponse) Descriptor() ([]byte, []int) {
+	return file_proto_provisioning_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GetClientUsageResponse) GetUsage() []*ClientUsage {
+	if x != nil {
+		return x.Usage
+	}
+	return nil
+}
+
+// ClientUsage is one managed client's traffic-limit state on the calling node,
+// keyed by its wg peer public key so the relay can match it to a live session.
+type ClientUsage struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	PublicKey      string                 `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	ClientId       string                 `protobuf:"bytes,2,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	LimitBytes     uint64                 `protobuf:"varint,3,opt,name=limit_bytes,json=limitBytes,proto3" json:"limit_bytes,omitempty"`
+	UsedBytes      uint64                 `protobuf:"varint,4,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
+	RemainingBytes uint64                 `protobuf:"varint,5,opt,name=remaining_bytes,json=remainingBytes,proto3" json:"remaining_bytes,omitempty"`
+	Disabled       bool                   `protobuf:"varint,6,opt,name=disabled,proto3" json:"disabled,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ClientUsage) Reset() {
+	*x = ClientUsage{}
+	mi := &file_proto_provisioning_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientUsage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientUsage) ProtoMessage() {}
+
+func (x *ClientUsage) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_provisioning_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientUsage.ProtoReflect.Descriptor instead.
+func (*ClientUsage) Descriptor() ([]byte, []int) {
+	return file_proto_provisioning_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ClientUsage) GetPublicKey() string {
+	if x != nil {
+		return x.PublicKey
+	}
+	return ""
+}
+
+func (x *ClientUsage) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *ClientUsage) GetLimitBytes() uint64 {
+	if x != nil {
+		return x.LimitBytes
+	}
+	return 0
+}
+
+func (x *ClientUsage) GetUsedBytes() uint64 {
+	if x != nil {
+		return x.UsedBytes
+	}
+	return 0
+}
+
+func (x *ClientUsage) GetRemainingBytes() uint64 {
+	if x != nil {
+		return x.RemainingBytes
+	}
+	return 0
+}
+
+func (x *ClientUsage) GetDisabled() bool {
+	if x != nil {
+		return x.Disabled
+	}
+	return false
+}
+
 type WireguardConfig struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	PrivateKey      string                 `protobuf:"bytes,1,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`
@@ -152,7 +326,7 @@ type WireguardConfig struct {
 
 func (x *WireguardConfig) Reset() {
 	*x = WireguardConfig{}
-	mi := &file_proto_provisioning_proto_msgTypes[2]
+	mi := &file_proto_provisioning_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -164,7 +338,7 @@ func (x *WireguardConfig) String() string {
 func (*WireguardConfig) ProtoMessage() {}
 
 func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_provisioning_proto_msgTypes[2]
+	mi := &file_proto_provisioning_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -177,7 +351,7 @@ func (x *WireguardConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WireguardConfig.ProtoReflect.Descriptor instead.
 func (*WireguardConfig) Descriptor() ([]byte, []int) {
-	return file_proto_provisioning_proto_rawDescGZIP(), []int{2}
+	return file_proto_provisioning_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *WireguardConfig) GetPrivateKey() string {
@@ -233,7 +407,21 @@ const file_proto_provisioning_proto_rawDesc = "" +
 	"\x04hwid\x18\x03 \x01(\tR\x04hwid\x12\x17\n" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\"V\n" +
 	"\x1bResolveClientConfigResponse\x127\n" +
-	"\x02wg\x18\x01 \x01(\v2'.wingsv.provisioning.v1.WireguardConfigR\x02wg\"\xca\x01\n" +
+	"\x02wg\x18\x01 \x01(\v2'.wingsv.provisioning.v1.WireguardConfigR\x02wg\"0\n" +
+	"\x15GetClientUsageRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"S\n" +
+	"\x16GetClientUsageResponse\x129\n" +
+	"\x05usage\x18\x01 \x03(\v2#.wingsv.provisioning.v1.ClientUsageR\x05usage\"\xce\x01\n" +
+	"\vClientUsage\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\x01 \x01(\tR\tpublicKey\x12\x1b\n" +
+	"\tclient_id\x18\x02 \x01(\tR\bclientId\x12\x1f\n" +
+	"\vlimit_bytes\x18\x03 \x01(\x04R\n" +
+	"limitBytes\x12\x1d\n" +
+	"\n" +
+	"used_bytes\x18\x04 \x01(\x04R\tusedBytes\x12'\n" +
+	"\x0fremaining_bytes\x18\x05 \x01(\x04R\x0eremainingBytes\x12\x1a\n" +
+	"\bdisabled\x18\x06 \x01(\bR\bdisabled\"\xca\x01\n" +
 	"\x0fWireguardConfig\x12\x1f\n" +
 	"\vprivate_key\x18\x01 \x01(\tR\n" +
 	"privateKey\x12\x1d\n" +
@@ -243,9 +431,10 @@ const file_proto_provisioning_proto_rawDesc = "" +
 	"\x11server_public_key\x18\x04 \x01(\tR\x0fserverPublicKey\x12\x1f\n" +
 	"\vallowed_ips\x18\x05 \x01(\tR\n" +
 	"allowedIps\x12\x10\n" +
-	"\x03mtu\x18\x06 \x01(\rR\x03mtu2\x8e\x01\n" +
+	"\x03mtu\x18\x06 \x01(\rR\x03mtu2\xff\x01\n" +
 	"\fProvisioning\x12~\n" +
-	"\x13ResolveClientConfig\x122.wingsv.provisioning.v1.ResolveClientConfigRequest\x1a3.wingsv.provisioning.v1.ResolveClientConfigResponseBAZ?github.com/cacggghp/vk-turn-proxy/provisioningpb;provisioningpbb\x06proto3"
+	"\x13ResolveClientConfig\x122.wingsv.provisioning.v1.ResolveClientConfigRequest\x1a3.wingsv.provisioning.v1.ResolveClientConfigResponse\x12o\n" +
+	"\x0eGetClientUsage\x12-.wingsv.provisioning.v1.GetClientUsageRequest\x1a..wingsv.provisioning.v1.GetClientUsageResponseBAZ?github.com/cacggghp/vk-turn-proxy/provisioningpb;provisioningpbb\x06proto3"
 
 var (
 	file_proto_provisioning_proto_rawDescOnce sync.Once
@@ -259,21 +448,27 @@ func file_proto_provisioning_proto_rawDescGZIP() []byte {
 	return file_proto_provisioning_proto_rawDescData
 }
 
-var file_proto_provisioning_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_proto_provisioning_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_proto_provisioning_proto_goTypes = []any{
 	(*ResolveClientConfigRequest)(nil),  // 0: wingsv.provisioning.v1.ResolveClientConfigRequest
 	(*ResolveClientConfigResponse)(nil), // 1: wingsv.provisioning.v1.ResolveClientConfigResponse
-	(*WireguardConfig)(nil),             // 2: wingsv.provisioning.v1.WireguardConfig
+	(*GetClientUsageRequest)(nil),       // 2: wingsv.provisioning.v1.GetClientUsageRequest
+	(*GetClientUsageResponse)(nil),      // 3: wingsv.provisioning.v1.GetClientUsageResponse
+	(*ClientUsage)(nil),                 // 4: wingsv.provisioning.v1.ClientUsage
+	(*WireguardConfig)(nil),             // 5: wingsv.provisioning.v1.WireguardConfig
 }
 var file_proto_provisioning_proto_depIdxs = []int32{
-	2, // 0: wingsv.provisioning.v1.ResolveClientConfigResponse.wg:type_name -> wingsv.provisioning.v1.WireguardConfig
-	0, // 1: wingsv.provisioning.v1.Provisioning.ResolveClientConfig:input_type -> wingsv.provisioning.v1.ResolveClientConfigRequest
-	1, // 2: wingsv.provisioning.v1.Provisioning.ResolveClientConfig:output_type -> wingsv.provisioning.v1.ResolveClientConfigResponse
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	5, // 0: wingsv.provisioning.v1.ResolveClientConfigResponse.wg:type_name -> wingsv.provisioning.v1.WireguardConfig
+	4, // 1: wingsv.provisioning.v1.GetClientUsageResponse.usage:type_name -> wingsv.provisioning.v1.ClientUsage
+	0, // 2: wingsv.provisioning.v1.Provisioning.ResolveClientConfig:input_type -> wingsv.provisioning.v1.ResolveClientConfigRequest
+	2, // 3: wingsv.provisioning.v1.Provisioning.GetClientUsage:input_type -> wingsv.provisioning.v1.GetClientUsageRequest
+	1, // 4: wingsv.provisioning.v1.Provisioning.ResolveClientConfig:output_type -> wingsv.provisioning.v1.ResolveClientConfigResponse
+	3, // 5: wingsv.provisioning.v1.Provisioning.GetClientUsage:output_type -> wingsv.provisioning.v1.GetClientUsageResponse
+	4, // [4:6] is the sub-list for method output_type
+	2, // [2:4] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_proto_provisioning_proto_init() }
@@ -287,7 +482,7 @@ func file_proto_provisioning_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_provisioning_proto_rawDesc), len(file_proto_provisioning_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
