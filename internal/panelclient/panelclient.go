@@ -68,6 +68,55 @@ func New(endpoint, token string, opts ...Option) *Client {
 	return c
 }
 
+// ClientUsage is one managed client's traffic-limit state on this node, as the
+// panel reports it: byte counters plus a manual-disable flag, keyed by client id
+// and wg peer public key.
+type ClientUsage struct {
+	PublicKey      string
+	ClientID       string
+	LimitBytes     uint64
+	UsedBytes      uint64
+	RemainingBytes uint64
+	Disabled       bool
+}
+
+// GetClientUsage fetches the traffic-limit usage of the capped or disabled
+// managed clients holding a peer on nodeID, so the relay can echo used/remaining
+// to the app over its heartbeat.
+func (c *Client) GetClientUsage(ctx context.Context, nodeID string) ([]ClientUsage, error) {
+	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(c.creds)}
+	if c.dialContext != nil {
+		dialOpts = append(dialOpts, grpc.WithContextDialer(c.dialContext))
+	}
+	conn, err := grpc.NewClient(c.endpoint, dialOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("dial panel %s: %w", c.endpoint, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if c.token != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+c.token)
+	}
+	resp, err := provisioningpb.NewProvisioningClient(conn).GetClientUsage(ctx, &provisioningpb.GetClientUsageRequest{
+		NodeId: nodeID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ClientUsage, 0, len(resp.GetUsage()))
+	for _, u := range resp.GetUsage() {
+		out = append(out, ClientUsage{
+			PublicKey:      u.GetPublicKey(),
+			ClientID:       u.GetClientId(),
+			LimitBytes:     u.GetLimitBytes(),
+			UsedBytes:      u.GetUsedBytes(),
+			RemainingBytes: u.GetRemainingBytes(),
+			Disabled:       u.GetDisabled(),
+		})
+	}
+	return out, nil
+}
+
 // Resolve verifies the client token with the panel and returns the client's
 // WireGuard config for the given node.
 func (c *Client) Resolve(ctx context.Context, clientID string, token []byte, hwid, nodeID string) (Config, error) {
