@@ -20,18 +20,31 @@ type HeartbeatMeta struct {
 	Provider    string
 	Transport   sessionproto.TransportMode
 	ActiveFlows uint32
+	// Managed-client traffic-limit state the node echoes to the app. Only set on
+	// the mu path (the legacy/mainline path has no protobuf transfer); absent when
+	// TrafficPresent is false, which the app reads as "no cap for this session".
+	TrafficPresent        bool
+	TrafficLimitBytes     uint64
+	TrafficUsedBytes      uint64
+	TrafficRemainingBytes uint64
+	TrafficDisabled       bool
 }
 
 func BuildHeartbeat(meta HeartbeatMeta) ([]byte, error) {
 	return sessionproto.MarshalHeartbeat(&sessionproto.Heartbeat{
-		Version:       1,
-		WallClockMs:   time.Now().UnixMilli(),
-		ActiveStreams: meta.ActiveFlows,
-		Online:        true,
-		SessionMode:   strings.TrimSpace(meta.SessionMode),
-		ControlPath:   strings.TrimSpace(meta.ControlPath),
-		Provider:      strings.TrimSpace(meta.Provider),
-		Transport:     meta.Transport,
+		Version:               1,
+		WallClockMs:           time.Now().UnixMilli(),
+		ActiveStreams:         meta.ActiveFlows,
+		Online:                true,
+		SessionMode:           strings.TrimSpace(meta.SessionMode),
+		ControlPath:           strings.TrimSpace(meta.ControlPath),
+		Provider:              strings.TrimSpace(meta.Provider),
+		Transport:             meta.Transport,
+		TrafficPresent:        meta.TrafficPresent,
+		TrafficLimitBytes:     meta.TrafficLimitBytes,
+		TrafficUsedBytes:      meta.TrafficUsedBytes,
+		TrafficRemainingBytes: meta.TrafficRemainingBytes,
+		TrafficDisabled:       meta.TrafficDisabled,
 	})
 }
 

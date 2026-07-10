@@ -754,13 +754,17 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 				log.Printf("Failed: %s", readErr)
 				return
 			}
-			if handled, controlErr := handleControlHeartbeatPacket(conn, buf[:n], streamKey, controlpath.HeartbeatMeta{
+			hbMeta := controlpath.HeartbeatMeta{
 				SessionMode: string(sessionproto.ModeMu),
 				ControlPath: controlpath.PathTurnDTLS,
 				Provider:    controlpath.ProviderTurn,
 				Transport:   sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
 				ActiveFlows: session.ActiveConnCount(),
-			}); handled {
+			}
+			// Managed clients announce their client id on the mu session hello; echo
+			// that client's cached traffic-limit usage back so the app can show it.
+			applyUsageToHeartbeat(&hbMeta, hello.GetClientId())
+			if handled, controlErr := handleControlHeartbeatPacket(conn, buf[:n], streamKey, hbMeta); handled {
 				if controlErr != nil {
 					log.Printf("Failed: %s", controlErr)
 					return
@@ -1100,6 +1104,7 @@ func main() {
 		defer grpcServer.GracefulStop()
 	}
 
+	var usagePoll usageResolver
 	if opts.panelGRPC != "" {
 		var pcOpts []panelclient.Option
 		switch {
@@ -1112,12 +1117,19 @@ func main() {
 		case opts.panelInsecure:
 			pcOpts = append(pcOpts, panelclient.WithInsecure())
 		}
-		SetProvisionResolver(panelclient.New(opts.panelGRPC, opts.panelToken, pcOpts...), opts.nodeID)
+		pc := panelclient.New(opts.panelGRPC, opts.panelToken, pcOpts...)
+		SetProvisionResolver(pc, opts.nodeID)
+		usagePoll = pc
 		log.Printf("DTLS PROVISION enabled via panel %s (node %s)", opts.panelGRPC, opts.nodeID)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Keep the managed-client traffic-limit cache fresh so mu heartbeats can echo
+	// used/remaining to the app.
+	if usagePoll != nil {
+		startClientUsagePoller(ctx, usagePoll, opts.nodeID)
+	}
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
