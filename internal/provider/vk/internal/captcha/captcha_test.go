@@ -1,7 +1,7 @@
 package captcha
 
 import (
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -34,99 +34,73 @@ func TestCaptchaInitSettingContentRefLegacySettings(t *testing.T) {
 	}
 }
 
-func TestParseCaptchaPageSettingsKey(t *testing.T) {
-	html := `<html><head><script src="https://static.vk.ru/vkid/1.1.1359/not_robot_captcha.js"></script></head><body>
-<script>
-window.init = {"data":{"show_captcha_type":"slider","captcha_settings":[{"type":"slider","settings_key":"abc123"}]}};
-const powInput = "input";
+func TestParseCaptchaPageSPA(t *testing.T) {
+	html := `<html><head><script>
+const powInput = "Pihj7tyAHFxdwm4t";
 const difficulty = 2;
-</script>
+</script></head><body><div id="spa_root"></div>
+<script>window.vk = { statsMeta: {"hash":"39RzeEGG2Qq7t4YUwG"}, brlefapmjnpg: "1d958dbe-0663-42f2-95e5-0e2780ed2f93", id: 0 };</script>
 </body></html>`
 
 	page, err := parseCaptchaPage(html)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Init == nil || len(page.Init.Data.CaptchaSettings) != 1 {
-		t.Fatalf("captcha settings missing: %+v", page.Init)
+	if page.PowInput != "Pihj7tyAHFxdwm4t" || page.PowDifficulty != 2 {
+		t.Fatalf("pow parse = %q/%d", page.PowInput, page.PowDifficulty)
 	}
-	got := page.Init.Data.CaptchaSettings[0].contentRef()
-	if got.Source != "settings_key" || got.Value != "abc123" {
-		t.Fatalf("contentRef = %+v, want settings_key/abc123", got)
-	}
-}
-
-func TestEncodeCaptchaPoW(t *testing.T) {
-	got := encodeCaptchaPoW("00abcdef", 147)
-	if !strings.HasPrefix(got, "v2.") {
-		t.Fatalf("pow = %q, want v2 prefix", got)
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(got, "v2."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded struct {
-		Hash  string `json:"hash"`
-		Nonce int    `json:"nonce"`
-	}
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if decoded.Hash != "00abcdef" || decoded.Nonce != 147 {
-		t.Fatalf("decoded = %+v, want hash/nonce", decoded)
+	if page.DebugInfo != "1d958dbe-0663-42f2-95e5-0e2780ed2f93" {
+		t.Fatalf("debug_info = %q, want brlefapmjnpg uuid", page.DebugInfo)
 	}
 }
 
-func TestExtractDebugInfo(t *testing.T) {
-	const hash = "59f60d917b13be6a22c076adb2c17df37302c5314d8353a27e72f9fbcc9b4838"
-	tests := []struct {
-		name         string
-		body         string
-		want         string
-		wantFallback bool
-		fail         bool
-	}{
-		{
-			name: "primary vk format",
-			body: `x,debug_info:(null===(r=window.vk)||void 0===r?void 0:r.brlefapmjnpg)||"` + hash + `"});var a`,
-			want: hash,
-		},
-		{
-			name:         "windowed fallback no or-wrapper",
-			body:         `debug_info: someRuntimeCall(),foo:"` + hash + `"`,
-			want:         hash,
-			wantFallback: true,
-		},
-		{
-			name: "no hash near marker",
-			body: `debug_info:window.vk.x||"tooshort"`,
-			fail: true,
-		},
-		{
-			name: "no marker",
-			body: `nothing here`,
-			fail: true,
-		},
+func TestParseCaptchaPageMissingPoW(t *testing.T) {
+	if _, err := parseCaptchaPage(`<html><body><div id="spa_root"></div></body></html>`); err == nil {
+		t.Fatal("expected error when powInput/difficulty absent")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, usedFallback, err := extractDebugInfo([]byte(tt.body))
-			if tt.fail {
-				if err == nil {
-					t.Fatalf("expected error, got %q", got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tt.want {
-				t.Fatalf("extractDebugInfo = %q, want %q", got, tt.want)
-			}
-			if usedFallback != tt.wantFallback {
-				t.Fatalf("usedFallback = %v, want %v", usedFallback, tt.wantFallback)
-			}
-		})
+}
+
+func TestSolveCaptchaPoWRawHex(t *testing.T) {
+	got := solveCaptchaPoW(context.Background(), "input", 1)
+	if len(got) != 64 {
+		t.Fatalf("pow = %q, want 64-hex", got)
+	}
+	if !strings.HasPrefix(got, "0") {
+		t.Fatalf("pow = %q, want leading zero for difficulty 1", got)
+	}
+	if again := solveCaptchaPoW(context.Background(), "input", 1); again != got {
+		t.Fatalf("pow not deterministic: %q vs %q", got, again)
+	}
+}
+
+func TestParseCaptchaInitSession(t *testing.T) {
+	raw := map[string]any{"response": map[string]any{
+		"show_captcha_type": "slider",
+		"captcha_id":        "cid",
+		"content_settings": []any{
+			map[string]any{"type": "slider", "settings_key": "sliderkey"},
+			map[string]any{"type": "sound", "settings_key": "soundkey"},
+		},
+	}}
+	showType, content := parseCaptchaInitSession(raw)
+	if showType != "slider" {
+		t.Fatalf("show_type = %q, want slider", showType)
+	}
+	if content.Value != "sliderkey" || content.Source != "settings_key" {
+		t.Fatalf("content = %+v, want sliderkey/settings_key", content)
+	}
+}
+
+func TestParseCaptchaInitSessionCheckbox(t *testing.T) {
+	raw := map[string]any{"response": map[string]any{
+		"show_captcha_type": "checkbox",
+		"content_settings": []any{
+			map[string]any{"type": "slider", "settings_key": "k"},
+		},
+	}}
+	showType, _ := parseCaptchaInitSession(raw)
+	if showType != "checkbox" {
+		t.Fatalf("show_type = %q, want checkbox", showType)
 	}
 }
 
