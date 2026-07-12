@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.3](https://github.com/samosvalishe/free-turn-proxy/compare/v1.7.2...v1.7.3) (2026-07-12)
+
+
+### Bug Fixes
+
+* **captcha:** адаптировать авторешение под SPA-капчу VK ([b4189f8](https://github.com/samosvalishe/free-turn-proxy/commit/b4189f8f4317b1c5c919ab8e0e183ebfb927d8be))
+* **deps:** обновить Go 1.26.4 -&gt; 1.26.5 ([ea410a0](https://github.com/samosvalishe/free-turn-proxy/commit/ea410a044ad1ebd3fbc14286f41213357a6732f4))
+
 ## [1.7.2](https://github.com/samosvalishe/free-turn-proxy/compare/v1.7.1...v1.7.2) (2026-07-07)
 
 
