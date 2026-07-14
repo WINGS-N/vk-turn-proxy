@@ -24,6 +24,10 @@ func (f *fakeResolver) Resolve(_ context.Context, clientID string, token []byte,
 	return f.cfg, f.err
 }
 
+func (f *fakeResolver) ReportPeer(_ context.Context, _ string, _ []byte, _, _, _, _, _, _ string) (panelclient.Config, error) {
+	return f.cfg, f.err
+}
+
 func runProvision(t *testing.T, hello *sessionproto.ClientHello) *sessionproto.ProvisionResponse {
 	t.Helper()
 	server, client := net.Pipe()
@@ -58,8 +62,8 @@ func TestProvisionSuccess(t *testing.T) {
 		PrivateKey: "priv", PublicKey: "pub", Address: "10.66.66.2/32",
 		ServerPublicKey: "spub", AllowedIPs: "0.0.0.0/0", MTU: 1280,
 	}}
-	SetProvisionResolver(fake, "n1")
-	t.Cleanup(func() { SetProvisionResolver(nil, "") })
+	SetProvisionResolver(fake, "n1", nil)
+	t.Cleanup(func() { SetProvisionResolver(nil, "", nil) })
 
 	resp := runProvision(t, provisionHello())
 	if resp.GetError() != "" {
@@ -75,7 +79,7 @@ func TestProvisionSuccess(t *testing.T) {
 }
 
 func TestProvisionDisabled(t *testing.T) {
-	SetProvisionResolver(nil, "")
+	SetProvisionResolver(nil, "", nil)
 	resp := runProvision(t, provisionHello())
 	if resp.GetError() == "" {
 		t.Fatal("expected an error when provisioning is disabled")
@@ -86,8 +90,8 @@ func TestProvisionDisabled(t *testing.T) {
 }
 
 func TestProvisionMissingRequest(t *testing.T) {
-	SetProvisionResolver(&fakeResolver{}, "n1")
-	t.Cleanup(func() { SetProvisionResolver(nil, "") })
+	SetProvisionResolver(&fakeResolver{}, "n1", nil)
+	t.Cleanup(func() { SetProvisionResolver(nil, "", nil) })
 	hello := &sessionproto.ClientHello{Type: sessionproto.ClientHelloType_CLIENT_HELLO_TYPE_PROVISION}
 	resp := runProvision(t, hello)
 	if resp.GetError() == "" {

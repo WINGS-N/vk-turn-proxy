@@ -25,6 +25,10 @@ type Config struct {
 	ServerPublicKey string
 	AllowedIPs      string
 	MTU             uint32
+	// ProvisionLocally: the panel asks this node to mint the peer on its own wg
+	// interface and re-call to report it (own-wg path), instead of the panel
+	// dialing this node's management API back.
+	ProvisionLocally bool
 }
 
 // Client talks to the panel's Provisioning gRPC endpoint.
@@ -120,6 +124,32 @@ func (c *Client) GetClientUsage(ctx context.Context, nodeID string) ([]ClientUsa
 // Resolve verifies the client token with the panel and returns the client's
 // WireGuard config for the given node.
 func (c *Client) Resolve(ctx context.Context, clientID string, token []byte, hwid, nodeID string) (Config, error) {
+	return c.resolve(ctx, &provisioningpb.ResolveClientConfigRequest{
+		ClientId: clientID,
+		Token:    token,
+		Hwid:     hwid,
+		NodeId:   nodeID,
+	})
+}
+
+// ReportPeer records a wg peer this node minted locally (own-wg provision-locally
+// path) by re-calling ResolveClientConfig with the wg_* fields, so the panel
+// persists it without dialing this node's management API back. Returns the full
+// client config (the panel fills in the routing AllowedIPs and MTU).
+func (c *Client) ReportPeer(ctx context.Context, clientID string, token []byte, hwid, nodeID, publicKey, privateKey, allowedIPs, serverPublicKey string) (Config, error) {
+	return c.resolve(ctx, &provisioningpb.ResolveClientConfigRequest{
+		ClientId:          clientID,
+		Token:             token,
+		Hwid:              hwid,
+		NodeId:            nodeID,
+		WgPublicKey:       publicKey,
+		WgPrivateKey:      privateKey,
+		WgAllowedIps:      allowedIPs,
+		WgServerPublicKey: serverPublicKey,
+	})
+}
+
+func (c *Client) resolve(ctx context.Context, req *provisioningpb.ResolveClientConfigRequest) (Config, error) {
 	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(c.creds)}
 	if c.dialContext != nil {
 		dialOpts = append(dialOpts, grpc.WithContextDialer(c.dialContext))
@@ -133,22 +163,18 @@ func (c *Client) Resolve(ctx context.Context, clientID string, token []byte, hwi
 	if c.token != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+c.token)
 	}
-	resp, err := provisioningpb.NewProvisioningClient(conn).ResolveClientConfig(ctx, &provisioningpb.ResolveClientConfigRequest{
-		ClientId: clientID,
-		Token:    token,
-		Hwid:     hwid,
-		NodeId:   nodeID,
-	})
+	resp, err := provisioningpb.NewProvisioningClient(conn).ResolveClientConfig(ctx, req)
 	if err != nil {
 		return Config{}, err
 	}
 	wg := resp.GetWg()
 	return Config{
-		PrivateKey:      wg.GetPrivateKey(),
-		PublicKey:       wg.GetPublicKey(),
-		Address:         wg.GetAddress(),
-		ServerPublicKey: wg.GetServerPublicKey(),
-		AllowedIPs:      wg.GetAllowedIps(),
-		MTU:             wg.GetMtu(),
+		PrivateKey:       wg.GetPrivateKey(),
+		PublicKey:        wg.GetPublicKey(),
+		Address:          wg.GetAddress(),
+		ServerPublicKey:  wg.GetServerPublicKey(),
+		AllowedIPs:       wg.GetAllowedIps(),
+		MTU:              wg.GetMtu(),
+		ProvisionLocally: resp.GetProvisionLocally(),
 	}, nil
 }

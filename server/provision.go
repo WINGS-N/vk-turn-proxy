@@ -8,29 +8,35 @@ import (
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/internal/panelclient"
+	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 )
 
 // provisionResolver verifies a client token with the panel and returns the
-// client's WireGuard config. panelclient.Client satisfies it.
+// client's WireGuard config. panelclient.Client satisfies it. ReportPeer records
+// a peer this node minted locally (own-wg provision-locally path).
 type provisionResolver interface {
 	Resolve(ctx context.Context, clientID string, token []byte, hwid, nodeID string) (panelclient.Config, error)
+	ReportPeer(ctx context.Context, clientID string, token []byte, hwid, nodeID, publicKey, privateKey, allowedIPs, serverPublicKey string) (panelclient.Config, error)
 }
 
 type provisionConfig struct {
 	resolver provisionResolver
 	nodeID   string
+	store    *peerstore.Store
 }
 
 var provisionState atomic.Pointer[provisionConfig]
 
-// SetProvisionResolver enables the DTLS PROVISION path. Pass nil to disable it.
-func SetProvisionResolver(resolver provisionResolver, nodeID string) {
+// SetProvisionResolver enables the DTLS PROVISION path. store is this node's wg
+// peerstore, used to mint peers locally on the own-wg provision path. Pass a nil
+// resolver to disable provisioning.
+func SetProvisionResolver(resolver provisionResolver, nodeID string, store *peerstore.Store) {
 	if resolver == nil {
 		provisionState.Store(nil)
 		return
 	}
-	provisionState.Store(&provisionConfig{resolver: resolver, nodeID: nodeID})
+	provisionState.Store(&provisionConfig{resolver: resolver, nodeID: nodeID, store: store})
 }
 
 // handleProvision serves a CLIENT_HELLO_TYPE_PROVISION hello: it forwards the
@@ -51,6 +57,28 @@ func handleProvision(conn net.Conn, hello *sessionproto.ClientHello) error {
 	if err != nil {
 		log.Printf("provision for client %s failed: %v", req.GetClientId(), err)
 		return writeProvisionError(conn, "provision failed")
+	}
+	// Own-wg provision-locally: the panel asked us to mint the peer on our own wg
+	// interface (avoids the panel dialing our management API back re-entrantly).
+	// Create it locally, then report it so the panel records it and returns the
+	// full client config (routing AllowedIPs + MTU). Roll back on record failure.
+	if wg.ProvisionLocally {
+		if cfg.store == nil {
+			log.Printf("provision for client %s: provision-locally but no peerstore", req.GetClientId())
+			return writeProvisionError(conn, "provision failed")
+		}
+		created, cErr := cfg.store.Create("", "")
+		if cErr != nil {
+			log.Printf("provision for client %s: local peer create: %v", req.GetClientId(), cErr)
+			return writeProvisionError(conn, "provision failed")
+		}
+		wg, err = cfg.resolver.ReportPeer(ctx, req.GetClientId(), req.GetToken(), req.GetHwid(), cfg.nodeID,
+			created.Peer.PublicKey, created.PrivateKey, created.Peer.AllowedIPs, cfg.store.ServerPublicKey())
+		if err != nil {
+			_ = cfg.store.Delete(created.Peer.PublicKey)
+			log.Printf("provision for client %s: report peer: %v", req.GetClientId(), err)
+			return writeProvisionError(conn, "provision failed")
+		}
 	}
 	return writeProvisionResponse(conn, &sessionproto.ProvisionResponse{
 		Wg: &sessionproto.WireguardConfig{

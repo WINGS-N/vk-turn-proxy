@@ -1044,6 +1044,9 @@ func main() {
 		}
 	}
 
+	// peers is hoisted so the panel-provision block below can mint peers locally
+	// on the own-wg path (provision-locally). nil when the management API is off.
+	var peers *peerstore.Store
 	if opts.grpcListen != "" {
 		var applier wgapply.Applier = wgapply.Noop{}
 		if opts.wgApply {
@@ -1054,9 +1057,10 @@ func main() {
 			applier = wc
 			defer func() { _ = wc.Close() }()
 		}
-		peers, err := peerstore.New(opts.wgTunnelCIDR, opts.wgInterface, opts.wgKeyFile, applier)
-		if err != nil {
-			log.Fatalf("relay peerstore: %v", err)
+		var perr error
+		peers, perr = peerstore.New(opts.wgTunnelCIDR, opts.wgInterface, opts.wgKeyFile, applier)
+		if perr != nil {
+			log.Fatalf("relay peerstore: %v", perr)
 		}
 		if opts.wgApply {
 			if err := applier.EnsureInterface(opts.wgInterface, peers.ServerPrivateKey(), opts.wgListenPort, opts.wgAddress); err != nil {
@@ -1118,7 +1122,7 @@ func main() {
 			pcOpts = append(pcOpts, panelclient.WithInsecure())
 		}
 		pc := panelclient.New(opts.panelGRPC, opts.grpcToken, pcOpts...)
-		SetProvisionResolver(pc, opts.nodeID)
+		SetProvisionResolver(pc, opts.nodeID, peers)
 		usagePoll = pc
 		log.Printf("DTLS PROVISION enabled via panel %s (node %s)", opts.panelGRPC, opts.nodeID)
 	}
