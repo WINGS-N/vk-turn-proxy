@@ -130,7 +130,7 @@ jobs:
           fi
 
           GOOS=$GOOS GOARCH=$GOARCH GOARM=$GOARM GOMIPS=$GOMIPS \
-          go build -ldflags "-s -w -checklinkname=0" -trimpath \
+          go build -ldflags "-s -w -checklinkname=0 -X main.clientVersion=${VERSION}" -trimpath \
             -o "dist/client-${GOOS}-${GOARCH}${EXT}" \
             ./client
 
@@ -140,7 +140,7 @@ jobs:
             echo "Skipping server build for $GOOS/$GOARCH (client-only target)"
           else
             GOOS=$GOOS GOARCH=$GOARCH GOARM=$GOARM GOMIPS=$GOMIPS \
-            go build -ldflags "-s -w -checklinkname=0" -trimpath \
+            go build -ldflags "-s -w -checklinkname=0 -X main.relayVersion=${VERSION}" -trimpath \
               -o "dist/server-${GOOS}-${GOARCH}${EXT}" \
               ./server
           fi
