@@ -20,6 +20,14 @@ WINGS V VKTP - форк [vk-turn-proxy](https://github.com/cacggghp/vk-turn-prox
 curl -L -o server https://github.com/WINGS-N/vk-turn-proxy/releases/latest/download/server-linux-amd64 && chmod +x server
 ```
 
+Релизы собираются под несколько платформ и архитектур - имя ассета `server-<os>-<arch>`:
+
+- **linux**: `amd64`, `arm64`, `386`, `arm` (v7), `mipsle`, `mips`, `mips64le`, `riscv64`
+- **windows**: `amd64`, `386`, `arm64` (с суффиксом `.exe`)
+- **android**: `arm64`, `arm`
+
+Сервер под darwin (macOS) не собирается - тянет linux-only netlink/wg-apply; там доступен только клиент.
+
 Запуск:
 
 ```bash
@@ -67,6 +75,8 @@ curl -L -o client https://github.com/WINGS-N/vk-turn-proxy/releases/latest/downl
 ./client -listen 127.0.0.1:9000 -peer <ip сервера>:56000 -vk-link <VK ссылка>
 ```
 
+Клиент собирается под `linux`, `windows` (`.exe`), `darwin` (macOS, amd64/arm64) и `android` - ассет `client-<os>-<arch>`.
+
 В клиентском конфиге WireGuard поменять адрес сервера на `127.0.0.1:9000`, MTU 1280.
 
 ### AllowedIPs
@@ -86,6 +96,33 @@ AllowedIPs = 0.0.0.0/1, 128.0.0.0/4, 144.0.0.0/5, 152.0.0.0/7, 154.0.0.0/8, 155.
 ```
 
 Для подсчёта собственного списка исключений: [procustodibus AllowedIPs calculator](https://www.procustodibus.com/blog/2021/03/wireguard-allowedips-calculator/).
+
+## Конфигурация (TOML)
+
+Современный способ настроить сервер - файл `/etc/wings/vktp/config.toml` (путь переопределяется env-переменной `WINGS_VKTP_CONFIG`). Флаги при этом можно вообще не передавать в unit.
+
+- Формат - плоский TOML-сабсет `ключ = значение`, где **имя ключа совпадает с именем флага** (без ведущего `-`): `listen`, `udp-connect`, `grpc-token`, `panel-grpc`, `node-id` и т.д. Вложенные таблицы и массивы не поддерживаются.
+- Приоритет: **флаг командной строки > файл > встроенный дефолт**. То есть флаг всегда перекрывает значение из файла.
+- На первом запуске (если файла ещё нет) сервер сам пишет туда самодокументированный шаблон: сконфигурированные опции - активными строками, остальные - закомментированными с их дефолтами. После этого флаги можно убрать из unit и править только файл.
+- Неизвестный ключ (опечатка) игнорируется, а не роняет старт.
+
+Пример `config.toml`:
+
+```toml
+listen = "0.0.0.0:56000"
+udp-connect = "127.0.0.1:51820"
+# управляющий API для панели
+grpc-listen = "0.0.0.0:25612"
+grpc-token = "<token>"
+# обратный канал к панели
+panel-grpc = "panel.example.org:9091"
+node-id = "<node-id>"
+# managed WireGuard
+wg-apply = true
+wg-key-file = "/etc/wings/vktp/wg.key"
+```
+
+Флаги ниже остаются полностью рабочими и удобны для отладки/ручного запуска; в проде предпочтителен `config.toml`.
 
 ## Флаги
 
@@ -124,7 +161,10 @@ AllowedIPs = 0.0.0.0/1, 128.0.0.0/4, 144.0.0.0/5, 152.0.0.0/7, 154.0.0.0/8, 155.
 |---|---|
 | `-vk-link` | Принимает comma-separated список ссылок (priority order). |
 | `-vk-link-secondary` | Фоллбэк-ссылка для случая когда все primary в cooldown. |
-| `-captcha-solver` | `v1` или `v2` (улучшенный, дефолт). |
+| `-captcha-solver` | `bypass` / `v2` (дефолт) / `v1`. `bypass` - captcha-free путь через VK Calls (`api.vk.me` / VK Connect) с legacy-солвером как фолбэк; `v2` - улучшенный солвер; `v1` - старый. |
+| `-manual-captcha` | Пропустить авто-решение капчи и сразу уйти в ручной браузерный флоу. |
+| `-vk-auth` | `anonymous` (дефолт) / `account`. В `account` реле запрашивает у хост-приложения вход в VK-аккаунт (WebView) и получает turn_server creds обратно. |
+| `-browser-fp` | Семейство браузерного фингерпринта для HTTP+TLS impersonation: `safari` (дефолт) / `chrome` / `edge` / `firefox` / `auto` (случайный на сессию). |
 | `-tcp-flavor` | `auto` (negotiate) / `direct` (smux над DTLS) / `legacy` (KCP+smux). |
 | `-creds-group-size` | Воркеров на TURN identity (default 12). |
 | `-session-mode` | `mainline` / `mu` / `auto`. mu - long-lived multi-worker sessions с in-band SessionHello. |
@@ -133,6 +173,38 @@ AllowedIPs = 0.0.0.0/1, 128.0.0.0/4, 144.0.0.0/5, 152.0.0.0/7, 154.0.0.0/8, 155.
 | `-transport` (клиент) | `datagram` или `tcp` (новый стиль вместо deprecated `-vless`). |
 | `-protect-sock` (клиент) | Unix-сокет для `VpnService.protect(fd)` IPC, нужен для роутинга от Android. |
 | `-tui` (сервер) | `auto` / `on` / `off` - interactive TUI с метриками сессий. |
+
+## Интеграция с панелью WINGS V
+
+Сервер умеет работать как управляемая нода панели [WINGS V](https://github.com/WINGS-N/v.wingsnet.org): панель по gRPC программирует WireGuard-пиры (managed-клиенты), а сервер по обратному каналу тянет с панели конфиг и лимиты трафика. Проще всего подключить ноду скриптом `connect.sh` с панели, который сам пишет `config.toml`; ниже - соответствующие флаги.
+
+**Management API (панель -> реле):**
+
+| Флаг | Default | Описание |
+|---|---|---|
+| `-grpc-listen` | empty | `ip:port` управляющего API для панели (пусто - выключено). |
+| `-grpc-token` | empty | Bearer-токен, который панель предъявляет на управляющем API. Он же используется как bearer в обратную сторону (единый токен). |
+| `-grpc-cert` / `-grpc-key` | empty | TLS-серт/ключ для управляющего API (пусто - плейнтекст). |
+
+**Обратный канал (реле -> панель, DTLS PROVISION):**
+
+| Флаг | Default | Описание |
+|---|---|---|
+| `-panel-grpc` | empty | Provisioning gRPC endpoint панели, включает DTLS PROVISION-путь. |
+| `-panel-ca-pin` | empty | SPKI-пин CA панели (`sha256/<base64>`) для self-signed панели; пусто - проверка через системный trust. |
+| `-panel-insecure` | `false` | Дозваниваться до панели по plaintext h2c вместо TLS (только доверенная локальная сеть). |
+| `-node-id` | empty | ID этой ноды, как она зарегистрирована в панели. |
+
+**Managed WireGuard (программирование пиров ядром):**
+
+| Флаг | Default | Описание |
+|---|---|---|
+| `-wg-apply` | `false` | Программировать пиры на живой kernel-WG интерфейс (нужен root). |
+| `-wg-interface` | `wg-wingsv` | Имя туннельного интерфейса. |
+| `-wg-listen-port` | `51820` | Порт WireGuard-интерфейса. |
+| `-wg-address` | `10.66.66.1/24` | Адрес WireGuard-интерфейса (CIDR). |
+| `-wg-tunnel-cidr` | `10.66.66.0/24` | Пул адресов для managed-пиров. |
+| `-wg-key-file` | empty | Путь для персиста приватного WG-ключа сервера, чтобы публичный ключ был стабилен между рестартами (пусто - генерируется заново каждый старт). |
 
 ## VLESS-режим
 
