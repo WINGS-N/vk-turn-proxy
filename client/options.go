@@ -92,7 +92,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.IntVar(&opts.appGRPCPeerUID, "app-grpc-peer-uid", -1, "uid the AppControl socket must accept and be owned by; -1 uses this process's own uid (root/kernel-WG path passes the host app uid so the app can connect to the root-launched relay)")
 	fs.StringVar(&opts.appGRPCPeerContext, "app-grpc-peer-context", "", "SELinux file context to relabel the AppControl socket to (root/kernel-WG path passes the host app's app_data_file context so untrusted_app can connect); empty leaves the socket label unchanged")
 	fs.StringVar(&opts.protoFingerprint, "proto-fp", "", "deprecated; ignored")
-	fs.StringVar(&opts.browserFP, "browser-fp", "auto", "browser fingerprint family for HTTP+TLS impersonation: auto|chrome|edge|safari|firefox (auto = random per session)")
+	fs.StringVar(&opts.browserFP, "browser-fp", "safari", "browser fingerprint family for HTTP+TLS impersonation: auto|chrome|edge|safari|firefox (default safari; auto = random per session)")
 	fs.StringVar(&opts.sessionMode, "session-mode", string(sessionproto.ModeMainline), "TURN session mode: mainline|mu|auto")
 	fs.StringVar(&opts.sessionID, "session-id", "", "override session ID (hex, 32 chars) for mu mode")
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", `LiveKit room ID; "any" creates a fresh one. When set, runs WB Stream tunnel mode.`)
