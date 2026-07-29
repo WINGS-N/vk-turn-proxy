@@ -39,6 +39,14 @@ var (
 	reCaptchaV2Version    = regexp.MustCompile(`vkid/([0-9.]*)/not_robot_captcha\.js`)
 
 	errCaptchaV2RateLimit = errors.New("captcha session rate limit reached")
+	// VK now serves a bot verdict on the checkbox flow instead of a solvable
+	// challenge; treat it distinctly so the solver falls back to the slider rather
+	// than giving up as if rate limited. Ported from amurcanov/proxy-turn-vk-android.
+	errCaptchaV2Bot = errors.New("captcha bot challenge")
+
+	// Attempt budget for a single automatic v2 solve before the caller falls back
+	// to the v1 solver.
+	captchaV2MaxAttempts = 10
 
 	captchaV2DebugCache  sync.Map // scriptURL -> string
 	captchaV2VersionSeen sync.Map // script version -> struct{} (drift warned once)
@@ -146,21 +154,28 @@ func solveVkCaptchaV2(
 
 	s := &captchaV2Session{ctx: ctx, client: client, profile: profile}
 
-	for attempt := 1; ; attempt++ {
+	for attempt := 1; attempt <= captchaV2MaxAttempts; attempt++ {
 		token, solveErr := s.solveOnce(captchaErr)
 		if solveErr == nil {
 			return token, nil
 		}
-		log.Printf("v2 captcha solve attempt %d failed: %v", attempt, solveErr)
-		if errors.Is(solveErr, errCaptchaV2RateLimit) {
-			return "", solveErr
-		}
+		log.Printf("v2 captcha solve attempt %d/%d failed: %v", attempt, captchaV2MaxAttempts, solveErr)
 
-		backoffSteps := attempt
-		if backoffSteps > 10 {
-			backoffSteps = 10
+		// A session rate limit used to abort the whole solve; wait it out and retry
+		// within the attempt budget instead, so a transient limit does not fail the
+		// connect. Ported from amurcanov/proxy-turn-vk-android.
+		var delay time.Duration
+		if errors.Is(solveErr, errCaptchaV2RateLimit) {
+			delay = 5 * time.Second
+		} else {
+			backoffSteps := attempt
+			if backoffSteps > 10 {
+				backoffSteps = 10
+			}
+			delay = time.Duration(backoffSteps)*500*time.Millisecond +
+				time.Duration(mathrand.Intn(1200))*time.Millisecond
 		}
-		timer := time.NewTimer(time.Duration(backoffSteps) * 500 * time.Millisecond)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -168,6 +183,7 @@ func solveVkCaptchaV2(
 		case <-timer.C:
 		}
 	}
+	return "", fmt.Errorf("v2 captcha attempts exhausted (%d)", captchaV2MaxAttempts)
 }
 
 func (s *captchaV2Session) solveOnce(captchaErr *vkCaptchaError) (string, error) {
@@ -237,6 +253,14 @@ func (s *captchaV2Session) solveOnce(captchaErr *vkCaptchaError) (string, error)
 		}
 		if err == nil {
 			break
+		}
+		// VK increasingly answers the checkbox flow with a bot verdict while the
+		// slider flow still clears, so switch to the slider once before giving up.
+		// Ported from amurcanov/proxy-turn-vk-android.
+		if errors.Is(err, errCaptchaV2Bot) && !strings.EqualFold(showType, "slider") && sliderSettings != "" {
+			log.Printf("v2 captcha checkbox returned BOT, retrying with slider")
+			showType = "slider"
+			continue
 		}
 		var stErr *captchaV2ShowTypeError
 		if !errors.As(err, &stErr) || stErr.ShowType == "" {
@@ -481,8 +505,11 @@ func (s *captchaV2Session) solveCheckboxCaptcha(
 	if strings.EqualFold(check.Status, "error_limit") {
 		return "", errCaptchaV2RateLimit
 	}
+	if strings.EqualFold(check.Status, "bot") {
+		return "", fmt.Errorf("%w: checkbox captcha rejected: status=%s", errCaptchaV2Bot, check.Status)
+	}
 	if !strings.EqualFold(check.Status, "ok") {
-		return "", fmt.Errorf("%w: checkbox captcha rejected: status=%s", errCaptchaV2RateLimit, check.Status)
+		return "", fmt.Errorf("checkbox captcha rejected: status=%s", check.Status)
 	}
 	if check.SuccessToken == "" {
 		return "", errors.New("captcha success token not found")
