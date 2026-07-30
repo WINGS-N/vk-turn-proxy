@@ -26,7 +26,7 @@ module vkturn-proto-tool
 
 go 1.25.5
 
-require google.golang.org/protobuf v1.36.10
+require google.golang.org/protobuf v1.36.11
 
 replace google.golang.org/protobuf => $PROTOBUF_MODULE_DIR
 EOF
