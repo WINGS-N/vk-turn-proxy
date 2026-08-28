@@ -535,7 +535,7 @@ func runLegacyStream(
 	go func() {
 		defer wg.Done()
 		defer cancel2()
-		buf := make([]byte, 1600)
+		upstream := newGROReader(serverConn, 1600)
 		counters := serverUI.counters(streamKey, clientIP)
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
@@ -545,11 +545,15 @@ func runLegacyStream(
 				return
 			default:
 			}
-			if err := readDeadline.apply(serverConn.SetReadDeadline); err != nil {
-				log.Printf("Failed: %s", err)
-				return
+			// Only re-arm the deadlines when the next datagram will actually come
+			// off the socket: the rest of a coalesced run is already in hand.
+			if upstream.buffered() == 0 {
+				if err := readDeadline.apply(serverConn.SetReadDeadline); err != nil {
+					log.Printf("Failed: %s", err)
+					return
+				}
 			}
-			n, readErr := serverConn.Read(buf)
+			payload, readErr := upstream.next()
 			if readErr != nil {
 				log.Printf("Failed: %s", readErr)
 				return
@@ -559,11 +563,11 @@ func runLegacyStream(
 				log.Printf("Failed: %s", err)
 				return
 			}
-			if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+			if _, writeErr := conn.Write(payload); writeErr != nil {
 				log.Printf("Failed: %s", writeErr)
 				return
 			}
-			counters.addTx(n)
+			counters.addTx(len(payload))
 		}
 	}()
 
@@ -814,7 +818,7 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 	go func() {
 		defer wg.Done()
 		defer cancel2()
-		buf := make([]byte, 1600)
+		upstream := newGROReader(serverConn, 1600)
 		counters := serverUI.counters(streamKey, clientIP)
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
@@ -824,11 +828,15 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 				return
 			default:
 			}
-			if err := readDeadline.apply(serverConn.SetReadDeadline); err != nil {
-				log.Printf("Failed: %s", err)
-				return
+			// Only re-arm the deadlines when the next datagram will actually come
+			// off the socket: the rest of a coalesced run is already in hand.
+			if upstream.buffered() == 0 {
+				if err := readDeadline.apply(serverConn.SetReadDeadline); err != nil {
+					log.Printf("Failed: %s", err)
+					return
+				}
 			}
-			n, readErr := serverConn.Read(buf)
+			payload, readErr := upstream.next()
 			if readErr != nil {
 				log.Printf("Failed: %s", readErr)
 				return
@@ -838,11 +846,11 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 				log.Printf("Failed: %s", err)
 				return
 			}
-			if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+			if _, writeErr := conn.Write(payload); writeErr != nil {
 				log.Printf("Failed: %s", writeErr)
 				return
 			}
-			counters.addTx(n)
+			counters.addTx(len(payload))
 		}
 	}()
 
