@@ -45,3 +45,35 @@ func BenchmarkStatsContended(b *testing.B) {
 		}
 	})
 }
+
+// The same accounting through the handle a relay loop now holds: no lock, no map
+// lookup, just the atomic adds.
+
+func BenchmarkStatsHandleSingleStream(b *testing.B) {
+	tui := benchTUI(b, 1)
+	counters := tui.counters("stream-0", "10.66.66.2")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		counters.addRx(1400)
+	}
+}
+
+func BenchmarkStatsHandleContended(b *testing.B) {
+	const streams = 8
+	tui := benchTUI(b, streams)
+	handles := make([]*streamCounters, streams)
+	for i := range handles {
+		handles[i] = tui.counters("stream-"+strconv.Itoa(i), "10.66.66."+strconv.Itoa(i+2))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	var counter int64
+	b.RunParallel(func(pb *testing.PB) {
+		handle := handles[int(counter)%streams]
+		counter++
+		for pb.Next() {
+			handle.addRx(1400)
+		}
+	})
+}
