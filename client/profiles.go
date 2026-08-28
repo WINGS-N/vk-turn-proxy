@@ -47,7 +47,7 @@ var profile = []Profile{
 		SecChUa:         `"Google Chrome";v="146", "Chromium";v="146", "Not.A/Brand";v="24"`,
 		SecChUaMobile:   "?0",
 		SecChUaPlatform: `"Windows"`,
-		AcceptLanguage:  "en-US,en;q=0.9",
+		AcceptLanguage:  "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
 		NavPlatform:     "Win32",
 		TLS:             profiles.Chrome_146,
 	},
@@ -57,7 +57,7 @@ var profile = []Profile{
 		SecChUa:         `"Chromium";v="144", "Google Chrome";v="144", "Not_A Brand";v="99"`,
 		SecChUaMobile:   "?0",
 		SecChUaPlatform: `"Windows"`,
-		AcceptLanguage:  "en-US,en;q=0.9",
+		AcceptLanguage:  "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
 		NavPlatform:     "Win32",
 		TLS:             profiles.Chrome_144,
 	},
@@ -68,7 +68,7 @@ var profile = []Profile{
 		SecChUa:         `"Google Chrome";v="146", "Chromium";v="146", "Not.A/Brand";v="24"`,
 		SecChUaMobile:   "?0",
 		SecChUaPlatform: `"macOS"`,
-		AcceptLanguage:  "en-US,en;q=0.9",
+		AcceptLanguage:  "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
 		NavPlatform:     "MacIntel",
 		TLS:             profiles.Chrome_146,
 	},
@@ -79,7 +79,7 @@ var profile = []Profile{
 		SecChUa:         `"Google Chrome";v="146", "Chromium";v="146", "Not.A/Brand";v="24"`,
 		SecChUaMobile:   "?0",
 		SecChUaPlatform: `"Linux"`,
-		AcceptLanguage:  "en-US,en;q=0.9",
+		AcceptLanguage:  "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
 		NavPlatform:     "Linux x86_64",
 		TLS:             profiles.Chrome_146,
 	},
@@ -91,7 +91,7 @@ var profile = []Profile{
 		SecChUa:         `"Microsoft Edge";v="146", "Chromium";v="146", "Not.A/Brand";v="24"`,
 		SecChUaMobile:   "?0",
 		SecChUaPlatform: `"Windows"`,
-		AcceptLanguage:  "en-US,en;q=0.9",
+		AcceptLanguage:  "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
 		NavPlatform:     "Win32",
 		TLS:             profiles.Chrome_146,
 	},
@@ -100,7 +100,7 @@ var profile = []Profile{
 	{
 		Family:         FamilyFirefox,
 		UserAgent:      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) Gecko/20100101 Firefox/147.0",
-		AcceptLanguage: "en-US,en;q=0.5",
+		AcceptLanguage: "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
 		NavPlatform:    "Win32",
 		TLS:            profiles.Firefox_147,
 	},
@@ -108,7 +108,7 @@ var profile = []Profile{
 	{
 		Family:         FamilyFirefox,
 		UserAgent:      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:147.0) Gecko/20100101 Firefox/147.0",
-		AcceptLanguage: "en-US,en;q=0.5",
+		AcceptLanguage: "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
 		NavPlatform:    "MacIntel",
 		TLS:            profiles.Firefox_147,
 	},
@@ -116,7 +116,7 @@ var profile = []Profile{
 	{
 		Family:         FamilyFirefox,
 		UserAgent:      "Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0",
-		AcceptLanguage: "en-US,en;q=0.5",
+		AcceptLanguage: "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
 		NavPlatform:    "Linux x86_64",
 		TLS:            profiles.Firefox_147,
 	},
@@ -127,7 +127,7 @@ var profile = []Profile{
 	{
 		Family:         FamilySafari,
 		UserAgent:      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15",
-		AcceptLanguage: "en-US,en;q=0.9",
+		AcceptLanguage: "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
 		NavPlatform:    "MacIntel",
 		TLS:            profiles.Safari_16_0,
 	},
@@ -135,7 +135,7 @@ var profile = []Profile{
 	{
 		Family:         FamilySafari,
 		UserAgent:      "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
-		AcceptLanguage: "en-US,en;q=0.9",
+		AcceptLanguage: "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
 		NavPlatform:    "iPhone",
 		TLS:            profiles.Safari_IOS_26_0,
 	},
@@ -195,5 +195,5 @@ func acceptLanguageOf(profile Profile) string {
 	if profile.AcceptLanguage != "" {
 		return profile.AcceptLanguage
 	}
-	return "en-US,en;q=0.9"
+	return "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
 }

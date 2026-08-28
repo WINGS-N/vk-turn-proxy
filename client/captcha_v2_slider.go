@@ -82,7 +82,7 @@ func (s *captchaV2Session) solveSliderCaptcha(
 		{"adFp", ""},
 		{"access_token", ""},
 		{"browser_fp", browserFP},
-		{"device", captchaV2DeviceInfo},
+		{"device", buildCaptchaDeviceJSON(s.profile)},
 	}); err != nil {
 		return "", fmt.Errorf("captcha componentDone failed: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -274,5 +275,43 @@ func assertPixelEquals(t *testing.T, actual color.Color, expected color.RGBA) {
 	ar, ag, ab, aa := actual.RGBA()
 	if ar != uint32(expected.R)*0x101 || ag != uint32(expected.G)*0x101 || ab != uint32(expected.B)*0x101 || aa != uint32(expected.A)*0x101 {
 		t.Fatalf("expected pixel %+v, got rgba(%d,%d,%d,%d)", expected, ar, ag, ab, aa)
+	}
+}
+
+func TestBuildCaptchaDeviceJSON(t *testing.T) {
+	t.Parallel()
+
+	chromium := buildCaptchaDeviceJSON(Profile{
+		UserAgent:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/146.0.0.0",
+		SecChUa:     `"Google Chrome";v="146"`,
+		NavPlatform: "Win32",
+	})
+	safari := buildCaptchaDeviceJSON(Profile{
+		UserAgent:   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/18.6 Safari/605.1.15",
+		NavPlatform: "MacIntel",
+	})
+
+	for name, payload := range map[string]string{"chromium": chromium, "safari": safari} {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+			t.Fatalf("%s: device json invalid: %v (%s)", name, err, payload)
+		}
+		if decoded["language"] != "ru-RU" {
+			t.Fatalf("%s: got language %v, want ru-RU", name, decoded["language"])
+		}
+		languages, ok := decoded["languages"].([]any)
+		if !ok || len(languages) == 0 || languages[0] != "ru-RU" {
+			t.Fatalf("%s: got languages %v, want ru-RU first", name, decoded["languages"])
+		}
+	}
+
+	if !strings.Contains(chromium, `"deviceMemory":8`) {
+		t.Fatalf("chromium device json lost the Client Hints fields: %s", chromium)
+	}
+	if strings.Contains(safari, "deviceMemory") || strings.Contains(safari, "connectionEffectiveType") {
+		t.Fatalf("safari device json must not report Chromium-only APIs: %s", safari)
+	}
+	if !strings.Contains(safari, `"platform":"MacIntel"`) {
+		t.Fatalf("safari device json lost the platform: %s", safari)
 	}
 }

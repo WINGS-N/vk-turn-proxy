@@ -289,13 +289,22 @@ func callCaptchaNotRobotWithSliderPOC(
 	return successToken, nil
 }
 
+// buildCaptchaDeviceJSON renders the navigator snapshot the captcha posts as its
+// device field. The language pair mirrors acceptLanguageOf so the header and the
+// reported navigator.languages agree. deviceMemory and connectionEffectiveType are
+// Chromium-only APIs, so they go out only for profiles that advertise Client Hints.
 func buildCaptchaDeviceJSON(profile Profile) string {
 	platform := profile.NavPlatform
 	if platform == "" {
 		platform = "Win32"
 	}
+	chromiumFields := ""
+	if profile.SecChUa != "" {
+		chromiumFields = `"deviceMemory":8,"connectionEffectiveType":"4g",`
+	}
 	return fmt.Sprintf(
-		`{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1040,"innerWidth":1920,"innerHeight":969,"devicePixelRatio":1,"language":"en-US","languages":["en-US"],"webdriver":false,"hardwareConcurrency":8,"deviceMemory":8,"connectionEffectiveType":"4g","notificationsPermission":"default","userAgent":"%s","platform":"%s"}`,
+		`{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1040,"innerWidth":1920,"innerHeight":969,"devicePixelRatio":1,"language":"ru-RU","languages":["ru-RU","ru","en-US","en"],"webdriver":false,"hardwareConcurrency":8,%s"notificationsPermission":"default","userAgent":"%s","platform":"%s"}`,
+		chromiumFields,
 		profile.UserAgent,
 		platform,
 	)

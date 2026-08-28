@@ -28,7 +28,6 @@ import (
 const (
 	captchaV2APIVersion    = "5.131"
 	captchaV2ScriptVersion = "1.1.1374"
-	captchaV2DeviceInfo    = `{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1080,"innerWidth":1920,"innerHeight":951,"devicePixelRatio":1,"language":"en-US","languages":["en-US","en"],"webdriver":false,"hardwareConcurrency":8,"notificationsPermission":"denied"}`
 
 	// Difficulty the packed bundle applies when the page ships no difficulty const.
 	captchaV2DefaultPowDifficulty = 4
@@ -694,7 +693,7 @@ func (s *captchaV2Session) solveCheckboxCaptcha(
 		{"domain", "vk.com"},
 		{"adFp", ""},
 		{"browser_fp", browserFP},
-		{"device", captchaV2DeviceInfo},
+		{"device", buildCaptchaDeviceJSON(s.profile)},
 		{"access_token", ""},
 	}); err != nil {
 		return "", fmt.Errorf("captcha componentDone failed: %w", err)
