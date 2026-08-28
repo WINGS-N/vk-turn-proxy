@@ -130,10 +130,15 @@ func (runtime *sessionRuntime) UnbindDispatchChannel(streamID byte) {
 	}
 }
 
+// RunInboundDispatchLoop drains whatever the reader could not place itself. With
+// the reader dispatching inline this is the overflow path: it only runs when the
+// relays were all busy at the moment a datagram arrived.
 func (runtime *sessionRuntime) RunInboundDispatchLoop(ctx context.Context, inboundChan <-chan *UDPPacket) {
 	if runtime == nil {
 		return
 	}
+	activeInboundDispatcher.Store(runtime)
+	defer activeInboundDispatcher.CompareAndSwap(runtime, nil)
 	for {
 		select {
 		case <-ctx.Done():
@@ -303,4 +308,22 @@ func (runtime *sessionRuntime) NoteOutbound(streamID byte, bytes int) {
 func (runtime *sessionRuntime) NoteInbound(streamID byte, bytes int) {
 	_ = bytes
 	runtime.NoteDtlsAlive(streamID)
+}
+
+// activeInboundDispatcher points at the runtime currently owning inbound
+// dispatch, so the socket reader can place a datagram itself instead of waking a
+// second goroutine to do it. The reader starts before any runtime exists and
+// several runtimes come and go over a session - probe, mainline, mu - so the
+// current one is published here rather than captured by the reader.
+var activeInboundDispatcher atomic.Pointer[sessionRuntime]
+
+// DispatchInline places pkt on a relay from the calling goroutine. Reports false
+// when there is no dispatcher or every relay is busy, which leaves the caller to
+// fall back to the queue.
+func DispatchInline(pkt *UDPPacket) bool {
+	runtime := activeInboundDispatcher.Load()
+	if runtime == nil {
+		return false
+	}
+	return runtime.dispatchPacket(pkt)
 }

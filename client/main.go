@@ -169,6 +169,22 @@ func tuneUDPBuffers(target any, label string) {
 	}
 }
 
+// sameUDPPeer reports whether two addresses name the same endpoint.
+//
+// Comparing them by their text form builds two strings for every datagram the
+// tunnel carries, which is six allocations on the hottest path in the client for
+// a question that is answered by looking at the port and the address bytes.
+func sameUDPPeer(a, b net.Addr) bool {
+	left, leftOK := a.(*net.UDPAddr)
+	right, rightOK := b.(*net.UDPAddr)
+	if !leftOK || !rightOK {
+		// Something other than a UDP address: fall back to the text form, which
+		// is correct for any net.Addr and never reached on the datagram path.
+		return a.String() == b.String()
+	}
+	return left.Port == right.Port && left.Zone == right.Zone && left.IP.Equal(right.IP)
+}
+
 func newDirectNet() transport.Net {
 	return directNet{}
 }
@@ -2638,10 +2654,19 @@ func main() { //nolint:cyclop
 				if current == nil {
 					activeLocalPeer.Store(addr)
 					log.Printf("[local] first WG packet from %s (%d bytes) - forwarding into tunnel", addr, nRead)
-				} else if currentAddr, ok := current.(net.Addr); !ok || currentAddr.String() != addr.String() {
+				} else if currentAddr, ok := current.(net.Addr); !ok || !sameUDPPeer(currentAddr, addr) {
 					activeLocalPeer.Store(addr)
 				}
 				pkt.N = nRead
+				// Place the datagram on a relay from this goroutine. Handing it to
+				// a dispatch goroutine instead costs a scheduler round trip per
+				// packet, which is the same order as everything else the path
+				// spends. The queue stays as the overflow route for the moment
+				// every relay is busy, so a burst is still absorbed rather than
+				// dropped on the floor.
+				if DispatchInline(pkt) {
+					continue
+				}
 				select {
 				case inboundChan <- pkt:
 				default:
