@@ -470,13 +470,15 @@ func runLegacyStream(
 		defer wg.Done()
 		defer cancel2()
 		buf := make([]byte, 1600)
+		readDeadline := newSlidingDeadline(30 * time.Minute)
+		writeDeadline := newSlidingDeadline(30 * time.Minute)
 		for {
 			select {
 			case <-ctx2.Done():
 				return
 			default:
 			}
-			if err := conn.SetReadDeadline(time.Now().Add(30 * time.Minute)); err != nil {
+			if err := readDeadline.apply(conn.SetReadDeadline); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
@@ -506,7 +508,7 @@ func runLegacyStream(
 				continue
 			}
 
-			if err := serverConn.SetWriteDeadline(time.Now().Add(30 * time.Minute)); err != nil {
+			if err := writeDeadline.apply(serverConn.SetWriteDeadline); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
@@ -524,13 +526,15 @@ func runLegacyStream(
 		defer wg.Done()
 		defer cancel2()
 		buf := make([]byte, 1600)
+		readDeadline := newSlidingDeadline(30 * time.Minute)
+		writeDeadline := newSlidingDeadline(30 * time.Minute)
 		for {
 			select {
 			case <-ctx2.Done():
 				return
 			default:
 			}
-			if err := serverConn.SetReadDeadline(time.Now().Add(30 * time.Minute)); err != nil {
+			if err := readDeadline.apply(serverConn.SetReadDeadline); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
@@ -540,7 +544,7 @@ func runLegacyStream(
 				return
 			}
 
-			if err := conn.SetWriteDeadline(time.Now().Add(30 * time.Minute)); err != nil {
+			if err := writeDeadline.apply(conn.SetWriteDeadline); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
@@ -739,13 +743,15 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 		defer wg.Done()
 		defer cancel2()
 		buf := make([]byte, 1600)
+		readDeadline := newSlidingDeadline(30 * time.Minute)
+		writeDeadline := newSlidingDeadline(30 * time.Minute)
 		for {
 			select {
 			case <-ctx2.Done():
 				return
 			default:
 			}
-			if err := conn.SetReadDeadline(time.Now().Add(30 * time.Minute)); err != nil {
+			if err := readDeadline.apply(conn.SetReadDeadline); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
@@ -772,7 +778,7 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 				continue
 			}
 
-			if err := serverConn.SetWriteDeadline(time.Now().Add(30 * time.Minute)); err != nil {
+			if err := writeDeadline.apply(serverConn.SetWriteDeadline); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
@@ -790,13 +796,15 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 		defer wg.Done()
 		defer cancel2()
 		buf := make([]byte, 1600)
+		readDeadline := newSlidingDeadline(30 * time.Minute)
+		writeDeadline := newSlidingDeadline(30 * time.Minute)
 		for {
 			select {
 			case <-ctx2.Done():
 				return
 			default:
 			}
-			if err := serverConn.SetReadDeadline(time.Now().Add(30 * time.Minute)); err != nil {
+			if err := readDeadline.apply(serverConn.SetReadDeadline); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
@@ -806,7 +814,7 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 				return
 			}
 
-			if err := conn.SetWriteDeadline(time.Now().Add(30 * time.Minute)); err != nil {
+			if err := writeDeadline.apply(conn.SetWriteDeadline); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
@@ -1260,4 +1268,33 @@ func main() {
 			}
 		}(conn)
 	}
+}
+
+// slidingDeadline pushes a connection deadline out without paying a runtime
+// timer reset on every packet. The relay loops want an idle timeout: the
+// connection dies if nothing arrives for the timeout window. Setting that
+// deadline per packet costs a lock and a timer rearm thousands of times a
+// second on a busy stream, so the deadline is only moved once it is within
+// refresh of expiring. The idle semantics are unchanged apart from that slack.
+type slidingDeadline struct {
+	timeout time.Duration
+	refresh time.Duration
+	next    time.Time
+}
+
+func newSlidingDeadline(timeout time.Duration) *slidingDeadline {
+	return &slidingDeadline{timeout: timeout, refresh: timeout / 30}
+}
+
+func (d *slidingDeadline) apply(set func(time.Time) error) error {
+	now := time.Now()
+	if now.Before(d.next) {
+		return nil
+	}
+	deadline := now.Add(d.timeout)
+	if err := set(deadline); err != nil {
+		return err
+	}
+	d.next = deadline.Add(-d.refresh)
+	return nil
 }
