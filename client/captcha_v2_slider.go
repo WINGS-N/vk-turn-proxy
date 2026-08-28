@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/color"
 	_ "image/jpeg"
+	_ "image/png"
 	"log"
 	"math"
 	mathrand "math/rand"

@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	mathrand "math/rand"
+	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,20 +22,28 @@ import (
 
 	fhttp "github.com/bogdanfinn/fhttp"
 	tlsclient "github.com/bogdanfinn/tls-client"
+	"github.com/google/uuid"
 )
 
 const (
 	captchaV2APIVersion    = "5.131"
 	captchaV2ScriptVersion = "1.1.1374"
 	captchaV2DeviceInfo    = `{"screenWidth":1920,"screenHeight":1080,"screenAvailWidth":1920,"screenAvailHeight":1080,"innerWidth":1920,"innerHeight":951,"devicePixelRatio":1,"language":"en-US","languages":["en-US","en"],"webdriver":false,"hardwareConcurrency":8,"notificationsPermission":"denied"}`
+
+	// Difficulty the packed bundle applies when the page ships no difficulty const.
+	captchaV2DefaultPowDifficulty = 4
+	captchaV2FallbackScriptURL    = "https://id.vk.com/js/api/oauth.js"
 )
 
 var (
-	reCaptchaV2PowInput   = regexp.MustCompile(`const\s+powInput\s*=\s*"([^"]+)"`)
+	reCaptchaV2PowInput   = regexp.MustCompile(`const\s+powInput\s*=\s*["']([^"']+)["']`)
+	reCaptchaV2PowMarker  = regexp.MustCompile(`["'](pow[a-z0-9_]*)["']`)
+	reCaptchaV2PowArgs    = regexp.MustCompile(`["']([^"']{6,})["']\s*,\s*([0-9]{1,2})\s*,\s*$`)
 	reCaptchaV2Difficulty = regexp.MustCompile(`const\s+difficulty\s*=\s*(\d+)`)
 	reCaptchaV2WindowInit = regexp.MustCompile(`(?s)window\.init\s*=\s*(\{.*?})\s*;`)
-	reCaptchaV2ScriptSrc  = regexp.MustCompile(`src="(https://[^"]+not_robot_captcha[^"]+)"`)
+	reCaptchaV2ScriptSrc  = regexp.MustCompile(`src=["']([^"']*not_robot_captcha[^"']*)["']`)
 	reCaptchaV2DebugInfo  = regexp.MustCompile(`debug_info:(?:[^"]*\|\|)?"([a-fA-F0-9]{64})"`)
+	reCaptchaV2UUID       = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	reCaptchaV2Hex64      = regexp.MustCompile(`"([a-fA-F0-9]{64})"`)
 	reCaptchaV2Version    = regexp.MustCompile(`vkid/([0-9.]*)/not_robot_captcha\.js`)
 
@@ -81,14 +90,16 @@ type captchaV2InitData struct {
 }
 
 type captchaV2InitSetting struct {
-	Type     string `json:"type"`
-	Settings string `json:"settings"`
+	Type        string `json:"type"`
+	Settings    string `json:"settings"`
+	SettingsKey string `json:"settings_key"`
 }
 
 type captchaV2Page struct {
 	PowInput      string
 	PowDifficulty int
 	ScriptURL     string
+	DebugInfo     string
 	Init          *captchaV2Init
 }
 
@@ -196,20 +207,9 @@ func (s *captchaV2Session) solveOnce(captchaErr *vkCaptchaError) (string, error)
 	if err != nil {
 		return "", err
 	}
+	page.ScriptURL = resolveCaptchaV2ScriptURL(page.ScriptURL, captchaErr.RedirectURI)
 	if page.PowInput == "" {
 		return "", errors.New("failed to find PoW settings")
-	}
-
-	sliderSettings := ""
-	if page.Init != nil {
-		for _, setting := range page.Init.Data.CaptchaSettings {
-			if setting.Type == "slider" {
-				sliderSettings = setting.Settings
-			}
-		}
-	}
-	if page.Init != nil && page.Init.Data.ShowCaptchaType == "slider" && sliderSettings == "" {
-		return "", errors.New("failed to find slider captcha settings")
 	}
 
 	log.Printf("v2 captcha solving pow difficulty=%d", page.PowDifficulty)
@@ -230,16 +230,21 @@ func (s *captchaV2Session) solveOnce(captchaErr *vkCaptchaError) (string, error)
 	}
 
 	s.warnVersionDrift(page.ScriptURL)
+	debugInfo := s.resolveDebugInfo(page)
 
-	debugInfo, err := s.fetchDebugInfo(page.ScriptURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch debug info: %w (script_version=%s)", err, captchaV2ScriptVersion)
+	showType, sliderSettings := captchaV2InitialState(page.Init)
+	if showType == "" {
+		if initType, initSettings := s.fetchInitSessionState(captchaErr); initType != "" {
+			showType = initType
+			if initSettings != "" {
+				sliderSettings = initSettings
+			}
+		}
+	}
+	if strings.EqualFold(showType, "slider") && sliderSettings == "" {
+		return "", errors.New("failed to find slider captcha settings")
 	}
 
-	showType := ""
-	if page.Init != nil {
-		showType = page.Init.Data.ShowCaptchaType
-	}
 	var token string
 	for {
 		log.Printf("v2 captcha solving show_type=%s", showType)
@@ -301,6 +306,26 @@ func (s *captchaV2Session) fetchCaptchaHTML(redirectURI string) (string, error) 
 		return "", err
 	}
 	return string(body), nil
+}
+
+// resolveDebugInfo returns the debug_info value the check call carries. Newer captcha
+// pages inline it as a UUID in the HTML, older ones only expose the 64-hex constant in
+// the not_robot_captcha bundle; neither being present used to abort the solve, so fall
+// back to a generated UUID rather than losing the whole attempt.
+func (s *captchaV2Session) resolveDebugInfo(page *captchaV2Page) string {
+	if page.DebugInfo != "" {
+		return page.DebugInfo
+	}
+	if page.ScriptURL != "" {
+		value, err := s.fetchDebugInfo(page.ScriptURL)
+		if err == nil {
+			return value
+		}
+		log.Printf("v2 captcha debug_info lookup failed (script_version=%s): %v", captchaV2ScriptVersion, err)
+	}
+	value := uuid.NewString()
+	log.Printf("v2 captcha debug_info absent from page and script; generated %s", value)
+	return value
 }
 
 func (s *captchaV2Session) fetchDebugInfo(scriptURL string) (string, error) {
@@ -367,39 +392,221 @@ func extractDebugInfoV2(body []byte) (value string, usedFallback bool, err error
 func parseCaptchaV2Page(html string) (*captchaV2Page, error) {
 	page := &captchaV2Page{}
 
-	match := reCaptchaV2WindowInit.FindStringSubmatch(html)
-	if len(match) < 2 {
-		return nil, errors.New("captcha init json not found")
+	raw, err := extractCaptchaV2WindowInit(html)
+	if err != nil {
+		if m := reCaptchaV2WindowInit.FindStringSubmatch(html); len(m) >= 2 {
+			raw = m[1]
+		}
 	}
-	var init captchaV2Init
-	if err := json.Unmarshal([]byte(match[1]), &init); err != nil {
-		return nil, fmt.Errorf("captcha init json parse: %w", err)
+	if raw != "" {
+		var init captchaV2Init
+		if err := json.Unmarshal([]byte(raw), &init); err != nil {
+			return nil, fmt.Errorf("captcha init json parse: %w", err)
+		}
+		page.Init = &init
 	}
-	page.Init = &init
 
-	match = reCaptchaV2ScriptSrc.FindStringSubmatch(html)
-	if len(match) < 2 {
-		return nil, errors.New("captcha script url not found")
+	page.DebugInfo = extractDebugUUID(html)
+	if m := reCaptchaV2ScriptSrc.FindStringSubmatch(html); len(m) >= 2 {
+		page.ScriptURL = m[1]
 	}
-	page.ScriptURL = match[1]
 
 	if m := reCaptchaV2PowInput.FindStringSubmatch(html); len(m) >= 2 {
 		page.PowInput = m[1]
 	}
+	if m := reCaptchaV2Difficulty.FindStringSubmatch(html); len(m) >= 2 {
+		if difficulty, convErr := strconv.Atoi(m[1]); convErr == nil && difficulty > 0 {
+			page.PowDifficulty = difficulty
+		}
+	}
+	// A packed bundle carries no powInput/difficulty consts and hands the same pair
+	// to the pow worker positionally instead.
 	if page.PowInput == "" {
-		return page, nil
+		if seed, difficulty := extractPackedPow(html); seed != "" {
+			page.PowInput = seed
+			if difficulty > 0 {
+				page.PowDifficulty = difficulty
+			}
+		}
 	}
-
-	match = reCaptchaV2Difficulty.FindStringSubmatch(html)
-	if len(match) < 2 {
-		return nil, errors.New("captcha difficulty const not found")
+	if page.PowInput == "" && page.Init != nil {
+		for _, setting := range page.Init.Data.CaptchaSettings {
+			if setting.Type != "pow" {
+				continue
+			}
+			page.PowInput = captchaV2SettingValue(setting)
+			break
+		}
 	}
-	difficulty, err := strconv.Atoi(match[1])
-	if err != nil || difficulty <= 0 {
-		return nil, fmt.Errorf("invalid captcha difficulty %q", match[1])
+	if page.PowInput != "" && page.PowDifficulty <= 0 {
+		page.PowDifficulty = captchaV2DefaultPowDifficulty
 	}
-	page.PowDifficulty = difficulty
 	return page, nil
+}
+
+// extractDebugUUID finds the debug_info value on a packed captcha page, where it
+// is a UUID rather than the hash literal the readable bundle carries. The marker
+// is located first and the UUID is taken from the window behind it, the same way
+// extractDebugInfoV2 copes with the wrapper name drifting between builds: the
+// key VK hangs it on is not stable, the shape of the value is.
+func extractDebugUUID(html string) string {
+	marker := strings.Index(strings.ToLower(html), "debug")
+	if marker < 0 {
+		return ""
+	}
+	end := marker + 256
+	if end > len(html) {
+		end = len(html)
+	}
+	return reCaptchaV2UUID.FindString(html[marker:end])
+}
+
+// extractPackedPow pulls the PoW seed and difficulty out of a packed bundle,
+// where the two are handed to the worker positionally instead of living in named
+// consts. The pow argument name is the only stable landmark, so it is found
+// first and the two arguments in front of it are read back off the call.
+func extractPackedPow(html string) (string, int) {
+	for _, marker := range reCaptchaV2PowMarker.FindAllStringIndex(html, -1) {
+		head := html[:marker[0]]
+		if len(head) > 512 {
+			head = head[len(head)-512:]
+		}
+		args := reCaptchaV2PowArgs.FindStringSubmatch(head)
+		if len(args) < 3 {
+			continue
+		}
+		difficulty, err := strconv.Atoi(args[2])
+		if err != nil || difficulty <= 0 {
+			continue
+		}
+		return args[1], difficulty
+	}
+	return "", 0
+}
+
+// extractCaptchaV2WindowInit slices the window.init object by brace balance. The
+// lazy regex stops at the first "};", which truncates the object whenever a string
+// value inside it contains that pair.
+func extractCaptchaV2WindowInit(html string) (string, error) {
+	token := strings.Index(html, "window.init")
+	if token < 0 {
+		return "", errors.New("window.init token not found")
+	}
+	token += len("window.init")
+	offset := strings.IndexByte(html[token:], '{')
+	if offset < 0 {
+		return "", errors.New("captcha init json start brace not found")
+	}
+	start := token + offset
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(html); i++ {
+		c := html[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return html[start : i+1], nil
+			}
+		}
+	}
+	return "", errors.New("unbalanced braces in captcha init json")
+}
+
+func captchaV2SettingValue(setting captchaV2InitSetting) string {
+	if setting.Settings != "" {
+		return setting.Settings
+	}
+	return setting.SettingsKey
+}
+
+func captchaV2InitialState(init *captchaV2Init) (string, string) {
+	if init == nil {
+		return "", ""
+	}
+	sliderSettings := ""
+	for _, setting := range init.Data.CaptchaSettings {
+		if setting.Type == "slider" {
+			sliderSettings = captchaV2SettingValue(setting)
+		}
+	}
+	return init.Data.ShowCaptchaType, sliderSettings
+}
+
+// fetchInitSessionState asks VK which challenge to serve when the page ships no
+// inlined window.init. A failure is not fatal: an unknown show type means the
+// checkbox flow, which is what the caller falls back to anyway.
+func (s *captchaV2Session) fetchInitSessionState(captchaErr *vkCaptchaError) (string, string) {
+	resp, err := s.captchaRequest("captchaNotRobot.initSession", [][2]string{
+		{"session_token", captchaErr.SessionToken},
+		{"domain", captchaV2Domain(captchaErr.RedirectURI)},
+		{"lang", "0"},
+	})
+	if err != nil {
+		log.Printf("v2 captcha initSession failed: %v", err)
+		return "", ""
+	}
+	body, ok := resp["response"].(map[string]any)
+	if !ok {
+		return "", ""
+	}
+	sliderSettings := ""
+	if items, ok := body["content_settings"].([]any); ok {
+		for _, item := range items {
+			entry, ok := item.(map[string]any)
+			if !ok || captchaV2StringifyAny(entry["type"]) != "slider" {
+				continue
+			}
+			sliderSettings = captchaV2StringifyAny(entry["settings"])
+			if sliderSettings == "" {
+				sliderSettings = captchaV2StringifyAny(entry["settings_key"])
+			}
+		}
+	}
+	return captchaV2StringifyAny(body["show_captcha_type"]), sliderSettings
+}
+
+func captchaV2Domain(redirectURI string) string {
+	if parsed, err := neturl.Parse(redirectURI); err == nil {
+		if domain := strings.TrimSpace(parsed.Query().Get("domain")); domain != "" {
+			return domain
+		}
+	}
+	return "vk.com"
+}
+
+func resolveCaptchaV2ScriptURL(scriptURL string, redirectURI string) string {
+	if scriptURL == "" {
+		return captchaV2FallbackScriptURL
+	}
+	if strings.HasPrefix(scriptURL, "http://") || strings.HasPrefix(scriptURL, "https://") {
+		return scriptURL
+	}
+	base, baseErr := neturl.Parse(redirectURI)
+	ref, refErr := neturl.Parse(scriptURL)
+	if baseErr != nil || refErr != nil {
+		if !strings.HasPrefix(scriptURL, "/") {
+			scriptURL = "/" + scriptURL
+		}
+		return "https://id.vk.com" + scriptURL
+	}
+	return base.ResolveReference(ref).String()
 }
 
 func (s *captchaV2Session) captchaRequest(method string, form [][2]string) (map[string]any, error) {
@@ -452,7 +659,11 @@ func (s *captchaV2Session) performCaptchaCheck(
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("v2 captcha check status=%s", check.Status)
+	if check.ShowType == "" {
+		log.Printf("v2 captcha check status=%s", check.Status)
+	} else {
+		log.Printf("v2 captcha check status=%s show_type=%s", check.Status, check.ShowType)
+	}
 	return check, nil
 }
 
@@ -522,7 +733,7 @@ func solveCaptchaPoWV2(ctx context.Context, input string, difficulty int) string
 		return ""
 	}
 	target := strings.Repeat("0", difficulty)
-	for nonce := 1; nonce <= 10_000_000; nonce++ {
+	for nonce := 0; nonce <= 10_000_000; nonce++ {
 		if nonce%4096 == 0 {
 			select {
 			case <-ctx.Done():
