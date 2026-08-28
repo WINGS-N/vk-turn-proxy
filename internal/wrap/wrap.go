@@ -75,6 +75,14 @@ var ErrShortCiphertext = errors.New("wrap: ciphertext shorter than overhead")
 type Cipher interface {
 	Seal(plaintext []byte) ([]byte, error)
 	Open(ciphertext []byte) ([]byte, error)
+	// SealInto writes the sealed frame into dst and returns the slice of dst
+	// holding it. dst must have room for Overhead()+len(plaintext) bytes. The
+	// caller keeps ownership, so a pooled buffer carries a whole datagram
+	// through the send path without the sealer allocating one per packet.
+	SealInto(dst, plaintext []byte) ([]byte, error)
+	// OpenInPlace decrypts wire using wire's own storage and returns the
+	// plaintext slice aliasing it. wire is clobbered.
+	OpenInPlace(wire []byte) ([]byte, error)
 	Overhead() int
 }
 
@@ -205,7 +213,18 @@ func newSRTPConn(aead cipher.AEAD, isServer bool) (Cipher, error) {
 func (c *srtpConn) Overhead() int { return overhead }
 
 func (c *srtpConn) Seal(plaintext []byte) ([]byte, error) {
-	out := make([]byte, overhead+len(plaintext))
+	return c.SealInto(make([]byte, overhead+len(plaintext)), plaintext)
+}
+
+// SealInto builds the frame directly in dst: the header goes in front of the
+// payload and the AEAD seals over the payload's own storage, so a caller with a
+// pooled buffer pays no allocation and no payload copy per packet.
+func (c *srtpConn) SealInto(dst, plaintext []byte) ([]byte, error) {
+	need := overhead + len(plaintext)
+	if len(dst) < need {
+		return nil, fmt.Errorf("wrap: seal buffer too small: have %d, need %d", len(dst), need)
+	}
+	out := dst[:need]
 
 	// RTP header.
 	out[0] = rtpVersion
@@ -224,7 +243,11 @@ func (c *srtpConn) Seal(plaintext []byte) ([]byte, error) {
 	nonce := out[rtpHdrLen : rtpHdrLen+nonceLen]
 	aad := out[:headerLen]
 	ctPos := headerLen
-	copy(out[ctPos:], plaintext)
+	// copy is a no-op when the caller already staged the payload in place,
+	// which is what the headroom layout does.
+	if len(plaintext) > 0 && &out[ctPos] != &plaintext[0] {
+		copy(out[ctPos:], plaintext)
+	}
 	c.aead.Seal(out[ctPos:ctPos], nonce, out[ctPos:ctPos+len(plaintext)], aad)
 
 	return out, nil
@@ -234,11 +257,26 @@ func (c *srtpConn) Open(wire []byte) ([]byte, error) {
 	if len(wire) < overhead {
 		return nil, ErrShortCiphertext
 	}
+	ct := wire[headerLen:]
+	plain := make([]byte, 0, len(ct)-tagLen)
+	return c.open(wire, plain)
+}
+
+// OpenInPlace decrypts over the ciphertext's own storage. The receive path owns
+// the buffer the datagram was read into and hands the plaintext straight up, so
+// nothing is allocated or copied to decode a packet.
+func (c *srtpConn) OpenInPlace(wire []byte) ([]byte, error) {
+	if len(wire) < overhead {
+		return nil, ErrShortCiphertext
+	}
+	return c.open(wire, wire[headerLen:headerLen])
+}
+
+func (c *srtpConn) open(wire, dst []byte) ([]byte, error) {
 	nonce := wire[rtpHdrLen : rtpHdrLen+nonceLen]
 	aad := wire[:headerLen]
 	ct := wire[headerLen:]
-	plain := make([]byte, 0, len(ct)-tagLen)
-	plain, err := c.aead.Open(plain, nonce, ct, aad)
+	plain, err := c.aead.Open(dst, nonce, ct, aad)
 	if err != nil {
 		return nil, fmt.Errorf("wrap: AEAD open: %w", err)
 	}
