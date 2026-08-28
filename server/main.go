@@ -473,6 +473,7 @@ func runLegacyStream(
 		gathered := make([]byte, 1600)
 		upstream := newUDPGSOWriter(serverConn, 1600)
 		gather := &readGatherer{}
+		counters := serverUI.counters(streamKey, clientIP)
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
 		// handle runs one datagram through the control checks and, when it is
@@ -498,9 +499,7 @@ func runLegacyStream(
 			if err := upstream.queue(payload); err != nil {
 				return err
 			}
-			if serverUI != nil {
-				serverUI.addStreamRx(streamKey, clientIP, len(payload))
-			}
+			counters.addRx(len(payload))
 			return nil
 		}
 		for {
@@ -537,6 +536,7 @@ func runLegacyStream(
 		defer wg.Done()
 		defer cancel2()
 		buf := make([]byte, 1600)
+		counters := serverUI.counters(streamKey, clientIP)
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
 		for {
@@ -563,9 +563,7 @@ func runLegacyStream(
 				log.Printf("Failed: %s", writeErr)
 				return
 			}
-			if serverUI != nil {
-				serverUI.addStreamTx(streamKey, clientIP, n)
-			}
+			counters.addTx(n)
 		}
 	}()
 
@@ -757,6 +755,7 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 		gathered := make([]byte, 1600)
 		upstream := newUDPGSOWriter(serverConn, 1600)
 		gather := &readGatherer{}
+		counters := serverUI.counters(streamKey, clientIP)
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
 		handle := func(payload []byte) error {
@@ -779,9 +778,7 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 			if err := upstream.queue(payload); err != nil {
 				return err
 			}
-			if serverUI != nil {
-				serverUI.addStreamRx(streamKey, clientIP, len(payload))
-			}
+			counters.addRx(len(payload))
 			return nil
 		}
 		for {
@@ -818,6 +815,7 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 		defer wg.Done()
 		defer cancel2()
 		buf := make([]byte, 1600)
+		counters := serverUI.counters(streamKey, clientIP)
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
 		for {
@@ -844,9 +842,7 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 				log.Printf("Failed: %s", writeErr)
 				return
 			}
-			if serverUI != nil {
-				serverUI.addStreamTx(streamKey, clientIP, n)
-			}
+			counters.addTx(n)
 		}
 	}()
 

@@ -34,8 +34,8 @@ func (t *serverTUI) Flows() []relaygrpc.Flow {
 			Remote:      s.Remote,
 			Protocol:    s.Protocol,
 			Version:     s.Version,
-			RxBytes:     s.RxBytes,
-			TxBytes:     s.TxBytes,
+			RxBytes:     s.Bytes.rx.Load(),
+			TxBytes:     s.Bytes.tx.Load(),
 			RxRate:      s.RxRate,
 			TxRate:      s.TxRate,
 			StartedUnix: s.StartedAt.Unix(),
@@ -64,8 +64,8 @@ func (t *serverTUI) FlowStats() relaygrpc.FlowStats {
 		ActiveSessions:            uint32(len(t.sessions)),
 		TotalSessions:             t.closedSessions + uint64(len(t.sessions)),
 		AvgSessionLifetimeSeconds: avg,
-		ServerRxBytes:             t.serverRxBytes,
-		ServerTxBytes:             t.serverTxBytes,
+		ServerRxBytes:             t.serverRxBytes.Load(),
+		ServerTxBytes:             t.serverTxBytes.Load(),
 		StreamsByProtocol:         byProto,
 	}
 }
@@ -82,16 +82,27 @@ const (
 	tuiTabLogs
 )
 
+// byteCounters is one stream's or client's transferred totals. Shared between
+// the relay goroutines that add and the renderer that reads, so both directions
+// are atomic and neither needs the TUI lock.
+type byteCounters struct {
+	rx atomic.Uint64
+	tx atomic.Uint64
+}
+
 type streamMetrics struct {
-	Key             string
-	Protocol        string
-	Version         uint32
-	Remote          string
-	ClientIP        string
-	SessionID       string
-	StreamID        byte
-	RxBytes         uint64
-	TxBytes         uint64
+	Key       string
+	Protocol  string
+	Version   uint32
+	Remote    string
+	ClientIP  string
+	SessionID string
+	StreamID  byte
+	// Bytes is shared with the relay goroutines, which add to it on every
+	// datagram while the renderer reads it. Behind a pointer so a snapshot of
+	// this struct copies the reference rather than the atomics, which must not
+	// be copied. LastRx / LastTx are rate bookkeeping only the renderer touches.
+	Bytes           *byteCounters
 	LastRx          uint64
 	LastTx          uint64
 	RxRate          uint64
@@ -103,8 +114,7 @@ type streamMetrics struct {
 type clientMetrics struct {
 	ClientIP      string
 	ActiveStreams int
-	RxBytes       uint64
-	TxBytes       uint64
+	Bytes         *byteCounters
 	LastRx        uint64
 	LastTx        uint64
 	RxRate        uint64
@@ -139,8 +149,8 @@ type serverTUI struct {
 	sessions       map[string]time.Time
 	closedSessions uint64
 	totalLifetime  time.Duration
-	serverRxBytes  uint64
-	serverTxBytes  uint64
+	serverRxBytes  atomic.Uint64
+	serverTxBytes  atomic.Uint64
 	lastServerRx   uint64
 	lastServerTx   uint64
 	serverRxRate   uint64
@@ -370,11 +380,12 @@ func (t *serverTUI) registerStream(key, protocol string, version uint32, remote,
 		ClientIP:  clientIP,
 		SessionID: sessionID,
 		StreamID:  streamID,
+		Bytes:     &byteCounters{},
 		StartedAt: time.Now(),
 	}
 	client := t.clients[clientIP]
 	if client == nil {
-		client = &clientMetrics{ClientIP: clientIP}
+		client = &clientMetrics{ClientIP: clientIP, Bytes: &byteCounters{}}
 		t.clients[clientIP] = client
 	}
 	client.ActiveStreams++
@@ -393,7 +404,7 @@ func (t *serverTUI) unregisterStream(key string) {
 	client := t.clients[stream.ClientIP]
 	if client != nil {
 		client.ActiveStreams--
-		if client.ActiveStreams <= 0 && client.RxBytes == 0 && client.TxBytes == 0 {
+		if client.ActiveStreams <= 0 && client.Bytes.rx.Load() == 0 && client.Bytes.tx.Load() == 0 {
 			delete(t.clients, stream.ClientIP)
 		}
 	}
@@ -402,10 +413,6 @@ func (t *serverTUI) unregisterStream(key string) {
 
 func (t *serverTUI) addStreamRx(key, clientIP string, n int) {
 	t.addStreamBytes(key, clientIP, n, true)
-}
-
-func (t *serverTUI) addStreamTx(key, clientIP string, n int) {
-	t.addStreamBytes(key, clientIP, n, false)
 }
 
 func (t *serverTUI) noteStreamHeartbeat(key string) {
@@ -419,25 +426,64 @@ func (t *serverTUI) noteStreamHeartbeat(key string) {
 	}
 }
 
-func (t *serverTUI) addStreamBytes(key, clientIP string, n int, rx bool) {
-	if t == nil || n <= 0 {
+// streamCounters is a relay loop's handle on its own byte counters.
+//
+// Finding the stream and the client goes through the TUI's maps behind its lock,
+// which is one mutex for the whole server. Doing that per datagram put every
+// packet of every session in a queue behind a single lock. The lookup happens
+// once when the loop starts instead, and counting afterwards is three atomic
+// adds that touch no map and take no lock.
+type streamCounters struct {
+	stream *byteCounters
+	client *byteCounters
+	server *serverTUI
+}
+
+func (c *streamCounters) addRx(n int) { c.add(n, true) }
+
+func (c *streamCounters) addTx(n int) { c.add(n, false) }
+
+func (c *streamCounters) add(n int, rx bool) {
+	if c == nil || n <= 0 {
 		return
+	}
+	bytesN := uint64(n)
+	if rx {
+		if c.server != nil {
+			c.server.serverRxBytes.Add(bytesN)
+		}
+		if c.stream != nil {
+			c.stream.rx.Add(bytesN)
+		}
+		if c.client != nil {
+			c.client.rx.Add(bytesN)
+		}
+		return
+	}
+	if c.server != nil {
+		c.server.serverTxBytes.Add(bytesN)
+	}
+	if c.stream != nil {
+		c.stream.tx.Add(bytesN)
+	}
+	if c.client != nil {
+		c.client.tx.Add(bytesN)
+	}
+}
+
+// counters resolves the handle for one stream, adding the client entry when this
+// is the first stream seen from it. Call it once per relay loop; a nil TUI
+// yields a nil handle, which counts into nothing.
+func (t *serverTUI) counters(key, clientIP string) *streamCounters {
+	if t == nil {
+		return nil
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	bytesN := uint64(n)
-	if rx {
-		t.serverRxBytes += bytesN
-	} else {
-		t.serverTxBytes += bytesN
-	}
+	handle := &streamCounters{server: t}
 	if key != "" {
 		if stream := t.streams[key]; stream != nil {
-			if rx {
-				stream.RxBytes += bytesN
-			} else {
-				stream.TxBytes += bytesN
-			}
+			handle.stream = stream.Bytes
 			if clientIP == "" {
 				clientIP = stream.ClientIP
 			}
@@ -446,15 +492,22 @@ func (t *serverTUI) addStreamBytes(key, clientIP string, n int, rx bool) {
 	if clientIP != "" {
 		client := t.clients[clientIP]
 		if client == nil {
-			client = &clientMetrics{ClientIP: clientIP}
+			client = &clientMetrics{ClientIP: clientIP, Bytes: &byteCounters{}}
 			t.clients[clientIP] = client
 		}
-		if rx {
-			client.RxBytes += bytesN
-		} else {
-			client.TxBytes += bytesN
-		}
+		handle.client = client.Bytes
 	}
+	return handle
+}
+
+// addStreamBytes counts a single transfer, resolving the stream every time. Kept
+// for callers outside the datagram path; a relay loop should hold a handle from
+// counters instead.
+func (t *serverTUI) addStreamBytes(key, clientIP string, n int, rx bool) {
+	if t == nil || n <= 0 {
+		return
+	}
+	t.counters(key, clientIP).add(n, rx)
 }
 
 func (t *serverTUI) appendLog(line string) {
@@ -525,8 +578,8 @@ func (t *serverTUI) render() {
 		t.renderedLogSeq = logs[len(logs)-1].Seq
 	}
 	t.lastRenderTab = tab
-	serverRx := t.serverRxBytes
-	serverTx := t.serverTxBytes
+	serverRx := t.serverRxBytes.Load()
+	serverTx := t.serverTxBytes.Load()
 	serverRxRate := t.serverRxRate
 	serverTxRate := t.serverTxRate
 	sessionCount := len(t.sessions)
@@ -677,21 +730,27 @@ func (t *serverTUI) setMouseReporting(enabled bool) {
 }
 
 func (t *serverTUI) updateRatesLocked() {
-	t.serverRxRate = t.serverRxBytes - t.lastServerRx
-	t.serverTxRate = t.serverTxBytes - t.lastServerTx
-	t.lastServerRx = t.serverRxBytes
-	t.lastServerTx = t.serverTxBytes
+	serverRx := t.serverRxBytes.Load()
+	serverTx := t.serverTxBytes.Load()
+	t.serverRxRate = serverRx - t.lastServerRx
+	t.serverTxRate = serverTx - t.lastServerTx
+	t.lastServerRx = serverRx
+	t.lastServerTx = serverTx
 	for _, stream := range t.streams {
-		stream.RxRate = stream.RxBytes - stream.LastRx
-		stream.TxRate = stream.TxBytes - stream.LastTx
-		stream.LastRx = stream.RxBytes
-		stream.LastTx = stream.TxBytes
+		streamRx := stream.Bytes.rx.Load()
+		streamTx := stream.Bytes.tx.Load()
+		stream.RxRate = streamRx - stream.LastRx
+		stream.TxRate = streamTx - stream.LastTx
+		stream.LastRx = streamRx
+		stream.LastTx = streamTx
 	}
 	for _, client := range t.clients {
-		client.RxRate = client.RxBytes - client.LastRx
-		client.TxRate = client.TxBytes - client.LastTx
-		client.LastRx = client.RxBytes
-		client.LastTx = client.TxBytes
+		clientRx := client.Bytes.rx.Load()
+		clientTx := client.Bytes.tx.Load()
+		client.RxRate = clientRx - client.LastRx
+		client.TxRate = clientTx - client.LastTx
+		client.LastRx = clientRx
+		client.LastTx = clientTx
 	}
 }
 
@@ -792,8 +851,8 @@ func renderStreamsTable(t *serverTUI, streams []streamMetrics, limit int) string
 			heartbeatAgeLabel(stream.LastHeartbeatAt),
 			colorRate(t, stream.RxRate),
 			colorRate(t, stream.TxRate),
-			humanBytes(stream.RxBytes),
-			humanBytes(stream.TxBytes),
+			humanBytes(stream.Bytes.rx.Load()),
+			humanBytes(stream.Bytes.tx.Load()),
 		})
 	}
 	return tw.Render() + "\n"
@@ -837,8 +896,8 @@ func renderClientsTable(t *serverTUI, clients []clientMetrics, limit int) string
 			client.ActiveStreams,
 			colorRate(t, client.RxRate),
 			colorRate(t, client.TxRate),
-			humanBytes(client.RxBytes),
-			humanBytes(client.TxBytes),
+			humanBytes(client.Bytes.rx.Load()),
+			humanBytes(client.Bytes.tx.Load()),
 		})
 	}
 	return tw.Render() + "\n"
