@@ -470,8 +470,39 @@ func runLegacyStream(
 		defer wg.Done()
 		defer cancel2()
 		buf := make([]byte, 1600)
+		gathered := make([]byte, 1600)
+		upstream := newUDPGSOWriter(serverConn, 1600)
+		gather := &readGatherer{}
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
+		// handle runs one datagram through the control checks and, when it is
+		// ordinary traffic, queues it for the upstream socket. Both the blocking
+		// read and the look-ahead go through here, so a control packet is never
+		// forwarded as data just because it arrived inside a burst.
+		handle := func(payload []byte) error {
+			if handled, controlErr := handleMainlineControlPacket(conn, payload, mode, backends); handled {
+				return controlErr
+			}
+			if handled, controlErr := handleControlHeartbeatPacket(conn, payload, streamKey, controlpath.HeartbeatMeta{
+				SessionMode: string(sessionproto.ModeMainline),
+				ControlPath: controlpath.PathTurnDTLS,
+				Provider:    controlpath.ProviderTurn,
+				Transport:   sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
+				ActiveFlows: 1,
+			}); handled {
+				return controlErr
+			}
+			if err := writeDeadline.apply(serverConn.SetWriteDeadline); err != nil {
+				return err
+			}
+			if err := upstream.queue(payload); err != nil {
+				return err
+			}
+			if serverUI != nil {
+				serverUI.addStreamRx(streamKey, clientIP, len(payload))
+			}
+			return nil
+		}
 		for {
 			select {
 			case <-ctx2.Done():
@@ -487,37 +518,17 @@ func runLegacyStream(
 				log.Printf("Failed: %s", readErr)
 				return
 			}
-			if handled, controlErr := handleMainlineControlPacket(conn, buf[:n], mode, backends); handled {
-				if controlErr != nil {
-					log.Printf("Failed: %s", controlErr)
-					return
-				}
-				continue
-			}
-			if handled, controlErr := handleControlHeartbeatPacket(conn, buf[:n], streamKey, controlpath.HeartbeatMeta{
-				SessionMode: string(sessionproto.ModeMainline),
-				ControlPath: controlpath.PathTurnDTLS,
-				Provider:    controlpath.ProviderTurn,
-				Transport:   sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
-				ActiveFlows: 1,
-			}); handled {
-				if controlErr != nil {
-					log.Printf("Failed: %s", controlErr)
-					return
-				}
-				continue
-			}
-
-			if err := writeDeadline.apply(serverConn.SetWriteDeadline); err != nil {
+			if err := handle(buf[:n]); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
-			if _, writeErr := serverConn.Write(buf[:n]); writeErr != nil {
-				log.Printf("Failed: %s", writeErr)
+			if err := gatherBurst(conn, gathered, gather, readDeadline, handle); err != nil {
+				log.Printf("Failed: %s", err)
 				return
 			}
-			if serverUI != nil {
-				serverUI.addStreamRx(streamKey, clientIP, n)
+			if err := upstream.flush(); err != nil {
+				log.Printf("Failed: %s", err)
+				return
 			}
 		}
 	}()
@@ -743,8 +754,36 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 		defer wg.Done()
 		defer cancel2()
 		buf := make([]byte, 1600)
+		gathered := make([]byte, 1600)
+		upstream := newUDPGSOWriter(serverConn, 1600)
+		gather := &readGatherer{}
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
+		handle := func(payload []byte) error {
+			hbMeta := controlpath.HeartbeatMeta{
+				SessionMode: string(sessionproto.ModeMu),
+				ControlPath: controlpath.PathTurnDTLS,
+				Provider:    controlpath.ProviderTurn,
+				Transport:   sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
+				ActiveFlows: session.ActiveConnCount(),
+			}
+			// Managed clients announce their client id on the mu session hello; echo
+			// that client's cached traffic-limit usage back so the app can show it.
+			applyUsageToHeartbeat(&hbMeta, hello.GetClientId())
+			if handled, controlErr := handleControlHeartbeatPacket(conn, payload, streamKey, hbMeta); handled {
+				return controlErr
+			}
+			if err := writeDeadline.apply(serverConn.SetWriteDeadline); err != nil {
+				return err
+			}
+			if err := upstream.queue(payload); err != nil {
+				return err
+			}
+			if serverUI != nil {
+				serverUI.addStreamRx(streamKey, clientIP, len(payload))
+			}
+			return nil
+		}
 		for {
 			select {
 			case <-ctx2.Done():
@@ -760,34 +799,17 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 				log.Printf("Failed: %s", readErr)
 				return
 			}
-			hbMeta := controlpath.HeartbeatMeta{
-				SessionMode: string(sessionproto.ModeMu),
-				ControlPath: controlpath.PathTurnDTLS,
-				Provider:    controlpath.ProviderTurn,
-				Transport:   sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
-				ActiveFlows: session.ActiveConnCount(),
-			}
-			// Managed clients announce their client id on the mu session hello; echo
-			// that client's cached traffic-limit usage back so the app can show it.
-			applyUsageToHeartbeat(&hbMeta, hello.GetClientId())
-			if handled, controlErr := handleControlHeartbeatPacket(conn, buf[:n], streamKey, hbMeta); handled {
-				if controlErr != nil {
-					log.Printf("Failed: %s", controlErr)
-					return
-				}
-				continue
-			}
-
-			if err := writeDeadline.apply(serverConn.SetWriteDeadline); err != nil {
+			if err := handle(buf[:n]); err != nil {
 				log.Printf("Failed: %s", err)
 				return
 			}
-			if _, writeErr := serverConn.Write(buf[:n]); writeErr != nil {
-				log.Printf("Failed: %s", writeErr)
+			if err := gatherBurst(conn, gathered, gather, readDeadline, handle); err != nil {
+				log.Printf("Failed: %s", err)
 				return
 			}
-			if serverUI != nil {
-				serverUI.addStreamRx(streamKey, clientIP, n)
+			if err := upstream.flush(); err != nil {
+				log.Printf("Failed: %s", err)
+				return
 			}
 		}
 	}()
@@ -1285,6 +1307,10 @@ type slidingDeadline struct {
 func newSlidingDeadline(timeout time.Duration) *slidingDeadline {
 	return &slidingDeadline{timeout: timeout, refresh: timeout / 30}
 }
+
+// reset forces the next apply to re-arm the deadline, for a caller that cleared
+// it out of band.
+func (d *slidingDeadline) reset() { d.next = time.Time{} }
 
 func (d *slidingDeadline) apply(set func(time.Time) error) error {
 	now := time.Now()
