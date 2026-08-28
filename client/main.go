@@ -111,12 +111,33 @@ type directListenConfig struct {
 	*net.ListenConfig
 }
 
+// UDPPacket carries one datagram through the inbound path. Data is the payload
+// window inside storage; the bytes before it are headroom, so a layer that has
+// to put a header in front of the payload - TURN ChannelData, the WRAP frame -
+// writes it into the same buffer instead of allocating a bigger one and copying
+// the payload into it.
 type UDPPacket struct {
-	Data []byte
-	N    int
+	Data    []byte
+	N       int
+	storage []byte
+}
+
+// Frame returns the datagram with headroom bytes of writable space in front of
+// it, for a caller that prepends headers backwards.
+func (p *UDPPacket) Frame(headroom int) []byte {
+	if headroom > packetHeadroom {
+		return nil
+	}
+	start := packetHeadroom - headroom
+	return p.storage[start : packetHeadroom+p.N]
 }
 
 const (
+	// packetHeadroom reserves room in front of every pooled datagram for the
+	// headers the send path puts before the payload (WRAP is 40 bytes, TURN
+	// ChannelData 4), so those are written in place.
+	packetHeadroom            = 64
+	packetCapacity            = 2304
 	inboundPacketQueueSize    = 8192
 	perWorkerInboundQueueSize = 128
 	udpReadBufferBytes        = 4 << 20
@@ -124,7 +145,10 @@ const (
 )
 
 var packetPool = sync.Pool{
-	New: func() any { return &UDPPacket{Data: make([]byte, 2048)} },
+	New: func() any {
+		storage := make([]byte, packetCapacity)
+		return &UDPPacket{storage: storage, Data: storage[packetHeadroom:]}
+	},
 }
 
 type udpBufferTunable interface {
