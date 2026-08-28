@@ -14,7 +14,7 @@ func BenchmarkDrainQueuedBurst(b *testing.B) {
 	if err != nil {
 		b.Fatalf("listen: %v", err)
 	}
-	defer receiver.Close()
+	defer func() { _ = receiver.Close() }()
 	if err := receiver.SetReadBuffer(256 << 20); err != nil {
 		b.Fatalf("rcvbuf: %v", err)
 	}
@@ -22,7 +22,7 @@ func BenchmarkDrainQueuedBurst(b *testing.B) {
 	if err != nil {
 		b.Fatalf("dial: %v", err)
 	}
-	defer sender.Close()
+	defer func() { _ = sender.Close() }()
 
 	payload := make([]byte, 1400)
 	buf := make([]byte, 2048)
