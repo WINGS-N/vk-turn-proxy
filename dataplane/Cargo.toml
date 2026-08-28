@@ -1,0 +1,23 @@
+[package]
+name = "wingsv-dataplane"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Packet data plane for the vk-turn-proxy relay."
+
+[lib]
+name = "wingsv_dataplane"
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "uring-probe"
+path = "src/bin/uring_probe.rs"
+
+[dependencies]
+io-uring = "0.7"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+# A Rust panic must not unwind across the cgo boundary into the Go runtime.
+panic = "abort"
