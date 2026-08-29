@@ -107,6 +107,7 @@ func serverOptionsToConfigLines(o serverOptions) []string {
 		str("session-mode", o.sessionMode, "auto"),
 		str("tui", o.tuiMode, "auto"),
 		str("pprof-listen", o.pprofListen, ""),
+		boolean("no-tune-system", o.noTuneSystem, false),
 		str("wrap-mode", o.wrapMode, "on"),
 		str("wrap-cipher", o.wrapCipher, "any"),
 		str("wrap-key", o.wrapKeyHex, ""),

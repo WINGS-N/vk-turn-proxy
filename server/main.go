@@ -1200,6 +1200,9 @@ func main() {
 	// Profiles are served only when an address is configured, so a relay that
 	// was not asked for them exposes nothing.
 	startProfiler(ctx, opts.pprofListen)
+	// Raise the socket buffer ceilings before any socket is opened: the sizes
+	// requested below are clamped to whatever the kernel allows at bind time.
+	tuneSystemBuffers(opts.noTuneSystem)
 	defer serverUI.Close()
 	log.SetOutput(serverUI.logWriter())
 
@@ -1234,7 +1237,17 @@ func main() {
 			desc = "preset-key"
 		}
 		log.Printf("WRAP listener active (mode=on, %s, ciphers=%s)", desc, opts.wrapCipher)
-		inner, listenErr := pionudp.Listen("udp", addr)
+		// Every client datagram arrives on this socket, so it is the one that
+		// must not run out of receive buffer: a drop here is invisible to the
+		// relay but makes the tunnelled TCP treat it as congestion and halve its
+		// window, which costs far more throughput than the packet itself.
+		// pionudp.Listen leaves the kernel default, so the sizes go in here.
+		// The kernel still caps these at net.core.rmem_max / wmem_max.
+		listenConfig := pionudp.ListenConfig{
+			ReadBufferSize:  serverUDPReadBufferBytes,
+			WriteBufferSize: serverUDPWriteBufferBytes,
+		}
+		inner, listenErr := listenConfig.Listen("udp", addr)
 		if listenErr != nil {
 			panic(listenErr)
 		}

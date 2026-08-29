@@ -48,6 +48,11 @@ type serverOptions struct {
 	// contents and the command line, so it belongs on loopback behind an ssh
 	// tunnel, never on a public address.
 	pprofListen string
+
+	// noTuneSystem leaves the kernel's socket buffer ceilings alone. The relay
+	// raises them by default because the distribution default drops datagrams
+	// under load, but a box tuned by hand may want to keep its own values.
+	noTuneSystem bool
 }
 
 func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverOptions) {
@@ -64,6 +69,8 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.StringVar(&opts.tuiMode, "tui", "auto", "server TUI mode: auto|on|off")
 	fs.StringVar(&opts.pprofListen, "pprof-listen", "",
 		"serve Go runtime profiles on ip:port (empty = off; use a loopback address, the data is sensitive)")
+	fs.BoolVar(&opts.noTuneSystem, "no-tune-system", false,
+		"do not raise the kernel socket buffer ceilings (net.core.rmem_max / wmem_max)")
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", "join the given LiveKit room and forward DataPacket frames instead of the TURN data plane")
 	fs.StringVar(&opts.wbStreamDisplayName, "wb-stream-display-name", "", "display name the server uses when joining a LiveKit room (empty = random VK-style name per room)")
 	fs.StringVar(&opts.wbStreamE2ESecret, "wb-stream-e2e-secret", "", "optional base64-encoded 32-byte AES-256 key for E2E over DataPacket")
