@@ -64,6 +64,7 @@ func (r *workerRegistry) register(id int, cancel context.CancelFunc) {
 	r.mu.Lock()
 	r.cancels[id] = cancel
 	r.mu.Unlock()
+	emitProxyStreamsTelemetry(int(connectedStreams.Load()))
 }
 
 func (r *workerRegistry) remove(id int) {
@@ -71,6 +72,16 @@ func (r *workerRegistry) remove(id int) {
 	delete(r.gen, id)
 	delete(r.cancels, id)
 	r.mu.Unlock()
+	emitProxyStreamsTelemetry(int(connectedStreams.Load()))
+}
+
+// size is the live worker-fleet count: the ceiling the connected-stream counter
+// can reach. A threads patch drains or spawns workers, so this moves at runtime
+// and is the only honest denominator for a connected n/m readout.
+func (r *workerRegistry) size() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.cancels)
 }
 
 func (r *workerRegistry) setSpawn(fn func(streamID byte)) {

@@ -49,13 +49,14 @@ func (s *appControlServer) Configure(_ context.Context, req *appcontrolpb.Config
 func (s *appControlServer) GetTelemetry(context.Context, *appcontrolpb.GetTelemetryRequest) (*appcontrolpb.Telemetry, error) {
 	// The same counter is still printed as a PROXY_EVENT telemetry line for the
 	// logs; this just lets the app read it over gRPC instead of scraping stdout.
-	return &appcontrolpb.Telemetry{ConnectedStreams: int64(connectedStreams.Load())}, nil
+	return telemetrySnapshot{connected: connectedStreams.Load(), workers: int32(workers.size())}.proto(), nil
 }
 
 func (s *appControlServer) StreamTelemetry(_ *appcontrolpb.StreamTelemetryRequest, stream grpc.ServerStreamingServer[appcontrolpb.Telemetry]) error {
 	// Push the current value immediately, then one message per change - event-driven,
 	// so the app sees stream-count updates with no poll latency.
-	if err := stream.Send(&appcontrolpb.Telemetry{ConnectedStreams: int64(connectedStreams.Load())}); err != nil {
+	first := telemetrySnapshot{connected: connectedStreams.Load(), workers: int32(workers.size())}
+	if err := stream.Send(first.proto()); err != nil {
 		return err
 	}
 	ch := telemetryHub.subscribe()
@@ -69,7 +70,7 @@ func (s *appControlServer) StreamTelemetry(_ *appcontrolpb.StreamTelemetryReques
 			if !ok {
 				return nil
 			}
-			if err := stream.Send(&appcontrolpb.Telemetry{ConnectedStreams: int64(v)}); err != nil {
+			if err := stream.Send(v.proto()); err != nil {
 				return err
 			}
 		}
@@ -81,12 +82,27 @@ func (s *appControlServer) StreamTelemetry(_ *appcontrolpb.StreamTelemetryReques
 // coalesces to the next value it reads (the counter is a snapshot, not a log).
 type telemetryBroadcaster struct {
 	mu   sync.Mutex
-	subs map[chan int32]struct{}
+	subs map[chan telemetrySnapshot]struct{}
 }
 
-var telemetryHub = &telemetryBroadcaster{subs: make(map[chan int32]struct{})}
+// telemetrySnapshot pairs the connected-stream count with the worker-fleet size
+// it is counted against, so a subscriber never sees the two halves from
+// different moments.
+type telemetrySnapshot struct {
+	connected int32
+	workers   int32
+}
 
-func (h *telemetryBroadcaster) publish(v int32) {
+func (t telemetrySnapshot) proto() *appcontrolpb.Telemetry {
+	return &appcontrolpb.Telemetry{
+		ConnectedStreams: int64(t.connected),
+		WorkerStreams:    int64(t.workers),
+	}
+}
+
+var telemetryHub = &telemetryBroadcaster{subs: make(map[chan telemetrySnapshot]struct{})}
+
+func (h *telemetryBroadcaster) publish(v telemetrySnapshot) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.subs {
@@ -102,15 +118,15 @@ func (h *telemetryBroadcaster) publish(v int32) {
 	}
 }
 
-func (h *telemetryBroadcaster) subscribe() chan int32 {
-	ch := make(chan int32, 1)
+func (h *telemetryBroadcaster) subscribe() chan telemetrySnapshot {
+	ch := make(chan telemetrySnapshot, 1)
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}
 	h.mu.Unlock()
 	return ch
 }
 
-func (h *telemetryBroadcaster) unsubscribe(ch chan int32) {
+func (h *telemetryBroadcaster) unsubscribe(ch chan telemetrySnapshot) {
 	h.mu.Lock()
 	delete(h.subs, ch)
 	h.mu.Unlock()

@@ -700,8 +700,13 @@ func (*StreamTelemetryRequest) Descriptor() ([]byte, []int) {
 type Telemetry struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	ConnectedStreams int64                  `protobuf:"varint,1,opt,name=connected_streams,json=connectedStreams,proto3" json:"connected_streams,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// worker_streams is the size of the live worker fleet - the ceiling
+	// connected_streams can reach right now. It is not the configured thread count:
+	// a threads live-patch or a drained worker moves it, so the app must show this
+	// rather than the value it configured.
+	WorkerStreams int64 `protobuf:"varint,2,opt,name=worker_streams,json=workerStreams,proto3" json:"worker_streams,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Telemetry) Reset() {
@@ -737,6 +742,13 @@ func (*Telemetry) Descriptor() ([]byte, []int) {
 func (x *Telemetry) GetConnectedStreams() int64 {
 	if x != nil {
 		return x.ConnectedStreams
+	}
+	return 0
+}
+
+func (x *Telemetry) GetWorkerStreams() int64 {
+	if x != nil {
+		return x.WorkerStreams
 	}
 	return 0
 }
@@ -2030,9 +2042,10 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x02wg\x18\x01 \x01(\v2%.vkturn.appcontrol.v1.WireguardConfigR\x02wg\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"\x15\n" +
 	"\x13GetTelemetryRequest\"\x18\n" +
-	"\x16StreamTelemetryRequest\"8\n" +
+	"\x16StreamTelemetryRequest\"_\n" +
 	"\tTelemetry\x12+\n" +
-	"\x11connected_streams\x18\x01 \x01(\x03R\x10connectedStreams\"\x15\n" +
+	"\x11connected_streams\x18\x01 \x01(\x03R\x10connectedStreams\x12%\n" +
+	"\x0eworker_streams\x18\x02 \x01(\x03R\rworkerStreams\"\x15\n" +
 	"\x13StreamEventsRequest\"\x1a\n" +
 	"\x18StreamUnderlayIPsRequest\"\x1c\n" +
 	"\n" +

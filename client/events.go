@@ -61,6 +61,7 @@ type proxyCapsEvent struct {
 type proxyTelemetryEvent struct {
 	Type             string `json:"type"`
 	ConnectedStreams int    `json:"connected_streams"`
+	WorkerStreams    int    `json:"worker_streams"`
 }
 
 // emitProxyStreamsTelemetry reports the current number of connected TURN
@@ -69,10 +70,12 @@ type proxyTelemetryEvent struct {
 func emitProxyStreamsTelemetry(connected int) {
 	// Push to gRPC StreamTelemetry subscribers first (event-driven, no poll lag),
 	// then still print the JSONL line for the logs.
-	telemetryHub.publish(int32(connected))
+	fleet := workers.size()
+	telemetryHub.publish(telemetrySnapshot{connected: int32(connected), workers: int32(fleet)})
 	emitProxyEvent(proxyTelemetryEvent{
 		Type:             "telemetry",
 		ConnectedStreams: connected,
+		WorkerStreams:    fleet,
 	})
 }
 

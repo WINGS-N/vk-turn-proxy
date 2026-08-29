@@ -130,6 +130,11 @@ message StreamTelemetryRequest {}
 
 message Telemetry {
   int64 connected_streams = 1;
+  // worker_streams is the size of the live worker fleet - the ceiling
+  // connected_streams can reach right now. It is not the configured thread count:
+  // a threads live-patch or a drained worker moves it, so the app must show this
+  // rather than the value it configured.
+  int64 worker_streams = 2;
 }
 
 message StreamEventsRequest {}
