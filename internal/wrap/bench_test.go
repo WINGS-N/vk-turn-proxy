@@ -139,3 +139,39 @@ func BenchmarkReceiveScratchPooled(b *testing.B) {
 		conn.readBufs.Put(ptr)
 	}
 }
+
+// The send path draws its scratch from a pool that several relay goroutines hit
+// at once, so misses are normal and the size of a miss is what matters. This
+// covers the miss: a fresh buffer plus a sealed frame.
+func BenchmarkWriteScratchMiss(b *testing.B) {
+	c := benchCipher(b)
+	payload := make([]byte, 1400)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf := make([]byte, writeBufSize)
+		out, err := c.SealInto(buf, payload)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchSink = out
+	}
+}
+
+// What the same miss cost while the pool handed out 64 KiB buffers.
+func BenchmarkWriteScratchMissOversized(b *testing.B) {
+	c := benchCipher(b)
+	payload := make([]byte, 1400)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf := make([]byte, readBufSize)
+		out, err := c.SealInto(buf, payload)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchSink = out
+	}
+}
