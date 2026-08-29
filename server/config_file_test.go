@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,57 @@ func TestMergeConfigFileSeedsAndOverrides(t *testing.T) {
 		if a == "-bogus-key=ignored" {
 			t.Errorf("unknown key should be dropped: %v", merged)
 		}
+	}
+}
+
+// A node bootstrapped by connect.sh has a config holding only the panel wiring.
+// The relay must leave those lines exactly as written and append the keys the
+// file never mentioned, so the node ends up with the same documented template as
+// the rest of the fleet.
+func TestMigrateFlagsToConfigFillsGapsInPartialFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	stub := "" +
+		"grpc-token = \"deadbeef\"\n" +
+		"panel-grpc = \"v.wingsnet.org:443\"\n" +
+		"node-id = \"abc123\"\n"
+	if err := os.WriteFile(path, []byte(stub), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WINGS_VKTP_CONFIG", path)
+
+	migrateFlagsToConfig(serverOptionsToConfigLines(serverOptions{
+		grpcToken: "deadbeef",
+		panelGRPC: "v.wingsnet.org:443",
+		nodeID:    "abc123",
+	}))
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if !strings.HasPrefix(got, stub) {
+		t.Errorf("operator lines were not preserved verbatim:\n%s", got)
+	}
+	for _, want := range []string{"# listen =", "# wg-apply =", "# wrap-mode ="} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing key %q was not filled in:\n%s", want, got)
+		}
+	}
+	// The keys the stub already set must not be duplicated.
+	if n := strings.Count(got, "node-id ="); n != 1 {
+		t.Errorf("node-id appears %d times, want 1:\n%s", n, got)
+	}
+
+	// Re-running must be a no-op: every key is now mentioned.
+	before := got
+	migrateFlagsToConfig(serverOptionsToConfigLines(serverOptions{nodeID: "abc123"}))
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Errorf("second run rewrote the file; want idempotent:\n%s", string(after))
 	}
 }

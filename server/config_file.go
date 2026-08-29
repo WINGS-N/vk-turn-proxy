@@ -42,20 +42,26 @@ func mergeConfigFile(args []string) []string {
 
 // migrateFlagsToConfig writes the effective startup flags to the config file on
 // first run so an operator can later drop the flags from the unit and rely on the
-// file. It never overwrites an existing file (that file is authoritative), and it
-// logs the one-time migration. Failures are logged and ignored - a read-only
-// filesystem must not stop the relay from starting.
+// file. An existing file stays authoritative - every key it already mentions is
+// left exactly as the operator wrote it - but keys it does not mention yet are
+// appended as commented defaults. A node bootstrapped by connect.sh gets a file
+// holding only the panel wiring, and skipping it wholesale left that node without
+// the documented template the rest of the fleet has. Failures are logged and
+// ignored - a read-only filesystem must not stop the relay from starting.
 func migrateFlagsToConfig(lines []string) {
 	path := strings.TrimSpace(os.Getenv("WINGS_VKTP_CONFIG"))
 	if path == "" {
 		path = configFilePath
 	}
-	if _, err := os.Stat(path); err == nil {
-		return // already present; the file wins, nothing to migrate
-	} else if !os.IsNotExist(err) {
+	if len(lines) == 0 {
 		return
 	}
-	if len(lines) == 0 {
+	existing, readErr := os.ReadFile(path)
+	if readErr == nil {
+		fillConfigGaps(path, string(existing), lines)
+		return
+	}
+	if !os.IsNotExist(readErr) {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -70,6 +76,55 @@ func migrateFlagsToConfig(lines []string) {
 		return
 	}
 	log.Printf("config: migrated startup flags to %s (you can drop them from the unit and edit the file)", path)
+}
+
+// fillConfigGaps appends the config keys an existing file does not mention yet,
+// as commented defaults, leaving every line already in the file untouched. A key
+// counts as mentioned whether it is active or commented out, so an operator who
+// deliberately commented something back out does not get it re-added on the next
+// restart.
+func fillConfigGaps(path, existing string, lines []string) {
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(existing, "\n") {
+		if key := configLineKey(raw); key != "" {
+			seen[key] = true
+		}
+	}
+	var missing []string
+	for _, line := range lines {
+		key := configLineKey(line)
+		if key == "" || seen[key] {
+			continue
+		}
+		missing = append(missing, line)
+	}
+	if len(missing) == 0 {
+		return
+	}
+	body := existing
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	body += "\n# Added by the relay: defaults for keys this file did not mention.\n" +
+		"# Uncomment and edit what you need; commented lines do not affect the running config.\n" +
+		strings.Join(missing, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		log.Printf("config: cannot fill in %s: %v", path, err)
+		return
+	}
+	log.Printf("config: filled %d missing key(s) into %s as commented defaults", len(missing), path)
+}
+
+// configLineKey returns the flag-name key a config line carries, whether the line
+// is active or commented out, or "" when the line holds no key at all.
+func configLineKey(raw string) string {
+	line := strings.TrimSpace(raw)
+	line = strings.TrimSpace(strings.TrimPrefix(line, "#"))
+	eq := strings.IndexByte(line, '=')
+	if eq < 0 {
+		return ""
+	}
+	return strings.TrimSpace(line[:eq])
 }
 
 // serverOptionsToConfigLines renders the meaningful startup options as config
