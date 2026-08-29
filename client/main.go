@@ -27,6 +27,7 @@ import (
 
 	"github.com/cacggghp/vk-turn-proxy/appcontrolpb"
 	"github.com/cacggghp/vk-turn-proxy/internal/controlpath"
+	"github.com/cacggghp/vk-turn-proxy/internal/udpoffload"
 	"github.com/cacggghp/vk-turn-proxy/internal/wrap"
 	"github.com/cacggghp/vk-turn-proxy/sessionproto"
 	sessionmuv1 "github.com/cacggghp/vk-turn-proxy/sessionproto/mu/v1"
@@ -2638,18 +2639,25 @@ func main() { //nolint:cyclop
 	} else {
 		inboundChan := make(chan *UDPPacket, inboundPacketQueueSize)
 		go func() {
+			// The local WireGuard socket is read with receive offload: under load
+			// the kernel merges a run of same-sized datagrams and hands them over
+			// in one syscall, which is where most of the cost of this loop was.
+			// Each datagram is still copied into its own pooled buffer, because
+			// the run buffer is reused on the next read while the packet travels
+			// on into the relays.
+			local := udpoffload.NewReader(listenConn, packetCapacity)
 			for {
+				datagram, addr, readErr := local.Next()
+				if readErr != nil {
+					return
+				}
 				pktIface := packetPool.Get()
 				pkt, ok := pktIface.(*UDPPacket)
 				if !ok {
 					log.Printf("packetPool returned unexpected type: %T", pktIface)
 					continue
 				}
-				nRead, addr, readErr := listenConn.ReadFrom(pkt.Data)
-				if readErr != nil {
-					packetPool.Put(pkt)
-					return
-				}
+				nRead := copy(pkt.Data, datagram)
 				current := activeLocalPeer.Load()
 				if current == nil {
 					activeLocalPeer.Store(addr)
