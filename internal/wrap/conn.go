@@ -16,6 +16,13 @@ import (
 // framing, etc.).
 const readBufSize = 65535
 
+// writeBufSize is what a sealed frame actually needs: a tunnel datagram plus the
+// wrap header and tag. The send path pools these, and several relay goroutines
+// draw from that pool at once, so a miss is common - sizing every pooled buffer
+// for a theoretical 64 KiB datagram made each miss allocate 64 KiB to carry
+// about 1.4 KiB. A write that genuinely needs more gets its own buffer.
+const writeBufSize = 2048
+
 // dtlsRecordTypeMin / dtlsRecordTypeMax bracket the DTLS ContentType range
 // (RFC 9147 §4.1): change_cipher_spec=20, alert=21, handshake=22,
 // application_data=23, heartbeat=24, ack=26. We use the first wire byte
@@ -63,7 +70,7 @@ func NewStateful(inner net.PacketConn) *StatefulConn {
 	return &StatefulConn{
 		PacketConn: inner,
 		readBufs:   sync.Pool{New: func() any { b := make([]byte, readBufSize); return &b }},
-		writeBufs:  sync.Pool{New: func() any { b := make([]byte, readBufSize); return &b }},
+		writeBufs:  sync.Pool{New: func() any { b := make([]byte, writeBufSize); return &b }},
 	}
 }
 
@@ -99,7 +106,13 @@ func (s *StatefulConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 		return 0, errBufferPool
 	}
 	defer s.writeBufs.Put(bufPtr)
-	sealed, err := (*cp).SealInto(*bufPtr, p)
+	buf := *bufPtr
+	if needed := (*cp).Overhead() + len(p); len(buf) < needed {
+		// Oversized datagram: give this one its own buffer rather than growing
+		// every pooled buffer to fit the rarest case.
+		buf = make([]byte, needed)
+	}
+	sealed, err := (*cp).SealInto(buf, p)
 	if err != nil {
 		return 0, err
 	}
