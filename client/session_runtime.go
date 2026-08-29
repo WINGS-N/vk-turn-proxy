@@ -49,7 +49,22 @@ const dispatchChunkSize = 8
 type dispatchSlot struct {
 	streamID byte
 	sendCh   chan *UDPPacket
+	// stream carries the liveness stamp the workers write on every datagram, so
+	// dispatch can tell a relay that is still carrying traffic from one that has
+	// gone quiet without taking any lock.
+	stream *streamRuntime
 }
+
+// dispatchStaleAfter is how long a relay may go without carrying a datagram
+// before dispatch starts routing around it.
+//
+// VK tears down and rotates its TURN relays as a matter of course, so a stream
+// dying mid-session is normal rather than exceptional. The worker only leaves
+// the rotation when its goroutine returns, and until then dispatch keeps handing
+// it packets that die in its queue. Two seconds is far longer than any gap in a
+// stream that is actually carrying a transfer, and far shorter than the time a
+// torn stream lingers.
+const dispatchStaleAfter = 2000 // milliseconds
 
 func newSessionRuntime(
 	ctx context.Context,
@@ -107,7 +122,11 @@ func (runtime *sessionRuntime) BindDispatchChannel(streamID byte, packets chan *
 			return
 		}
 	}
-	runtime.dispatchSlots = append(runtime.dispatchSlots, dispatchSlot{streamID: streamID, sendCh: packets})
+	runtime.dispatchSlots = append(runtime.dispatchSlots, dispatchSlot{
+		streamID: streamID,
+		sendCh:   packets,
+		stream:   runtime.streams[streamID],
+	})
 }
 
 func (runtime *sessionRuntime) UnbindDispatchChannel(streamID byte) {
@@ -161,13 +180,34 @@ func (runtime *sessionRuntime) dispatchPacket(pkt *UDPPacket) bool {
 	if count == 0 {
 		return false
 	}
+	now := time.Now().UnixMilli()
+	// First pass over the relays that are still carrying traffic. A torn relay
+	// keeps accepting into its queue until its worker notices and unbinds, and
+	// everything placed there in the meantime dies with it, so a stream that has
+	// gone quiet is skipped rather than fed.
+	if runtime.placePacket(pkt, count, now, true) {
+		return true
+	}
+	// Nothing looked alive. That is also what an idle tunnel looks like, so fall
+	// back to placing the packet anywhere rather than dropping it.
+	return runtime.placePacket(pkt, count, now, false)
+}
+
+// placePacket walks the relays from the current rotation point and hands pkt to
+// the first that takes it. When requireLive is set, relays that have not carried
+// a datagram recently are passed over.
+func (runtime *sessionRuntime) placePacket(pkt *UDPPacket, count int, now int64, requireLive bool) bool {
 	start := runtime.dispatchRRIdx % count
 	for i := 0; i < count; i++ {
 		idx := (start + i) % count
+		slot := runtime.dispatchSlots[idx]
+		if requireLive && !slotIsLive(slot, now) {
+			continue
+		}
 		select {
-		case runtime.dispatchSlots[idx].sendCh <- pkt:
+		case slot.sendCh <- pkt:
 			if idx != start {
-				// Current relay was full; switch to this free one and start a
+				// Current relay was full or gone; switch to this one and start a
 				// fresh chunk on it.
 				runtime.dispatchRRIdx = idx
 				runtime.dispatchChunkLeft = 0
@@ -184,6 +224,16 @@ func (runtime *sessionRuntime) dispatchPacket(pkt *UDPPacket) bool {
 		}
 	}
 	return false
+}
+
+// slotIsLive reports whether a relay has carried a datagram recently enough to
+// be worth handing another one.
+func slotIsLive(slot dispatchSlot, now int64) bool {
+	if slot.stream == nil {
+		// No liveness to go on; treat it as usable rather than stranding it.
+		return true
+	}
+	return now-slot.stream.lastAliveAt.Load() <= dispatchStaleAfter
 }
 
 func (runtime *sessionRuntime) SetProtocolVersion(protocolVersion uint32) {
@@ -206,10 +256,14 @@ func (runtime *sessionRuntime) EnsureStream(streamID byte) *streamRuntime {
 
 	stream := runtime.streams[streamID]
 	if stream == nil {
+		now := time.Now().UnixMilli()
 		stream = &streamRuntime{
 			id:           streamID,
-			registeredAt: time.Now().UnixMilli(),
+			registeredAt: now,
 		}
+		// Seed liveness at registration so a relay that has not carried anything
+		// yet is not mistaken for one that has died.
+		stream.lastAliveAt.Store(now)
 		runtime.streams[streamID] = stream
 		runtime.reselectLeaderLocked()
 	}
