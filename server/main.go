@@ -1094,7 +1094,7 @@ func main() {
 			defer func() { _ = wc.Close() }()
 		}
 		var perr error
-		peers, perr = peerstore.New(opts.wgTunnelCIDR, opts.wgInterface, opts.wgKeyFile, applier)
+		peers, perr = peerstore.New(opts.wgTunnelCIDR, opts.wgInterface, wgKeyFilePath(opts), applier)
 		if perr != nil {
 			log.Fatalf("relay peerstore: %v", perr)
 		}
@@ -1345,4 +1345,22 @@ func (d *slidingDeadline) apply(set func(time.Time) error) error {
 	}
 	d.next = deadline.Add(-d.refresh)
 	return nil
+}
+
+// wgKeyFilePath decides where the node's WireGuard identity lives.
+//
+// An unset key file means the key is regenerated on every start, which is fine for a
+// relay that only forwards to someone else's WireGuard but is destructive for one
+// that owns the interface: every restart hands the node a new public key, and every
+// client already provisioned against the old one can never handshake again. So the
+// own-wg path gets a persistent default next to the config rather than inheriting
+// the ephemeral one; an explicit -wg-key-file still wins.
+func wgKeyFilePath(o serverOptions) string {
+	if path := strings.TrimSpace(o.wgKeyFile); path != "" {
+		return path
+	}
+	if !o.wgApply {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(configFilePath), "wg-server.key")
 }

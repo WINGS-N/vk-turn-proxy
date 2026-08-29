@@ -102,3 +102,20 @@ func TestMigrateFlagsToConfigFillsGapsInPartialFile(t *testing.T) {
 		t.Errorf("second run rewrote the file; want idempotent:\n%s", string(after))
 	}
 }
+
+// A relay that owns its WireGuard interface must keep the same identity across
+// restarts: a fresh key every start invalidates every client already provisioned
+// against the old public key, with no way for them to recover.
+func TestWgKeyFilePathPersistsForOwnWg(t *testing.T) {
+	if got := wgKeyFilePath(serverOptions{wgApply: true}); got == "" {
+		t.Error("own-wg relay got an ephemeral key file; its public key would change on every restart")
+	}
+	explicit := wgKeyFilePath(serverOptions{wgApply: true, wgKeyFile: "/custom/path.key"})
+	if explicit != "/custom/path.key" {
+		t.Errorf("explicit -wg-key-file = %q, want it to win", explicit)
+	}
+	// A relay forwarding to someone else's WireGuard owns no identity to keep.
+	if got := wgKeyFilePath(serverOptions{wgApply: false}); got != "" {
+		t.Errorf("forwarding relay got key file %q, want none", got)
+	}
+}
