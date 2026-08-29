@@ -1477,6 +1477,9 @@ func oneDtlsConnection(
 	if !probeOnly {
 		go func() {
 			defer dtlscancel()
+			// Resolving the stream takes the runtime lock, so it happens once
+			// here rather than for every datagram the worker carries.
+			stream := runtime.EnsureStream(streamID)
 			for {
 				select {
 				case <-dtlsctx.Done():
@@ -1493,8 +1496,8 @@ func oneDtlsConnection(
 							log.Printf("[local] first WG write to DTLS stream %d (%d bytes)", streamID, pkt.N)
 						})
 					}
-					if err1 == nil && runtime != nil {
-						runtime.NoteOutbound(streamID, pkt.N)
+					if err1 == nil {
+						stream.noteAlive()
 					}
 					packetPool.Put(pkt)
 					if err1 != nil {
@@ -1513,6 +1516,9 @@ func oneDtlsConnection(
 		defer wg.Done()
 		defer dtlscancel()
 		buf := make([]byte, 1600)
+		// Resolving the stream takes the runtime lock, so it happens once here
+		// rather than for every datagram this loop reads.
+		inboundStream := runtime.EnsureStream(streamID)
 		for {
 			select {
 			case <-dtlsctx.Done():
@@ -1526,9 +1532,7 @@ func oneDtlsConnection(
 				}
 				return
 			}
-			if runtime != nil {
-				runtime.NoteDtlsAlive(streamID)
-			}
+			inboundStream.noteAlive()
 			if payload, ok := sessionproto.ParseControlProbeResponse(buf[:n]); ok {
 				select {
 				case controlResponses <- append([]byte(nil), payload...):
@@ -1570,9 +1574,7 @@ func oneDtlsConnection(
 			if probeOnly {
 				continue
 			}
-			if runtime != nil {
-				runtime.NoteInbound(streamID, n)
-			}
+			inboundStream.noteAlive()
 			if statusEnabled || proxyDtlsReadyState.Load() {
 				emitProxyDtlsAliveStatus(int(streamID))
 			}

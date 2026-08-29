@@ -293,7 +293,16 @@ func (runtime *sessionRuntime) NoteDtlsReady(streamID byte) {
 }
 
 func (runtime *sessionRuntime) NoteDtlsAlive(streamID byte) {
-	stream := runtime.EnsureStream(streamID)
+	runtime.EnsureStream(streamID).noteAlive()
+}
+
+// noteAlive stamps the stream as still carrying traffic.
+//
+// Reaching the stream through EnsureStream takes the runtime lock, and doing
+// that per datagram put every packet of every stream behind one mutex for a
+// timestamp. A worker knows its own stream for its whole life, so it resolves
+// the handle once and stamps it directly from then on.
+func (stream *streamRuntime) noteAlive() {
 	if stream == nil {
 		return
 	}
