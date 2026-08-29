@@ -1197,6 +1197,9 @@ func main() {
 		modeLabel += "+datagram"
 	}
 	serverUI = newServerTUI(opts.listen, backends.describe(), modeLabel, opts.tuiMode)
+	// Profiles are served only when an address is configured, so a relay that
+	// was not asked for them exposes nothing.
+	startProfiler(ctx, opts.pprofListen)
 	defer serverUI.Close()
 	log.SetOutput(serverUI.logWriter())
 

@@ -11,6 +11,10 @@ import (
 )
 
 type clientOptions struct {
+	// pprofListen serves the Go runtime profiles on ip:port. Empty disables
+	// it, which is the default: the endpoint hands out goroutine stacks, heap
+	// contents and the command line, so it belongs on loopback.
+	pprofListen        string
 	host               string
 	port               string
 	listen             string
@@ -68,6 +72,8 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 
 	opts := &clientOptions{}
 	fs.StringVar(&opts.host, "turn", "", "override TURN server ip")
+	fs.StringVar(&opts.pprofListen, "pprof-listen", "",
+		"serve Go runtime profiles on ip:port (empty = off; use a loopback address, the data is sensitive)")
 	fs.StringVar(&opts.port, "port", "", "override TURN port")
 	fs.StringVar(&opts.listen, "listen", "127.0.0.1:9000", "listen on ip:port")
 	fs.StringVar(&opts.vklink, "vk-link", "", "VK calls invite link(s); accepts multiple comma-separated \"https://vk.com/call/join/...\" entries (priority order)")

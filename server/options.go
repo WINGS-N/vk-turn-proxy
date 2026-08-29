@@ -42,6 +42,12 @@ type serverOptions struct {
 	panelCAPin    string // panel CA SPKI pin (sha256/<base64>) for a self-signed panel; empty uses system trust
 	panelInsecure bool   // dial the panel over plaintext h2c (trusted local network only)
 	nodeID        string // this node's id as registered in the panel
+
+	// pprofListen serves the Go runtime profiles on ip:port. Empty disables it,
+	// which is the default: the endpoint hands out goroutine stacks, heap
+	// contents and the command line, so it belongs on loopback behind an ssh
+	// tunnel, never on a public address.
+	pprofListen string
 }
 
 func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverOptions) {
@@ -56,6 +62,8 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.BoolVar(&opts.vlessMode, "vless", false, "deprecated alias: treat legacy -connect as -tcp-connect")
 	fs.StringVar(&opts.sessionMode, "session-mode", string(sessionproto.ModeAuto), "TURN session mode: mainline|mu|auto")
 	fs.StringVar(&opts.tuiMode, "tui", "auto", "server TUI mode: auto|on|off")
+	fs.StringVar(&opts.pprofListen, "pprof-listen", "",
+		"serve Go runtime profiles on ip:port (empty = off; use a loopback address, the data is sensitive)")
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", "join the given LiveKit room and forward DataPacket frames instead of the TURN data plane")
 	fs.StringVar(&opts.wbStreamDisplayName, "wb-stream-display-name", "", "display name the server uses when joining a LiveKit room (empty = random VK-style name per room)")
 	fs.StringVar(&opts.wbStreamE2ESecret, "wb-stream-e2e-secret", "", "optional base64-encoded 32-byte AES-256 key for E2E over DataPacket")

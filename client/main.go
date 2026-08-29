@@ -2324,6 +2324,9 @@ func main() { //nolint:cyclop
 		os.Exit(0)
 	}
 	log.Printf("WINGS V VK TURN PROXY client %s starting", clientVersion)
+	// Profiles are served only when an address is configured, so a client that
+	// was not asked for them exposes nothing.
+	startProfiler(context.Background(), opts.pprofListen)
 	// Cache the physical egress interface now, before any tunnel exists (Windows underlay
 	// bypass); off Windows this is a no-op.
 	initBypass()

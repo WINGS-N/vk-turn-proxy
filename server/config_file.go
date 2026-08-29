@@ -106,6 +106,7 @@ func serverOptionsToConfigLines(o serverOptions) []string {
 		str("tcp-connect", o.tcpConnect, ""),
 		str("session-mode", o.sessionMode, "auto"),
 		str("tui", o.tuiMode, "auto"),
+		str("pprof-listen", o.pprofListen, ""),
 		str("wrap-mode", o.wrapMode, "on"),
 		str("wrap-cipher", o.wrapCipher, "any"),
 		str("wrap-key", o.wrapKeyHex, ""),
