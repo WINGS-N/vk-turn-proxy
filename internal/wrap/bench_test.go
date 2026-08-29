@@ -125,20 +125,38 @@ func BenchmarkReceiveScratchAlloc(b *testing.B) {
 }
 
 func BenchmarkReceiveScratchPooled(b *testing.B) {
-	conn := &StatefulConn{}
-	*conn = *NewStateful(nil)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ptr, ok := conn.readBufs.Get().(*[]byte)
+		ptr, ok := readBufs.Get().(*[]byte)
 		if !ok {
 			b.Fatal("pool returned an unexpected type")
 		}
 		(*ptr)[0] = byte(i)
 		benchSink = *ptr
-		conn.readBufs.Put(ptr)
+		readBufs.Put(ptr)
 	}
 }
+
+// A relay accepts one StatefulConn per DTLS peer. With per-conn pools each new peer
+// paid a cold 64 KiB miss; this covers the conn-churn path the shared pools fixed.
+func BenchmarkAcceptConnScratch(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		conn := NewStateful(nil)
+		ptr, ok := readBufs.Get().(*[]byte)
+		if !ok {
+			b.Fatal("pool returned an unexpected type")
+		}
+		(*ptr)[0] = byte(i)
+		benchSink = *ptr
+		readBufs.Put(ptr)
+		benchConnSink = conn
+	}
+}
+
+var benchConnSink *StatefulConn
 
 // The send path draws its scratch from a pool that several relay goroutines hit
 // at once, so misses are normal and the size of a miss is what matters. This

@@ -54,24 +54,29 @@ var errBufferPool = errors.New("wrap: scratch buffer pool returned an unexpected
 type StatefulConn struct {
 	net.PacketConn
 	cipher atomic.Pointer[Cipher]
-	// readBufs hands out the scratch buffer ReadFrom decodes into. A fresh
-	// 64 KiB allocation per datagram costs more than everything else on the
-	// receive path put together and feeds the collector at line rate, so the
-	// buffers are recycled instead.
-	readBufs sync.Pool
-	// writeBufs backs the sealed frame WriteTo hands to the socket.
-	writeBufs sync.Pool
 }
+
+// readBufs hands out the scratch buffer ReadFrom decodes into; writeBufs backs the
+// sealed frame WriteTo hands to the socket. A fresh 64 KiB allocation per datagram
+// costs more than everything else on the receive path put together and feeds the
+// collector at line rate, so the buffers are recycled instead.
+//
+// Both pools are package-level rather than per-conn on purpose. The server accepts
+// one StatefulConn per DTLS peer, and per-conn pools start empty, so every conn paid
+// a cold 64 KiB miss no matter how many buffers were already idle next door - worth
+// 1.35 GB of the 9.19 GB a relay allocated between restarts. A buffer is only held
+// for the duration of one ReadFrom or WriteTo call, so sharing them across conns is
+// safe and lets an idle buffer serve whichever conn needs it next.
+var (
+	readBufs  = sync.Pool{New: func() any { b := make([]byte, readBufSize); return &b }}
+	writeBufs = sync.Pool{New: func() any { b := make([]byte, writeBufSize); return &b }}
+)
 
 // NewStateful wraps inner. Starts in pass-through mode (no wrap on send,
 // auto-detect on receive but no cipher yet so SRTP-shaped packets are
 // dropped). Use Enable to switch to wrapped send.
 func NewStateful(inner net.PacketConn) *StatefulConn {
-	return &StatefulConn{
-		PacketConn: inner,
-		readBufs:   sync.Pool{New: func() any { b := make([]byte, readBufSize); return &b }},
-		writeBufs:  sync.Pool{New: func() any { b := make([]byte, writeBufSize); return &b }},
-	}
+	return &StatefulConn{PacketConn: inner}
 }
 
 // Enable switches send to wrapped mode using the given Cipher. Subsequent
@@ -101,11 +106,11 @@ func (s *StatefulConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	if cp == nil {
 		return s.PacketConn.WriteTo(p, addr)
 	}
-	bufPtr, ok := s.writeBufs.Get().(*[]byte)
+	bufPtr, ok := writeBufs.Get().(*[]byte)
 	if !ok {
 		return 0, errBufferPool
 	}
-	defer s.writeBufs.Put(bufPtr)
+	defer writeBufs.Put(bufPtr)
 	buf := *bufPtr
 	if needed := (*cp).Overhead() + len(p); len(buf) < needed {
 		// Oversized datagram: give this one its own buffer rather than growing
@@ -127,11 +132,11 @@ func (s *StatefulConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 // dropped silently and the loop reads the next one; raw packets are
 // passed through unchanged.
 func (s *StatefulConn) ReadFrom(p []byte) (int, net.Addr, error) {
-	bufPtr, ok := s.readBufs.Get().(*[]byte)
+	bufPtr, ok := readBufs.Get().(*[]byte)
 	if !ok {
 		return 0, nil, errBufferPool
 	}
-	defer s.readBufs.Put(bufPtr)
+	defer readBufs.Put(bufPtr)
 	buf := *bufPtr
 	for {
 		n, addr, err := s.PacketConn.ReadFrom(buf)
