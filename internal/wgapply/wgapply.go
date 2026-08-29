@@ -69,6 +69,9 @@ func (w *WGCtrl) EnsureInterface(name, privateKeyB64 string, listenPort int, add
 	if err := ensureForwarding(); err != nil {
 		log.Printf("wgapply: %s", err)
 	}
+	if err := ensureForwardAccept(name); err != nil {
+		log.Printf("wgapply: %s", err)
+	}
 	if err := ensureEgressNAT(name, address); err != nil {
 		log.Printf("wgapply: %s", err)
 	}
@@ -171,6 +174,33 @@ func ensureForwarding() error {
 		return fmt.Errorf("enable ip_forward: %w", err)
 	}
 	log.Printf("wgapply: enabled net.ipv4.ip_forward")
+	return nil
+}
+
+// ensureForwardAccept lets the tunnel's traffic through the FORWARD chain.
+//
+// NAT alone is not enough and the gap is silent: docker sets the FORWARD policy to
+// DROP on every host it runs on, so a decrypted packet dies there before POSTROUTING
+// is ever consulted. The symptom is a healthy WireGuard peer - handshake fine, bytes
+// received climbing - that sends almost nothing back. The rules are inserted at the
+// top so a DROP sitting in front of them cannot win, and only when absent, so a
+// restart does not stack duplicates.
+func ensureForwardAccept(iface string) error {
+	added := false
+	for _, direction := range []string{"-i", "-o"} {
+		rule := []string{"FORWARD", direction, iface, "-j", "ACCEPT"}
+		if err := exec.Command("iptables", append([]string{"-C"}, rule...)...).Run(); err == nil {
+			continue
+		}
+		args := append([]string{"-I"}, rule...)
+		if out, err := exec.Command("iptables", args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("allow forwarding %s %s: %w (%s)", direction, iface, err, strings.TrimSpace(string(out)))
+		}
+		added = true
+	}
+	if added {
+		log.Printf("wgapply: allowed forwarding for %s", iface)
+	}
 	return nil
 }
 
