@@ -7,8 +7,11 @@ package wgapply
 
 import (
 	"fmt"
+	"log"
 	"net"
+	"os"
 	"os/exec"
+	"strings"
 
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -59,6 +62,15 @@ func (w *WGCtrl) EnsureInterface(name, privateKeyB64 string, listenPort int, add
 		if err := createWireguardLink(name, address); err != nil {
 			return err
 		}
+	}
+	// Bringing the device up is only half a working tunnel: without forwarding and
+	// egress NAT the peers get an interface that routes nowhere. Doing it here keeps
+	// wg-apply a single switch instead of a switch plus a page of host setup.
+	if err := ensureForwarding(); err != nil {
+		log.Printf("wgapply: %s", err)
+	}
+	if err := ensureEgressNAT(name, address); err != nil {
+		log.Printf("wgapply: %s", err)
 	}
 	key, err := wgtypes.ParseKey(privateKeyB64)
 	if err != nil {
@@ -115,7 +127,16 @@ func peerConfig(peer Peer, remove bool) (wgtypes.PeerConfig, error) {
 
 func createWireguardLink(name, address string) error {
 	if err := runIP("link", "add", name, "type", "wireguard"); err != nil {
-		return err
+		// A distro kernel ships wireguard as a module that nothing has loaded yet,
+		// and "ip link add type wireguard" is usually the first thing on the box to
+		// ask for it. Load it and retry once rather than making every operator run
+		// modprobe by hand before the relay will start.
+		if modErr := loadWireguardModule(); modErr != nil {
+			return fmt.Errorf("%w (loading the wireguard module also failed: %s)", err, modErr)
+		}
+		if retryErr := runIP("link", "add", name, "type", "wireguard"); retryErr != nil {
+			return retryErr
+		}
 	}
 	if address != "" {
 		if err := runIP("addr", "add", address, "dev", name); err != nil {
@@ -123,6 +144,74 @@ func createWireguardLink(name, address string) error {
 		}
 	}
 	return runIP("link", "set", name, "up")
+}
+
+// loadWireguardModule asks the kernel for the wireguard module. It is a no-op
+// when the module is already loaded or built into the kernel, and needs root.
+func loadWireguardModule() error {
+	if _, err := os.Stat("/sys/module/wireguard"); err == nil {
+		return nil
+	}
+	out, err := exec.Command("modprobe", "wireguard").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("modprobe wireguard: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// ensureForwarding turns on IPv4 forwarding, without which the kernel drops every
+// packet arriving on the tunnel that is destined elsewhere.
+func ensureForwarding() error {
+	const path = "/proc/sys/net/ipv4/ip_forward"
+	cur, err := os.ReadFile(path)
+	if err == nil && strings.TrimSpace(string(cur)) == "1" {
+		return nil
+	}
+	if err := os.WriteFile(path, []byte("1\n"), 0o644); err != nil {
+		return fmt.Errorf("enable ip_forward: %w", err)
+	}
+	log.Printf("wgapply: enabled net.ipv4.ip_forward")
+	return nil
+}
+
+// ensureEgressNAT masquerades the tunnel subnet out of whatever interface holds
+// the default route. tunnelAddress is the interface address in CIDR form, whose
+// network is the subnet the peers live in. The rule is added only when an
+// equivalent one is not already installed, so restarts do not stack duplicates.
+// A host whose operator runs their own NAT keeps working either way: the check
+// finds nothing, one rule is added, and it is a no-op alongside theirs.
+func ensureEgressNAT(iface, tunnelAddress string) error {
+	subnet, err := tunnelSubnet(tunnelAddress)
+	if err != nil {
+		return err
+	}
+	// The table selector has to precede the command flag: iptables reads "-C" as
+	// taking the chain name next, so "-C -t nat POSTROUTING" is rejected outright.
+	rule := func(op string) []string {
+		return []string{"-t", "nat", op, "POSTROUTING", "-s", subnet, "!", "-o", iface, "-j", "MASQUERADE"}
+	}
+	if err := exec.Command("iptables", rule("-C")...).Run(); err == nil {
+		return nil
+	}
+	out, err := exec.Command("iptables", rule("-A")...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("add egress NAT for %s: %w (%s)", subnet, err, strings.TrimSpace(string(out)))
+	}
+	log.Printf("wgapply: masquerading %s out of the default route", subnet)
+	return nil
+}
+
+// tunnelSubnet turns an interface address such as 10.66.66.1/24 into the network
+// it belongs to, 10.66.66.0/24.
+func tunnelSubnet(address string) (string, error) {
+	if strings.TrimSpace(address) == "" {
+		return "", fmt.Errorf("no tunnel address to derive a subnet from")
+	}
+	_, ipnet, err := net.ParseCIDR(address)
+	if err != nil {
+		return "", fmt.Errorf("parse tunnel address %q: %w", address, err)
+	}
+	return ipnet.String(), nil
 }
 
 func runIP(args ...string) error {

@@ -80,3 +80,26 @@ func hasPeer(peers []wgtypes.Peer, pub string) bool {
 	}
 	return false
 }
+
+func TestTunnelSubnet(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"10.66.66.1/24", "10.66.66.0/24"},
+		{"10.0.0.5/16", "10.0.0.0/16"},
+		{"192.168.7.1/30", "192.168.7.0/30"},
+	}
+	for _, c := range cases {
+		got, err := tunnelSubnet(c.in)
+		if err != nil {
+			t.Errorf("tunnelSubnet(%q): %v", c.in, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("tunnelSubnet(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	for _, bad := range []string{"", "   ", "10.66.66.1", "not-an-address"} {
+		if _, err := tunnelSubnet(bad); err == nil {
+			t.Errorf("tunnelSubnet(%q) should have failed", bad)
+		}
+	}
+}
