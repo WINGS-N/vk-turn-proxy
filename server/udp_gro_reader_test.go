@@ -43,7 +43,7 @@ func TestGROReaderSplitsCoalescedRun(t *testing.T) {
 	for i := 0; i < segments; i++ {
 		batch[i*segment] = byte(i + 1)
 	}
-	reader := newGROReader(receiver, 1600)
+	reader := newUpstreamReader(receiver)
 	if _, err := sender.Write(batch); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestGROReaderSplitsCoalescedRun(t *testing.T) {
 		t.Fatalf("deadline: %v", err)
 	}
 	for i := 0; i < segments; i++ {
-		datagram, err := reader.next()
+		datagram, err := reader.next(receiver, make([]byte, 1600))
 		if err != nil {
 			t.Fatalf("next %d: %v", i, err)
 		}
@@ -78,7 +78,7 @@ func TestGROReaderHandlesLoneDatagram(t *testing.T) {
 	}
 	defer func() { _ = sender.Close() }()
 
-	reader := newGROReader(receiver, 1600)
+	reader := newUpstreamReader(receiver)
 	payload := []byte("a lone datagram")
 	if _, err := sender.Write(payload); err != nil {
 		t.Fatalf("write: %v", err)
@@ -86,7 +86,7 @@ func TestGROReaderHandlesLoneDatagram(t *testing.T) {
 	if err := receiver.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("deadline: %v", err)
 	}
-	got, err := reader.next()
+	got, err := reader.next(receiver, make([]byte, 1600))
 	if err != nil {
 		t.Fatalf("next: %v", err)
 	}
@@ -103,14 +103,14 @@ func TestGROReaderFallsBackForNonUDP(t *testing.T) {
 	left, right := net.Pipe()
 	t.Cleanup(func() { _ = left.Close(); _ = right.Close() })
 	go func() { _, _ = right.Write([]byte("payload")) }()
-	reader := newGROReader(left, 1600)
-	if reader.coalesce {
+	reader := newUpstreamReader(left)
+	if reader.coalescing() {
 		t.Fatal("a pipe must not enable coalescing")
 	}
 	if err := left.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("deadline: %v", err)
 	}
-	got, err := reader.next()
+	got, err := reader.next(left, make([]byte, 1600))
 	if err != nil {
 		t.Fatalf("next: %v", err)
 	}

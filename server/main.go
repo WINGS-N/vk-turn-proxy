@@ -535,7 +535,8 @@ func runLegacyStream(
 	go func() {
 		defer wg.Done()
 		defer cancel2()
-		upstream := newGROReader(serverConn, 1600)
+		buf := make([]byte, upstreamDatagramSize)
+		upstream := newUpstreamReader(serverConn)
 		counters := serverUI.counters(streamKey, clientIP)
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
@@ -553,7 +554,7 @@ func runLegacyStream(
 					return
 				}
 			}
-			payload, readErr := upstream.next()
+			payload, readErr := upstream.next(serverConn, buf)
 			if readErr != nil {
 				log.Printf("Failed: %s", readErr)
 				return
@@ -818,7 +819,8 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 	go func() {
 		defer wg.Done()
 		defer cancel2()
-		upstream := newGROReader(serverConn, 1600)
+		buf := make([]byte, upstreamDatagramSize)
+		upstream := newUpstreamReader(serverConn)
 		counters := serverUI.counters(streamKey, clientIP)
 		readDeadline := newSlidingDeadline(30 * time.Minute)
 		writeDeadline := newSlidingDeadline(30 * time.Minute)
@@ -836,7 +838,7 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 					return
 				}
 			}
-			payload, readErr := upstream.next()
+			payload, readErr := upstream.next(serverConn, buf)
 			if readErr != nil {
 				log.Printf("Failed: %s", readErr)
 				return
