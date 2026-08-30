@@ -33,6 +33,11 @@ message ResolveClientConfigRequest {
 
 message ResolveClientConfigResponse {
   WireguardConfig wg = 1;
+  // The client's whole VK link pool. The enrollment QR carries one link to stay
+  // scannable; the rest arrives here. All of them are sent, not "the ones the QR
+  // lacked" - the app merges append-only, so the QR's link is simply already
+  // there, and remembering which one it got would be state nobody needs.
+  repeated string vk_links = 3;
   // provision_locally: mint the peer on this node's own wg interface and re-call
   // ResolveClientConfig with the wg_* fields to record it, instead of the panel
   // dialing this node back (a re-entrant call that breaks during provision).

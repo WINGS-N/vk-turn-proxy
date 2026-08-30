@@ -496,9 +496,13 @@ func (x *ProvisionRequest) GetLocalPort() uint32 {
 }
 
 type ProvisionResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Wg            *WireguardConfig       `protobuf:"bytes,1,opt,name=wg,proto3" json:"wg,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Wg    *WireguardConfig       `protobuf:"bytes,1,opt,name=wg,proto3" json:"wg,omitempty"`
+	Error string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// The rest of the VK links for this client. The enrollment QR carries one, so
+	// the pool is filled here instead of being stuffed into a barcode nobody can
+	// scan. Additive: whatever the client already holds stays.
+	VkLinks       []string `protobuf:"bytes,3,rep,name=vk_links,json=vkLinks,proto3" json:"vk_links,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -545,6 +549,13 @@ func (x *ProvisionResponse) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *ProvisionResponse) GetVkLinks() []string {
+	if x != nil {
+		return x.VkLinks
+	}
+	return nil
 }
 
 type WireguardConfig struct {
@@ -1055,10 +1066,11 @@ const file_proto_session_proto_rawDesc = "" +
 	"\x05token\x18\x02 \x01(\fR\x05token\x12\x12\n" +
 	"\x04hwid\x18\x03 \x01(\tR\x04hwid\x12\x1d\n" +
 	"\n" +
-	"local_port\x18\x04 \x01(\rR\tlocalPort\"X\n" +
+	"local_port\x18\x04 \x01(\rR\tlocalPort\"s\n" +
 	"\x11ProvisionResponse\x12-\n" +
 	"\x02wg\x18\x01 \x01(\v2\x1d.sessionproto.WireguardConfigR\x02wg\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xca\x01\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x19\n" +
+	"\bvk_links\x18\x03 \x03(\tR\avkLinks\"\xca\x01\n" +
 	"\x0fWireguardConfig\x12\x1f\n" +
 	"\vprivate_key\x18\x01 \x01(\tR\n" +
 	"privateKey\x12\x1d\n" +

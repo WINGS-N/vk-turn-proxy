@@ -72,6 +72,10 @@ message ProvisionRequest {
 message ProvisionResponse {
   WireguardConfig wg = 1;
   string error = 2;
+  // The rest of the VK links for this client. The enrollment QR carries one, so
+  // the pool is filled here instead of being stuffed into a barcode nobody can
+  // scan. Additive: whatever the client already holds stays.
+  repeated string vk_links = 3;
 }
 
 message WireguardConfig {

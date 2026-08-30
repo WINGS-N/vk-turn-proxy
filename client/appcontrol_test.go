@@ -20,11 +20,14 @@ func TestAppControl(t *testing.T) {
 	var gotCookies, gotUA string
 	gs, err := StartAppControl(sock, "s3cret", -1, "",
 		func(cookies, ua string) { gotCookies, gotUA = cookies, ua },
-		func(_ context.Context, clientID string, token []byte, _ string, _ uint32) (*appcontrolpb.WireguardConfig, error) {
+		func(_ context.Context, clientID string, token []byte, _ string, _ uint32) (*appcontrolpb.ProvisionResponse, error) {
 			if clientID != "c1" || string(token) != "tok" {
 				return nil, errors.New("bad request")
 			}
-			return &appcontrolpb.WireguardConfig{PrivateKey: "priv", Address: "10.66.66.2/32", Mtu: 1280}, nil
+			return &appcontrolpb.ProvisionResponse{
+				Wg:      &appcontrolpb.WireguardConfig{PrivateKey: "priv", Address: "10.66.66.2/32", Mtu: 1280},
+				VkLinks: []string{"https://vk.com/call/one"},
+			}, nil
 		},
 		nil)
 	if err != nil {

@@ -122,6 +122,9 @@ message ProvisionRequest {
 message ProvisionResponse {
   WireguardConfig wg = 1;
   string error = 2;
+  // Same links the DTLS provision returned, handed on so the app can persist
+  // them. The relay has already put them in its own live pool by this point.
+  repeated string vk_links = 3;
 }
 
 message GetTelemetryRequest {}

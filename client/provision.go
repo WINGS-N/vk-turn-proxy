@@ -60,7 +60,7 @@ func provisionViaWorker(
 	token []byte,
 	hwid string,
 	localPort uint32,
-) (*appcontrolpb.WireguardConfig, error) {
+) (*appcontrolpb.ProvisionResponse, error) {
 	ex := &provisionExchange{
 		clientID:  clientID,
 		token:     token,
@@ -85,13 +85,22 @@ func provisionViaWorker(
 		if wg == nil {
 			return nil, fmt.Errorf("provisioning returned no config")
 		}
-		return &appcontrolpb.WireguardConfig{
-			PrivateKey:      wg.GetPrivateKey(),
-			PublicKey:       wg.GetPublicKey(),
-			Address:         wg.GetAddress(),
-			ServerPublicKey: wg.GetServerPublicKey(),
-			AllowedIps:      wg.GetAllowedIps(),
-			Mtu:             wg.GetMtu(),
+		// Into the live pool before the app is even told: this client is running
+		// on the single link its QR carried, and the sooner it has alternatives
+		// the sooner one dead link stops being an outage
+		if links := res.resp.GetVkLinks(); len(links) > 0 && patchLinkTracker != nil {
+			patchLinkTracker.addPrimaryLinks(links)
+		}
+		return &appcontrolpb.ProvisionResponse{
+			VkLinks: res.resp.GetVkLinks(),
+			Wg: &appcontrolpb.WireguardConfig{
+				PrivateKey:      wg.GetPrivateKey(),
+				PublicKey:       wg.GetPublicKey(),
+				Address:         wg.GetAddress(),
+				ServerPublicKey: wg.GetServerPublicKey(),
+				AllowedIps:      wg.GetAllowedIps(),
+				Mtu:             wg.GetMtu(),
+			},
 		}, nil
 	}
 }

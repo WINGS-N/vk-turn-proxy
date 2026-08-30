@@ -574,9 +574,12 @@ func (x *ProvisionRequest) GetLocalPort() uint32 {
 }
 
 type ProvisionResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Wg            *WireguardConfig       `protobuf:"bytes,1,opt,name=wg,proto3" json:"wg,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Wg    *WireguardConfig       `protobuf:"bytes,1,opt,name=wg,proto3" json:"wg,omitempty"`
+	Error string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// Same links the DTLS provision returned, handed on so the app can persist
+	// them. The relay has already put them in its own live pool by this point.
+	VkLinks       []string `protobuf:"bytes,3,rep,name=vk_links,json=vkLinks,proto3" json:"vk_links,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -623,6 +626,13 @@ func (x *ProvisionResponse) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *ProvisionResponse) GetVkLinks() []string {
+	if x != nil {
+		return x.VkLinks
+	}
+	return nil
 }
 
 type GetTelemetryRequest struct {
@@ -2037,10 +2047,11 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x05token\x18\x02 \x01(\fR\x05token\x12\x12\n" +
 	"\x04hwid\x18\x03 \x01(\tR\x04hwid\x12\x1d\n" +
 	"\n" +
-	"local_port\x18\x04 \x01(\rR\tlocalPort\"`\n" +
+	"local_port\x18\x04 \x01(\rR\tlocalPort\"{\n" +
 	"\x11ProvisionResponse\x125\n" +
 	"\x02wg\x18\x01 \x01(\v2%.vkturn.appcontrol.v1.WireguardConfigR\x02wg\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\x15\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x19\n" +
+	"\bvk_links\x18\x03 \x03(\tR\avkLinks\"\x15\n" +
 	"\x13GetTelemetryRequest\"\x18\n" +
 	"\x16StreamTelemetryRequest\"_\n" +
 	"\tTelemetry\x12+\n" +

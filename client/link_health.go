@@ -72,6 +72,45 @@ type linkHealthTracker struct {
 	stopOnce  sync.Once
 }
 
+// addPrimaryLinks merges links into the primary set, keeping everything already
+// there and the health state of every surviving URL.
+//
+// Provisioning delivers the pool the enrollment QR could not carry, and it lands
+// on a client that is already connected on the one link it did carry. Replacing
+// the set would throw that working link's health away for nothing; adding is what
+// this is for.
+func (t *linkHealthTracker) addPrimaryLinks(extra []string) {
+	if len(extra) == 0 {
+		return
+	}
+	t.mu.RLock()
+	merged := make([]string, 0, len(t.primary)+len(extra))
+	seen := make(map[string]struct{}, len(t.primary)+len(extra))
+	for _, h := range t.primary {
+		merged = append(merged, h.url)
+		seen[h.url] = struct{}{}
+	}
+	t.mu.RUnlock()
+
+	added := false
+	for _, raw := range extra {
+		normalized := strings.TrimSpace(raw)
+		if normalized == "" {
+			continue
+		}
+		if _, dup := seen[normalized]; dup {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		merged = append(merged, normalized)
+		added = true
+	}
+	if !added {
+		return
+	}
+	t.setPrimaryLinks(merged)
+}
+
 // setPrimaryLinks replaces the primary VK link set, preserving the health/cooldown
 // state of any URL that survives the change. A patch to an empty set is ignored so
 // resolution never loses every link.

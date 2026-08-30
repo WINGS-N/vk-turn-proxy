@@ -86,11 +86,12 @@ func TestProvisionViaWorker(t *testing.T) {
 		}
 	}()
 
-	wg, err := provisionViaWorker(context.Background(), "c1", []byte("tok"), "hw", 9000)
+	resp, err := provisionViaWorker(context.Background(), "c1", []byte("tok"), "hw", 9000)
 	if err != nil {
 		t.Fatalf("provisionViaWorker: %v", err)
 	}
 	<-done
+	wg := resp.GetWg()
 	if wg.GetPrivateKey() != "priv" || wg.GetServerPublicKey() != "spub" || wg.GetAddress() != "10.66.66.2/32" || wg.GetMtu() != 1280 {
 		t.Fatalf("mapped wg config wrong: %+v", wg)
 	}
@@ -103,5 +104,96 @@ func TestProvisionViaWorkerRejectsConcurrent(t *testing.T) {
 	pendingProvision.Store(&provisionExchange{result: make(chan provisionResult, 1)})
 	if _, err := provisionViaWorker(context.Background(), "c1", []byte("tok"), "hw", 9000); err == nil {
 		t.Fatal("expected a rejection while another enrollment is in flight")
+	}
+}
+
+// The enrollment QR carries one link, so the pool the provision returns has to
+// reach the live tracker straight away - a client running on a single link is one
+// dead link away from an outage, and waiting for a restart to fix that is no fix.
+func TestProvisionMergesLinksIntoTheLivePool(t *testing.T) {
+	pendingProvision.Store(nil)
+	t.Cleanup(func() { pendingProvision.Store(nil) })
+
+	previous := patchLinkTracker
+	tracker := &linkHealthTracker{}
+	tracker.setPrimaryLinks([]string{"https://vk.com/call/from-qr"})
+	patchLinkTracker = tracker
+	t.Cleanup(func() { patchLinkTracker = previous })
+
+	client, server := net.Pipe()
+	go fakeProvisionNode(t, server, &sessionproto.ProvisionResponse{
+		Wg:      &sessionproto.WireguardConfig{PrivateKey: "priv", ServerPublicKey: "spub", Address: "10.66.66.2/32", Mtu: 1280},
+		VkLinks: []string{"https://vk.com/call/from-qr", "https://vk.com/call/second", "https://vk.com/call/third"},
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			if runPendingProvisionOnConn(client) {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	resp, err := provisionViaWorker(context.Background(), "c1", []byte("tok"), "hw", 9000)
+	if err != nil {
+		t.Fatalf("provisionViaWorker: %v", err)
+	}
+	<-done
+
+	if len(resp.GetVkLinks()) != 3 {
+		t.Errorf("the app was handed %d links, want all three", len(resp.GetVkLinks()))
+	}
+	tracker.mu.RLock()
+	got := make([]string, 0, len(tracker.primary))
+	for _, h := range tracker.primary {
+		got = append(got, h.url)
+	}
+	tracker.mu.RUnlock()
+
+	if len(got) != 3 {
+		t.Fatalf("live pool holds %v, want three links", got)
+	}
+	// The link the client is already running on keeps its place rather than being
+	// swapped out from under a working connection
+	if got[0] != "https://vk.com/call/from-qr" {
+		t.Errorf("pool = %v, want the existing link kept first", got)
+	}
+}
+
+// A provision that returns no links must leave a working pool exactly as it was
+func TestProvisionWithNoLinksLeavesThePoolAlone(t *testing.T) {
+	pendingProvision.Store(nil)
+	t.Cleanup(func() { pendingProvision.Store(nil) })
+
+	previous := patchLinkTracker
+	tracker := &linkHealthTracker{}
+	tracker.setPrimaryLinks([]string{"https://vk.com/call/only"})
+	patchLinkTracker = tracker
+	t.Cleanup(func() { patchLinkTracker = previous })
+
+	client, server := net.Pipe()
+	go fakeProvisionNode(t, server, &sessionproto.ProvisionResponse{
+		Wg: &sessionproto.WireguardConfig{PrivateKey: "priv", Address: "10.66.66.2/32"},
+	})
+	go func() {
+		for i := 0; i < 200; i++ {
+			if runPendingProvisionOnConn(client) {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	if _, err := provisionViaWorker(context.Background(), "c1", []byte("tok"), "hw", 9000); err != nil {
+		t.Fatalf("provisionViaWorker: %v", err)
+	}
+	tracker.mu.RLock()
+	count := len(tracker.primary)
+	tracker.mu.RUnlock()
+	if count != 1 {
+		t.Errorf("pool holds %d links, want the original one untouched", count)
 	}
 }

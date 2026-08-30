@@ -29,6 +29,9 @@ type Config struct {
 	// interface and re-call to report it (own-wg path), instead of the panel
 	// dialing this node's management API back.
 	ProvisionLocally bool
+	// VKLinks is the rest of the client's pool. The enrollment QR carries one
+	// link, so everything else arrives here rather than in a barcode.
+	VKLinks []string
 }
 
 // Client talks to the panel's Provisioning gRPC endpoint.
@@ -176,5 +179,6 @@ func (c *Client) resolve(ctx context.Context, req *provisioningpb.ResolveClientC
 		AllowedIPs:       wg.GetAllowedIps(),
 		MTU:              wg.GetMtu(),
 		ProvisionLocally: resp.GetProvisionLocally(),
+		VKLinks:          resp.GetVkLinks(),
 	}, nil
 }

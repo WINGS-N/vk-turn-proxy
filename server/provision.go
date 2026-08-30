@@ -81,6 +81,10 @@ func handleProvision(conn net.Conn, hello *sessionproto.ClientHello) error {
 		}
 	}
 	return writeProvisionResponse(conn, &sessionproto.ProvisionResponse{
+		// Handing the pool over here is the point of doing this at provision time:
+		// the QR carries one link, and a client with one link is one dead link away
+		// from not connecting at all
+		VkLinks: wg.VKLinks,
 		Wg: &sessionproto.WireguardConfig{
 			PrivateKey:      wg.PrivateKey,
 			PublicKey:       wg.PublicKey,

@@ -132,6 +132,11 @@ func (x *ResolveClientConfigRequest) GetWgServerPublicKey() string {
 type ResolveClientConfigResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Wg    *WireguardConfig       `protobuf:"bytes,1,opt,name=wg,proto3" json:"wg,omitempty"`
+	// The client's whole VK link pool. The enrollment QR carries one link to stay
+	// scannable; the rest arrives here. All of them are sent, not "the ones the QR
+	// lacked" - the app merges append-only, so the QR's link is simply already
+	// there, and remembering which one it got would be state nobody needs.
+	VkLinks []string `protobuf:"bytes,3,rep,name=vk_links,json=vkLinks,proto3" json:"vk_links,omitempty"`
 	// provision_locally: mint the peer on this node's own wg interface and re-call
 	// ResolveClientConfig with the wg_* fields to record it, instead of the panel
 	// dialing this node back (a re-entrant call that breaks during provision).
@@ -173,6 +178,13 @@ func (*ResolveClientConfigResponse) Descriptor() ([]byte, []int) {
 func (x *ResolveClientConfigResponse) GetWg() *WireguardConfig {
 	if x != nil {
 		return x.Wg
+	}
+	return nil
+}
+
+func (x *ResolveClientConfigResponse) GetVkLinks() []string {
+	if x != nil {
+		return x.VkLinks
 	}
 	return nil
 }
@@ -455,9 +467,10 @@ const file_proto_provisioning_proto_rawDesc = "" +
 	"\rwg_public_key\x18\x05 \x01(\tR\vwgPublicKey\x12$\n" +
 	"\x0ewg_private_key\x18\x06 \x01(\tR\fwgPrivateKey\x12$\n" +
 	"\x0ewg_allowed_ips\x18\a \x01(\tR\fwgAllowedIps\x12/\n" +
-	"\x14wg_server_public_key\x18\b \x01(\tR\x11wgServerPublicKey\"\x83\x01\n" +
+	"\x14wg_server_public_key\x18\b \x01(\tR\x11wgServerPublicKey\"\x9e\x01\n" +
 	"\x1bResolveClientConfigResponse\x127\n" +
-	"\x02wg\x18\x01 \x01(\v2'.wingsv.provisioning.v1.WireguardConfigR\x02wg\x12+\n" +
+	"\x02wg\x18\x01 \x01(\v2'.wingsv.provisioning.v1.WireguardConfigR\x02wg\x12\x19\n" +
+	"\bvk_links\x18\x03 \x03(\tR\avkLinks\x12+\n" +
 	"\x11provision_locally\x18\x02 \x01(\bR\x10provisionLocally\"0\n" +
 	"\x15GetClientUsageRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"S\n" +

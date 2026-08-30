@@ -20,7 +20,7 @@ import (
 
 // ProvisionFunc performs the DTLS PROVISION exchange through VK TURN and returns
 // the WireGuard config the node minted for the client.
-type ProvisionFunc func(ctx context.Context, clientID string, token []byte, hwid string, localPort uint32) (*appcontrolpb.WireguardConfig, error)
+type ProvisionFunc func(ctx context.Context, clientID string, token []byte, hwid string, localPort uint32) (*appcontrolpb.ProvisionResponse, error)
 
 // appControlActive is set once the AppControl IPC is serving. While active the
 // relay stops putting the VK cookie value on stdout (the app pulls it over gRPC
@@ -248,13 +248,14 @@ func (s *appControlServer) Provision(ctx context.Context, req *appcontrolpb.Prov
 	if s.provision == nil {
 		return &appcontrolpb.ProvisionResponse{Error: "provisioning is not available"}, nil
 	}
-	wg, err := s.provision(ctx, req.GetClientId(), req.GetToken(), req.GetHwid(), req.GetLocalPort())
+	resp, err := s.provision(ctx, req.GetClientId(), req.GetToken(), req.GetHwid(), req.GetLocalPort())
 	if err != nil {
 		log.Printf("app-control: Provision client_id=%q failed: %v", req.GetClientId(), err)
 		return &appcontrolpb.ProvisionResponse{Error: err.Error()}, nil
 	}
-	log.Printf("app-control: Provision client_id=%q ok (address=%s)", req.GetClientId(), wg.GetAddress())
-	return &appcontrolpb.ProvisionResponse{Wg: wg}, nil
+	log.Printf("app-control: Provision client_id=%q ok (address=%s, %d vk links)",
+		req.GetClientId(), resp.GetWg().GetAddress(), len(resp.GetVkLinks()))
+	return resp, nil
 }
 
 func appControlAuth(token string) grpc.UnaryServerInterceptor {
