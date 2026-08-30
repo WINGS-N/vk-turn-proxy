@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -314,11 +315,22 @@ func (s *server) noteDerivation(ctx context.Context) {
 	if !ok {
 		return
 	}
-	addr := pr.Addr.String()
-	if _, seen := s.seenDerivation.LoadOrStore(addr, variant); seen {
+	// Keyed by host, not by the full address: the panel opens a fresh connection
+	// per poll, so an ephemeral port in the key would log this every few seconds
+	// for the lifetime of the process
+	host := peerHost(pr.Addr.String())
+	if _, seen := s.seenDerivation.LoadOrStore(host, variant); seen {
 		return
 	}
-	log.Printf("relay grpc: peer %s uses %s key derivation", addr, variant)
+	log.Printf("relay grpc: peer %s uses %s key derivation", host, variant)
+}
+
+func peerHost(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return host
 }
 
 func (s *server) authUnary(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
