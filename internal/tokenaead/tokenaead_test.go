@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"net"
 	"testing"
 	"time"
@@ -150,5 +151,26 @@ func TestNegotiatedVariantIsReported(t *testing.T) {
 		}
 		_ = client.Close()
 		_ = server.Close()
+	}
+}
+
+// This package exists in four repositories - the panel, the federation head and
+// agent, the 3x-ui fork and the vk-turn-proxy relay - and every pair of them has
+// to derive identical keys or the management channel silently stops connecting.
+// These vectors are the cheap way to catch a copy drifting: they are the same
+// literals in all four, so a change that only lands in one fails there.
+func TestKeyDerivationFixture(t *testing.T) {
+	const fixtureSecret = "interop-fixture-secret"
+	for _, tc := range []struct {
+		variant Variant
+		c2s     string
+	}{
+		{Legacy256, "2118ec3bf68fdafbe7114b757123a0b32ea1b53399fcd017a4a1bc04940352c5"},
+		{SHA512, "2697bf261454d5cace02abca3205991d3d77c4ea73f257d57459252285603eaf"},
+	} {
+		got := hex.EncodeToString(deriveKey(tc.variant, []byte(fixtureSecret), "c2s"))
+		if got != tc.c2s {
+			t.Errorf("%s c2s = %s, want %s (this copy has drifted from the other repositories)", tc.variant, got, tc.c2s)
+		}
 	}
 }
