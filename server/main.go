@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,10 @@ const initialNegotiationTimeout = 750 * time.Millisecond
 // -ldflags "-X main.relayVersion=$(git describe --tags --always --dirty)"; the
 // "dev" fallback is used for un-stamped local builds.
 var relayVersion = "dev"
+
+// relayBootID меняется на каждый запуск, чтобы потребитель отличал перезапуск от
+// счётчиков, поехавших назад
+var relayBootID = strconv.FormatInt(time.Now().UnixNano(), 36)
 
 var serverUI *serverTUI
 
@@ -1133,6 +1138,19 @@ func main() {
 			Flows:    flowRegistry{},
 			Listen:   opts.listen,
 			Sessions: func() uint64 { return uint64(serverUI.FlowStats().ActiveSessions) },
+			// Эти поля Status обещал и до сих пор не отдавал: супервизор видел
+			// пустую готовность и пустой boot_id, то есть не мог отличить
+			// "поднимается" от "сломан" и рестарт от съехавших счётчиков
+			Ready:                func() bool { return serverUI != nil },
+			BootID:               relayBootID,
+			WrapCipher:           opts.wrapCipher,
+			SupportedWrapCiphers: []string{"srtp-aes-gcm", "srtp-chacha20-poly1305"},
+			// Перечитывать релею пока нечего: адрес прослушивания, токен
+			// управления и wrap-политика связываются при старте. Отвечаем честно,
+			// а не притворяемся, что применили
+			Reload: func(context.Context) ([]string, []string, error) {
+				return nil, []string{"listen", "grpc-token", "wrap-mode"}, nil
+			},
 		})
 		grpcLis, err := net.Listen("tcp", opts.grpcListen)
 		if err != nil {

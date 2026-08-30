@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/controlpb"
@@ -73,6 +74,12 @@ type server struct {
 	wrapCiphers []string
 	started     time.Time
 
+	// reload re-reads what can be re-read while traffic keeps flowing, and
+	// configVersion counts the times it succeeded, so a caller can see its change
+	// land instead of assuming it did
+	reload        func(context.Context) (applied []string, restartRequired []string, err error)
+	configVersion atomic.Uint64
+
 	// seenDerivation remembers which peers have already been logged, keyed by
 	// remote address, so the migration line appears once and not per RPC
 	seenDerivation sync.Map
@@ -124,6 +131,10 @@ type Options struct {
 	// suits this machine
 	WrapCipher           string
 	SupportedWrapCiphers []string
+	// Reload re-reads whatever the relay can pick up without dropping traffic.
+	// Left nil, Reload still answers - it just reports that everything needs a
+	// restart, which is the truth for a relay that cannot re-read anything.
+	Reload func(context.Context) (applied []string, restartRequired []string, err error)
 }
 
 // NewServer builds a grpc.Server serving the Relay service. When Token is set,
@@ -137,7 +148,7 @@ func NewServer(o Options) *grpc.Server {
 	s := &server{
 		store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token,
 		flows: o.Flows, listen: o.Listen, ready: o.Ready, bootID: o.BootID,
-		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers,
+		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers, reload: o.Reload,
 		started: time.Now(),
 	}
 	opts := []grpc.ServerOption{
@@ -173,6 +184,35 @@ func (s *server) GetStatus(_ context.Context, _ *controlpb.GetStatusRequest) (*c
 		AesNi:                hasAESNI(),
 		WrapCipher:           s.wrapCipher,
 		SupportedWrapCiphers: s.wrapCiphers,
+		ConfigVersion:        s.configVersion.Load(),
+	}, nil
+}
+
+// Reload re-reads what it can and says plainly what it could not.
+//
+// The listen address and the transport key are bound when the process starts, so
+// they are reported as needing a restart rather than quietly ignored: a relay
+// that answers "done" and keeps serving the old value is worse than one that
+// admits it cannot.
+func (s *server) Reload(ctx context.Context, _ *controlpb.ReloadRequest) (*controlpb.ReloadResponse, error) {
+	if s.reload == nil {
+		return &controlpb.ReloadResponse{
+			RestartRequired: []string{"listen", "grpc-token", "wrap-cipher"},
+			ConfigVersion:   s.configVersion.Load(),
+		}, nil
+	}
+	applied, restart, err := s.reload(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	version := s.configVersion.Load()
+	if len(applied) > 0 {
+		version = s.configVersion.Add(1)
+	}
+	return &controlpb.ReloadResponse{
+		Applied:         applied,
+		RestartRequired: restart,
+		ConfigVersion:   version,
 	}, nil
 }
 

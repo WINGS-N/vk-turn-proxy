@@ -10,6 +10,11 @@ option go_package = "github.com/cacggghp/vk-turn-proxy/controlpb;controlpb";
 // the app self-enroll path (which reaches the panel over its own gRPC).
 service Relay {
   rpc GetStatus(GetStatusRequest) returns (Status);
+  // Reload re-reads what can be re-read without dropping traffic, and reports
+  // what still needs a restart. A supervisor that had to kill the process to
+  // apply a change would take every live session with it, so this exists to keep
+  // that from being the only option.
+  rpc Reload(ReloadRequest) returns (ReloadResponse);
   rpc ListPeers(ListPeersRequest) returns (Peers);
   rpc CreatePeer(CreatePeerRequest) returns (Peer);
   rpc DeletePeer(DeletePeerRequest) returns (DeletePeerResponse);
@@ -81,6 +86,21 @@ message Status {
   bool aes_ni = 9;
   repeated string supported_wrap_ciphers = 10;
   string wrap_cipher = 11;
+  // config_version increments on every applied reload, so a supervisor can tell
+  // that its change actually landed rather than assuming it did
+  uint64 config_version = 12;
+}
+
+message ReloadRequest {}
+
+message ReloadResponse {
+  // applied lists what was re-read in place
+  repeated string applied = 1;
+  // restart_required lists what could not be: a listen address or a transport
+  // key is bound at start, and pretending otherwise would leave the relay
+  // serving the old value while reporting the new one
+  repeated string restart_required = 2;
+  uint64 config_version = 3;
 }
 
 message ListPeersRequest {}

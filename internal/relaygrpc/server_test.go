@@ -205,3 +205,70 @@ func TestStatusCarriesBootIdAndCiphers(t *testing.T) {
 		t.Errorf("uptime = %d, want at least 60", st.GetUptimeSeconds())
 	}
 }
+
+// A relay that cannot re-read anything must say so, not answer "done". A
+// supervisor that believes a reload landed will report the change as applied
+// while the relay keeps serving the old value.
+func TestReloadWithoutAHandlerAdmitsARestartIsNeeded(t *testing.T) {
+	client := dial(t, Options{})
+	resp, err := client.Reload(t.Context(), &controlpb.ReloadRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.GetApplied()) != 0 {
+		t.Errorf("Applied = %v, ничего перечитано быть не могло", resp.GetApplied())
+	}
+	if len(resp.GetRestartRequired()) == 0 {
+		t.Error("RestartRequired пуст: relay соврал, что всё применил")
+	}
+}
+
+// The config version is what lets a caller see its change land. It has to move
+// only when something was actually re-read.
+func TestConfigVersionMovesOnlyOnAnAppliedReload(t *testing.T) {
+	applied := []string{"peers"}
+	client := dial(t, Options{
+		Reload: func(context.Context) ([]string, []string, error) { return applied, nil, nil },
+	})
+	before, err := client.GetStatus(t.Context(), &controlpb.GetStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := client.Reload(t.Context(), &controlpb.ReloadRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.GetConfigVersion() != before.GetConfigVersion()+1 {
+		t.Fatalf("ConfigVersion = %d, want %d", first.GetConfigVersion(), before.GetConfigVersion()+1)
+	}
+
+	applied = nil
+	second, err := client.Reload(t.Context(), &controlpb.ReloadRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.GetConfigVersion() != first.GetConfigVersion() {
+		t.Errorf("ConfigVersion выросла на пустой перезагрузке: %d", second.GetConfigVersion())
+	}
+}
+
+// Status обещает готовность и boot_id; пустые поля не дают супервизору отличить
+// "поднимается" от "сломан" и перезапуск от поехавших счётчиков.
+func TestStatusCarriesReadinessAndBootID(t *testing.T) {
+	client := dial(t, Options{
+		Ready:                func() bool { return true },
+		BootID:               "boot-1",
+		WrapCipher:           "srtp-aes-gcm",
+		SupportedWrapCiphers: []string{"srtp-aes-gcm", "srtp-chacha20-poly1305"},
+	})
+	st, err := client.GetStatus(t.Context(), &controlpb.GetStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.GetReady() || st.GetBootId() != "boot-1" {
+		t.Errorf("ready=%v boot=%q, оба поля должны доезжать", st.GetReady(), st.GetBootId())
+	}
+	if len(st.GetSupportedWrapCiphers()) != 2 || st.GetWrapCipher() != "srtp-aes-gcm" {
+		t.Errorf("шифры не доехали: %v / %q", st.GetSupportedWrapCiphers(), st.GetWrapCipher())
+	}
+}
