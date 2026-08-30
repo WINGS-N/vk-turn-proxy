@@ -7,12 +7,15 @@ import (
 	"bufio"
 	"context"
 	"crypto/subtle"
+	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/controlpb"
 	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
+	"github.com/cacggghp/vk-turn-proxy/internal/tokenaead"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -68,6 +71,10 @@ type server struct {
 	wrapCipher  string
 	wrapCiphers []string
 	started     time.Time
+
+	// seenDerivation remembers which peers have already been logged, keyed by
+	// remote address, so the migration line appears once and not per RPC
+	seenDerivation sync.Map
 }
 
 // hasAESNI reports whether AES is hardware accelerated here. Without it the
@@ -295,7 +302,27 @@ func (s *server) toProto(p peerstore.Peer, privateKey string) *controlpb.Peer {
 	}
 }
 
+// noteDerivation logs, once per peer, which key derivation it turned up with.
+// Accepting both is a migration, and a migration nobody can see the end of never
+// ends: this is how an operator knows when the sha256 path can be dropped.
+func (s *server) noteDerivation(ctx context.Context) {
+	pr, ok := peer.FromContext(ctx)
+	if !ok || pr.AuthInfo == nil {
+		return
+	}
+	variant, ok := tokenaead.NegotiatedVariant(pr.AuthInfo)
+	if !ok {
+		return
+	}
+	addr := pr.Addr.String()
+	if _, seen := s.seenDerivation.LoadOrStore(addr, variant); seen {
+		return
+	}
+	log.Printf("relay grpc: peer %s uses %s key derivation", addr, variant)
+}
+
 func (s *server) authUnary(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	s.noteDerivation(ctx)
 	if s.authorized(ctx) {
 		return handler(ctx, req)
 	}
@@ -303,6 +330,7 @@ func (s *server) authUnary(ctx context.Context, req any, _ *grpc.UnaryServerInfo
 }
 
 func (s *server) authStream(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	s.noteDerivation(ss.Context())
 	if s.authorized(ss.Context()) {
 		return handler(srv, ss)
 	}

@@ -19,7 +19,10 @@ import (
 	"crypto/cipher"
 	"crypto/hkdf"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
+	"errors"
+	"hash"
 	"io"
 	"net"
 	"sync"
@@ -35,10 +38,33 @@ const (
 	hkdfSalt      = "wingsv-mgmt-grpc-v1"
 )
 
-func deriveKey(token []byte, label string) []byte {
+// Variant selects the hash the key derivation runs on.
+//
+// The fleet started on SHA-256 and is moving to SHA-512, which is the project
+// rule and is faster on 64-bit hardware. The move has to be gradual because
+// nodes update on their own schedule, so a server accepts both (see ServerAny)
+// while a client picks one
+type Variant int
+
+const (
+	// Legacy256 is the derivation every already-deployed peer uses. It is the
+	// zero value so the plain Client and Server constructors keep their meaning
+	Legacy256 Variant = 0
+	// SHA512 is the target derivation
+	SHA512 Variant = 1
+)
+
+func (v Variant) hash() func() hash.Hash {
+	if v == SHA512 {
+		return sha512.New
+	}
+	return sha256.New
+}
+
+func deriveKey(v Variant, token []byte, label string) []byte {
 	// A non-empty token is required upstream; hkdf.Key never fails for these
 	// fixed lengths, so a derivation error is treated as a programming bug.
-	key, err := hkdf.Key(sha256.New, token, []byte(hkdfSalt), label, keyLen)
+	key, err := hkdf.Key(v.hash(), token, []byte(hkdfSalt), label, keyLen)
 	if err != nil {
 		panic("tokenaead: hkdf: " + err.Error())
 	}
@@ -103,12 +129,8 @@ func (a *aeadConn) Read(p []byte) (int, error) {
 	a.readMu.Lock()
 	defer a.readMu.Unlock()
 	if len(a.readBuf) == 0 {
-		var hdr [4]byte
-		if _, err := io.ReadFull(a.Conn, hdr[:]); err != nil {
-			return 0, err
-		}
-		ct := make([]byte, binary.BigEndian.Uint32(hdr[:]))
-		if _, err := io.ReadFull(a.Conn, ct); err != nil {
+		ct, err := readRecord(a.Conn)
+		if err != nil {
 			return 0, err
 		}
 		pt, err := a.readAEAD.Open(nil, nonce(a.readCtr), ct, nil)
@@ -125,9 +147,29 @@ func (a *aeadConn) Read(p []byte) (int, error) {
 
 type authInfo struct {
 	credentials.CommonAuthInfo
+	variant Variant
 }
 
 func (authInfo) AuthType() string { return protocolName }
+
+// String names a derivation for logs
+func (v Variant) String() string {
+	if v == SHA512 {
+		return "sha512"
+	}
+	return "sha256"
+}
+
+// NegotiatedVariant reports which derivation a connection resolved to. It is how
+// an operator sees which peers are still on the old one, which is the only way
+// to know when the legacy path can be dropped
+func NegotiatedVariant(info credentials.AuthInfo) (Variant, bool) {
+	ai, ok := info.(authInfo)
+	if !ok {
+		return Legacy256, false
+	}
+	return ai.variant, true
+}
 
 // Creds is a gRPC TransportCredentials that secures the connection with the
 // token-derived AES-256-GCM stream. Use Client on a dialer and Server on a
@@ -135,16 +177,45 @@ func (authInfo) AuthType() string { return protocolName }
 type Creds struct {
 	c2s, s2c []byte
 	server   bool
+	// accept holds every derivation a listener will try. One entry is the fast
+	// path; more than one is a fleet mid-migration
+	accept []keypair
 }
 
-// Client builds dialer credentials keyed by token.
-func Client(token string) *Creds {
-	return &Creds{c2s: deriveKey([]byte(token), "c2s"), s2c: deriveKey([]byte(token), "s2c")}
+// Client builds dialer credentials keyed by token, on the derivation every
+// deployed peer already uses
+func Client(token string) *Creds { return ClientVariant(token, Legacy256) }
+
+// ClientVariant builds dialer credentials with an explicit derivation
+func ClientVariant(token string, v Variant) *Creds {
+	return &Creds{
+		c2s: deriveKey(v, []byte(token), "c2s"),
+		s2c: deriveKey(v, []byte(token), "s2c"),
+	}
 }
 
-// Server builds listener credentials keyed by token.
-func Server(token string) *Creds {
-	return &Creds{c2s: deriveKey([]byte(token), "c2s"), s2c: deriveKey([]byte(token), "s2c"), server: true}
+// Server builds listener credentials keyed by token. Prefer ServerAny while the
+// fleet is mid-migration
+func Server(token string) *Creds { return ServerAny(token, Legacy256) }
+
+// ServerAny builds listener credentials that accept any of the given
+// derivations, in the order listed. This is what lets a fleet move to SHA-512 a
+// node at a time instead of all at once: an updated node keeps serving panels
+// that have not moved yet
+func ServerAny(token string, variants ...Variant) *Creds {
+	if len(variants) == 0 {
+		variants = []Variant{Legacy256}
+	}
+	c := &Creds{server: true}
+	for _, v := range variants {
+		c.accept = append(c.accept, keypair{
+			variant: v,
+			c2s:     deriveKey(v, []byte(token), "c2s"),
+			s2c:     deriveKey(v, []byte(token), "s2c"),
+		})
+	}
+	c.c2s, c.s2c = c.accept[0].c2s, c.accept[0].s2c
+	return c
 }
 
 func wrap(raw net.Conn, writeKey, readKey []byte) (net.Conn, credentials.AuthInfo, error) {
@@ -159,6 +230,9 @@ func (c *Creds) ClientHandshake(_ context.Context, _ string, raw net.Conn) (net.
 
 // ServerHandshake wraps raw for the listening side: it writes s2c, reads c2s.
 func (c *Creds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	if len(c.accept) > 1 {
+		return serverHandshakeAny(raw, c.accept)
+	}
 	return wrap(raw, c.s2c, c.c2s)
 }
 
@@ -169,3 +243,73 @@ func (c *Creds) Info() credentials.ProtocolInfo {
 func (c *Creds) Clone() credentials.TransportCredentials { cc := *c; return &cc }
 
 func (c *Creds) OverrideServerName(string) error { return nil }
+
+// keypair is one derivation's two directions, kept so a server can try several
+type keypair struct {
+	variant  Variant
+	c2s, s2c []byte
+}
+
+// ErrNoVariant means the first record opened under none of the accepted
+// derivations, which is indistinguishable from a wrong token - and deliberately
+// so: the peer learns nothing about which of the two it got wrong
+var ErrNoVariant = errors.New("tokenaead: connection did not open under any accepted derivation")
+
+// maxRecordCipher bounds a record's ciphertext. Without it the length prefix,
+// which arrives before anything is authenticated, lets an unauthenticated peer
+// make the server allocate up to 4 GiB. Both ends must agree on maxPlainChunk;
+// the extra 16 bytes are the GCM tag
+const maxRecordCipher = maxPlainChunk + 16
+
+// readRecord pulls one length-prefixed record off the wire
+func readRecord(conn net.Conn) ([]byte, error) {
+	var hdr [4]byte
+	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+		return nil, err
+	}
+	size := binary.BigEndian.Uint32(hdr[:])
+	if size == 0 || size > maxRecordCipher {
+		return nil, ErrNoVariant
+	}
+	ct := make([]byte, size)
+	if _, err := io.ReadFull(conn, ct); err != nil {
+		return nil, err
+	}
+	return ct, nil
+}
+
+// serverHandshakeAny resolves which derivation the peer used.
+//
+// This transport has no handshake - the first bytes on the wire are already the
+// encrypted HTTP/2 preface - so the peer cannot be asked. The server instead
+// tries the first record against each accepted derivation; GCM's tag means at
+// most one can open, so the answer is unambiguous and costs one AES setup.
+//
+// It has to happen here rather than lazily on the first Read, because gRPC
+// writes its SETTINGS frame before it reads the client preface: by the time a
+// read happens the server has already had to encrypt something
+func serverHandshakeAny(raw net.Conn, accept []keypair) (net.Conn, credentials.AuthInfo, error) {
+	record, err := readRecord(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, kp := range accept {
+		readAEAD := newGCM(kp.c2s)
+		plain, openErr := readAEAD.Open(nil, nonce(0), record, nil)
+		if openErr != nil {
+			continue
+		}
+		conn := &aeadConn{
+			Conn:      raw,
+			writeAEAD: newGCM(kp.s2c),
+			readAEAD:  readAEAD,
+			readCtr:   1,
+			readBuf:   plain,
+		}
+		return conn, authInfo{
+			CommonAuthInfo: credentials.CommonAuthInfo{SecurityLevel: credentials.PrivacyAndIntegrity},
+			variant:        kp.variant,
+		}, nil
+	}
+	return nil, nil, ErrNoVariant
+}

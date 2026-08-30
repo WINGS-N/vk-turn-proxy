@@ -1110,8 +1110,11 @@ func main() {
 			// The token encrypts the channel with AES-256-GCM and needs no
 			// handshake, so it authenticates AND avoids the TLS cert-chain that a
 			// reduced-MTU client (k8s pod) cannot receive. Preferred over certs.
-			grpcCreds = tokenaead.Server(opts.grpcToken)
-			log.Printf("Relay management API: token-derived AES-256-GCM transport (no TLS)")
+			// Both derivations are accepted while the fleet moves to SHA-512:
+			// panels update on their own schedule, and this transport has no
+			// handshake to negotiate with.
+			grpcCreds = tokenaead.ServerAny(opts.grpcToken, tokenaead.SHA512, tokenaead.Legacy256)
+			log.Printf("Relay management API: token-derived AES-256-GCM transport (no TLS), accepting sha512 and sha256 key derivation")
 		case opts.grpcCert != "" && opts.grpcKey != "":
 			tlsCreds, credErr := credentials.NewServerTLSFromFile(opts.grpcCert, opts.grpcKey)
 			if credErr != nil {
