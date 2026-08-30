@@ -68,6 +68,19 @@ message Status {
   // The relay's DTLS data-plane listen address (the -listen flag), so the panel
   // can derive the endpoint apps dial without a separate configuration.
   string listen_endpoint = 5;
+  // ready separates serving from merely running: the process is alive well
+  // before it can carry traffic, and a supervisor that cannot tell the two apart
+  // reports a node as healthy while every client fails
+  bool ready = 6;
+  uint64 uptime_seconds = 7;
+  // boot_id changes on restart, so a consumer knows the counters below restarted
+  // from zero rather than moving backwards
+  string boot_id = 8;
+  // aes_ni decides which wrap cipher suits this machine: without hardware AES,
+  // ChaCha20 is materially faster
+  bool aes_ni = 9;
+  repeated string supported_wrap_ciphers = 10;
+  string wrap_cipher = 11;
 }
 
 message ListPeersRequest {}

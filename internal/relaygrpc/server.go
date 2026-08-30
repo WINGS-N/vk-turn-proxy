@@ -4,8 +4,10 @@
 package relaygrpc
 
 import (
+	"bufio"
 	"context"
 	"crypto/subtle"
+	"os"
 	"strings"
 	"time"
 
@@ -60,6 +62,36 @@ type server struct {
 	token    string
 	flows    FlowProvider
 	listen   string
+
+	ready       func() bool
+	bootID      string
+	wrapCipher  string
+	wrapCiphers []string
+	started     time.Time
+}
+
+// hasAESNI reports whether AES is hardware accelerated here. Without it the
+// software AES path is far slower than ChaCha20, which is what makes this worth
+// reporting to a scheduler at all
+func hasAESNI() bool {
+	f, err := os.Open("/proc/cpuinfo")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "flags") && !strings.HasPrefix(line, "Features") {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			if field == "aes" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Options configures the Relay gRPC server.
@@ -73,6 +105,17 @@ type Options struct {
 	// Listen is the relay's DTLS data-plane listen address, reported in Status so
 	// the panel can derive the endpoint apps dial.
 	Listen string
+	// Ready reports whether the relay can actually carry traffic. A supervisor
+	// that only sees the process running marks a node healthy while every client
+	// still fails
+	Ready func() bool
+	// BootID changes per process start so a consumer can tell a restart from a
+	// counter moving backwards
+	BootID string
+	// WrapCipher and SupportedWrapCiphers let a scheduler pick the cipher that
+	// suits this machine
+	WrapCipher           string
+	SupportedWrapCiphers []string
 }
 
 // NewServer builds a grpc.Server serving the Relay service. When Token is set,
@@ -83,7 +126,12 @@ type Options struct {
 const flowStatsStreamInterval = time.Second
 
 func NewServer(o Options) *grpc.Server {
-	s := &server{store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token, flows: o.Flows, listen: o.Listen}
+	s := &server{
+		store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token,
+		flows: o.Flows, listen: o.Listen, ready: o.Ready, bootID: o.BootID,
+		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers,
+		started: time.Now(),
+	}
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(s.authUnary),
 		grpc.ChainStreamInterceptor(s.authStream),
@@ -101,12 +149,22 @@ func (s *server) GetStatus(_ context.Context, _ *controlpb.GetStatusRequest) (*c
 	if s.sessions != nil {
 		active = s.sessions()
 	}
+	ready := true
+	if s.ready != nil {
+		ready = s.ready()
+	}
 	return &controlpb.Status{
-		Version:        s.version,
-		WgInterface:    s.store.Interface(),
-		PeerCount:      uint32(s.store.Count()),
-		ActiveSessions: active,
-		ListenEndpoint: s.listen,
+		Version:              s.version,
+		WgInterface:          s.store.Interface(),
+		PeerCount:            uint32(s.store.Count()),
+		ActiveSessions:       active,
+		ListenEndpoint:       s.listen,
+		Ready:                ready,
+		UptimeSeconds:        uint64(time.Since(s.started).Seconds()),
+		BootId:               s.bootID,
+		AesNi:                hasAESNI(),
+		WrapCipher:           s.wrapCipher,
+		SupportedWrapCiphers: s.wrapCiphers,
 	}, nil
 }
 

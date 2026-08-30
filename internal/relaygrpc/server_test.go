@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/cacggghp/vk-turn-proxy/controlpb"
 	"github.com/cacggghp/vk-turn-proxy/internal/peerstore"
@@ -14,6 +15,15 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
+
+func newTestStore(t *testing.T) *peerstore.Store {
+	t.Helper()
+	store, err := peerstore.New("10.66.66.0/24", "wg-test", "", nil)
+	if err != nil {
+		t.Fatalf("peerstore.New: %v", err)
+	}
+	return store
+}
 
 func dial(t *testing.T, o Options) controlpb.RelayClient {
 	t.Helper()
@@ -140,5 +150,58 @@ func TestFlows(t *testing.T) {
 	if st.GetActiveStreams() != 1 || st.GetTotalSessions() != 5 || st.GetAvgSessionLifetimeSeconds() != 12.5 ||
 		st.GetStreamsByProtocol()["mu"] != 1 {
 		t.Fatalf("flow stats wrong: %+v", st)
+	}
+}
+
+// A supervisor that cannot tell "process is alive" from "can carry traffic"
+// reports a node as healthy while every client fails, so ready must be its own
+// answer rather than implied by the RPC succeeding
+func TestStatusReportsReadinessSeparately(t *testing.T) {
+	store := newTestStore(t)
+	notReady := &server{store: store, ready: func() bool { return false }, started: time.Now()}
+	st, err := notReady.GetStatus(context.Background(), &controlpb.GetStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.GetReady() {
+		t.Error("a relay that is not serving reported ready")
+	}
+
+	// An unset callback means the caller did not wire readiness, and the old
+	// behaviour of assuming the relay works must be preserved
+	legacy := &server{store: store, started: time.Now()}
+	st, err = legacy.GetStatus(context.Background(), &controlpb.GetStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.GetReady() {
+		t.Error("an unwired relay should default to ready, not to broken")
+	}
+}
+
+// boot_id lets a consumer tell a restart from a counter moving backwards
+func TestStatusCarriesBootIdAndCiphers(t *testing.T) {
+	s := &server{
+		store:       newTestStore(t),
+		bootID:      "boot-xyz",
+		wrapCipher:  "srtp-aes-gcm",
+		wrapCiphers: []string{"srtp-aes-gcm", "srtp-chacha20-poly1305"},
+		started:     time.Now().Add(-90 * time.Second),
+	}
+	st, err := s.GetStatus(context.Background(), &controlpb.GetStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.GetBootId() != "boot-xyz" {
+		t.Errorf("boot id = %q", st.GetBootId())
+	}
+	if st.GetWrapCipher() != "srtp-aes-gcm" {
+		t.Errorf("wrap cipher = %q", st.GetWrapCipher())
+	}
+	if len(st.GetSupportedWrapCiphers()) != 2 {
+		t.Errorf("supported ciphers = %v", st.GetSupportedWrapCiphers())
+	}
+	if st.GetUptimeSeconds() < 60 {
+		t.Errorf("uptime = %d, want at least 60", st.GetUptimeSeconds())
 	}
 }

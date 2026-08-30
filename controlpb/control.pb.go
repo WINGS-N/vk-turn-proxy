@@ -400,8 +400,21 @@ type Status struct {
 	// The relay's DTLS data-plane listen address (the -listen flag), so the panel
 	// can derive the endpoint apps dial without a separate configuration.
 	ListenEndpoint string `protobuf:"bytes,5,opt,name=listen_endpoint,json=listenEndpoint,proto3" json:"listen_endpoint,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// ready separates serving from merely running: the process is alive well
+	// before it can carry traffic, and a supervisor that cannot tell the two apart
+	// reports a node as healthy while every client fails
+	Ready         bool   `protobuf:"varint,6,opt,name=ready,proto3" json:"ready,omitempty"`
+	UptimeSeconds uint64 `protobuf:"varint,7,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	// boot_id changes on restart, so a consumer knows the counters below restarted
+	// from zero rather than moving backwards
+	BootId string `protobuf:"bytes,8,opt,name=boot_id,json=bootId,proto3" json:"boot_id,omitempty"`
+	// aes_ni decides which wrap cipher suits this machine: without hardware AES,
+	// ChaCha20 is materially faster
+	AesNi                bool     `protobuf:"varint,9,opt,name=aes_ni,json=aesNi,proto3" json:"aes_ni,omitempty"`
+	SupportedWrapCiphers []string `protobuf:"bytes,10,rep,name=supported_wrap_ciphers,json=supportedWrapCiphers,proto3" json:"supported_wrap_ciphers,omitempty"`
+	WrapCipher           string   `protobuf:"bytes,11,opt,name=wrap_cipher,json=wrapCipher,proto3" json:"wrap_cipher,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Status) Reset() {
@@ -465,6 +478,48 @@ func (x *Status) GetActiveSessions() uint64 {
 func (x *Status) GetListenEndpoint() string {
 	if x != nil {
 		return x.ListenEndpoint
+	}
+	return ""
+}
+
+func (x *Status) GetReady() bool {
+	if x != nil {
+		return x.Ready
+	}
+	return false
+}
+
+func (x *Status) GetUptimeSeconds() uint64 {
+	if x != nil {
+		return x.UptimeSeconds
+	}
+	return 0
+}
+
+func (x *Status) GetBootId() string {
+	if x != nil {
+		return x.BootId
+	}
+	return ""
+}
+
+func (x *Status) GetAesNi() bool {
+	if x != nil {
+		return x.AesNi
+	}
+	return false
+}
+
+func (x *Status) GetSupportedWrapCiphers() []string {
+	if x != nil {
+		return x.SupportedWrapCiphers
+	}
+	return nil
+}
+
+func (x *Status) GetWrapCipher() string {
+	if x != nil {
+		return x.WrapCipher
 	}
 	return ""
 }
@@ -812,14 +867,22 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x16StreamsByProtocolEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\x12\n" +
-	"\x10GetStatusRequest\"\xb6\x01\n" +
+	"\x10GetStatusRequest\"\xfa\x02\n" +
 	"\x06Status\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12!\n" +
 	"\fwg_interface\x18\x02 \x01(\tR\vwgInterface\x12\x1d\n" +
 	"\n" +
 	"peer_count\x18\x03 \x01(\rR\tpeerCount\x12'\n" +
 	"\x0factive_sessions\x18\x04 \x01(\x04R\x0eactiveSessions\x12'\n" +
-	"\x0flisten_endpoint\x18\x05 \x01(\tR\x0elistenEndpoint\"\x12\n" +
+	"\x0flisten_endpoint\x18\x05 \x01(\tR\x0elistenEndpoint\x12\x14\n" +
+	"\x05ready\x18\x06 \x01(\bR\x05ready\x12%\n" +
+	"\x0euptime_seconds\x18\a \x01(\x04R\ruptimeSeconds\x12\x17\n" +
+	"\aboot_id\x18\b \x01(\tR\x06bootId\x12\x15\n" +
+	"\x06aes_ni\x18\t \x01(\bR\x05aesNi\x124\n" +
+	"\x16supported_wrap_ciphers\x18\n" +
+	" \x03(\tR\x14supportedWrapCiphers\x12\x1f\n" +
+	"\vwrap_cipher\x18\v \x01(\tR\n" +
+	"wrapCipher\"\x12\n" +
 	"\x10ListPeersRequest\"6\n" +
 	"\x05Peers\x12-\n" +
 	"\x05peers\x18\x01 \x03(\v2\x17.vkturn.control.v1.PeerR\x05peers\"S\n" +
