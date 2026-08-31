@@ -1151,6 +1151,13 @@ func main() {
 			Reload: func(context.Context) ([]string, []string, error) {
 				return nil, []string{"listen", "grpc-token", "wrap-mode"}, nil
 			},
+			// Перезапуск не наш: процессом распоряжается systemd или kubelet.
+			// Наше дело - выйти штатно, чтобы они подняли релей уже с новыми
+			// параметрами
+			Shutdown: func(reason string) {
+				log.Printf("relay: shutting down on request: %s", reason)
+				os.Exit(0)
+			},
 		})
 		grpcLis, err := net.Listen("tcp", opts.grpcListen)
 		if err != nil {

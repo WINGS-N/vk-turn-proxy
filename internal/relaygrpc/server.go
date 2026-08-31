@@ -78,6 +78,7 @@ type server struct {
 	// configVersion counts the times it succeeded, so a caller can see its change
 	// land instead of assuming it did
 	reload        func(context.Context) (applied []string, restartRequired []string, err error)
+	shutdown      func(reason string)
 	configVersion atomic.Uint64
 
 	// seenDerivation remembers which peers have already been logged, keyed by
@@ -135,6 +136,9 @@ type Options struct {
 	// Left nil, Reload still answers - it just reports that everything needs a
 	// restart, which is the truth for a relay that cannot re-read anything.
 	Reload func(context.Context) (applied []string, restartRequired []string, err error)
+	// Shutdown завершает процесс. Левый nil означает, что релей выходить по
+	// просьбе не умеет, и Shutdown честно отвечает отказом
+	Shutdown func(reason string)
 }
 
 // NewServer builds a grpc.Server serving the Relay service. When Token is set,
@@ -149,6 +153,7 @@ func NewServer(o Options) *grpc.Server {
 		store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token,
 		flows: o.Flows, listen: o.Listen, ready: o.Ready, bootID: o.BootID,
 		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers, reload: o.Reload,
+		shutdown: o.Shutdown,
 		started: time.Now(),
 	}
 	opts := []grpc.ServerOption{
@@ -409,4 +414,24 @@ func (s *server) authorized(ctx context.Context) bool {
 		}
 	}
 	return false
+}
+
+// shutdownDelay - пауза между ответом и выходом. Ответ должен успеть уйти:
+// иначе вызывающий увидит обрыв соединения вместо подтверждения
+const shutdownDelay = 300 * time.Millisecond
+
+// Shutdown завершает релей штатно, оставляя перезапуск тому, кто его запустил
+func (s *server) Shutdown(_ context.Context, req *controlpb.ShutdownRequest) (*controlpb.ShutdownResponse, error) {
+	if s.shutdown == nil {
+		return nil, status.Error(codes.Unimplemented, "relay cannot shut itself down")
+	}
+	reason := strings.TrimSpace(req.GetReason())
+	if reason == "" {
+		reason = "control api"
+	}
+	go func() {
+		time.Sleep(shutdownDelay)
+		s.shutdown(reason)
+	}()
+	return &controlpb.ShutdownResponse{DelayMs: uint32(shutdownDelay.Milliseconds())}, nil
 }

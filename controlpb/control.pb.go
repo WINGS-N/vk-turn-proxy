@@ -943,6 +943,97 @@ func (*DeletePeerResponse) Descriptor() ([]byte, []int) {
 	return file_proto_control_proto_rawDescGZIP(), []int{14}
 }
 
+type ShutdownRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Причина попадает в лог релея: перезапуск без объяснения выглядит падением
+	Reason        string `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShutdownRequest) Reset() {
+	*x = ShutdownRequest{}
+	mi := &file_proto_control_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShutdownRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShutdownRequest) ProtoMessage() {}
+
+func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShutdownRequest.ProtoReflect.Descriptor instead.
+func (*ShutdownRequest) Descriptor() ([]byte, []int) {
+	return file_proto_control_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ShutdownRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type ShutdownResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Через сколько релей закроется. Ответ уходит раньше выхода, иначе вызывающий
+	// получил бы обрыв соединения вместо подтверждения
+	DelayMs       uint32 `protobuf:"varint,1,opt,name=delay_ms,json=delayMs,proto3" json:"delay_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShutdownResponse) Reset() {
+	*x = ShutdownResponse{}
+	mi := &file_proto_control_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShutdownResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShutdownResponse) ProtoMessage() {}
+
+func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShutdownResponse.ProtoReflect.Descriptor instead.
+func (*ShutdownResponse) Descriptor() ([]byte, []int) {
+	return file_proto_control_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ShutdownResponse) GetDelayMs() uint32 {
+	if x != nil {
+		return x.DelayMs
+	}
+	return 0
+}
+
 var File_proto_control_proto protoreflect.FileDescriptor
 
 const file_proto_control_proto_rawDesc = "" +
@@ -1021,10 +1112,15 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x11DeletePeerRequest\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\tR\tpublicKey\"\x14\n" +
-	"\x12DeletePeerResponse2\xe4\x05\n" +
+	"\x12DeletePeerResponse\")\n" +
+	"\x0fShutdownRequest\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"-\n" +
+	"\x10ShutdownResponse\x12\x19\n" +
+	"\bdelay_ms\x18\x01 \x01(\rR\adelayMs2\xb9\x06\n" +
 	"\x05Relay\x12K\n" +
 	"\tGetStatus\x12#.vkturn.control.v1.GetStatusRequest\x1a\x19.vkturn.control.v1.Status\x12M\n" +
-	"\x06Reload\x12 .vkturn.control.v1.ReloadRequest\x1a!.vkturn.control.v1.ReloadResponse\x12J\n" +
+	"\x06Reload\x12 .vkturn.control.v1.ReloadRequest\x1a!.vkturn.control.v1.ReloadResponse\x12S\n" +
+	"\bShutdown\x12\".vkturn.control.v1.ShutdownRequest\x1a#.vkturn.control.v1.ShutdownResponse\x12J\n" +
 	"\tListPeers\x12#.vkturn.control.v1.ListPeersRequest\x1a\x18.vkturn.control.v1.Peers\x12K\n" +
 	"\n" +
 	"CreatePeer\x12$.vkturn.control.v1.CreatePeerRequest\x1a\x17.vkturn.control.v1.Peer\x12Y\n" +
@@ -1047,7 +1143,7 @@ func file_proto_control_proto_rawDescGZIP() []byte {
 	return file_proto_control_proto_rawDescData
 }
 
-var file_proto_control_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_proto_control_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_proto_control_proto_goTypes = []any{
 	(*ListFlowsRequest)(nil),    // 0: vkturn.control.v1.ListFlowsRequest
 	(*Flow)(nil),                // 1: vkturn.control.v1.Flow
@@ -1064,32 +1160,36 @@ var file_proto_control_proto_goTypes = []any{
 	(*Peer)(nil),                // 12: vkturn.control.v1.Peer
 	(*DeletePeerRequest)(nil),   // 13: vkturn.control.v1.DeletePeerRequest
 	(*DeletePeerResponse)(nil),  // 14: vkturn.control.v1.DeletePeerResponse
-	nil,                         // 15: vkturn.control.v1.FlowStats.StreamsByProtocolEntry
+	(*ShutdownRequest)(nil),     // 15: vkturn.control.v1.ShutdownRequest
+	(*ShutdownResponse)(nil),    // 16: vkturn.control.v1.ShutdownResponse
+	nil,                         // 17: vkturn.control.v1.FlowStats.StreamsByProtocolEntry
 }
 var file_proto_control_proto_depIdxs = []int32{
 	1,  // 0: vkturn.control.v1.Flows.flows:type_name -> vkturn.control.v1.Flow
-	15, // 1: vkturn.control.v1.FlowStats.streams_by_protocol:type_name -> vkturn.control.v1.FlowStats.StreamsByProtocolEntry
+	17, // 1: vkturn.control.v1.FlowStats.streams_by_protocol:type_name -> vkturn.control.v1.FlowStats.StreamsByProtocolEntry
 	12, // 2: vkturn.control.v1.Peers.peers:type_name -> vkturn.control.v1.Peer
 	5,  // 3: vkturn.control.v1.Relay.GetStatus:input_type -> vkturn.control.v1.GetStatusRequest
 	7,  // 4: vkturn.control.v1.Relay.Reload:input_type -> vkturn.control.v1.ReloadRequest
-	9,  // 5: vkturn.control.v1.Relay.ListPeers:input_type -> vkturn.control.v1.ListPeersRequest
-	11, // 6: vkturn.control.v1.Relay.CreatePeer:input_type -> vkturn.control.v1.CreatePeerRequest
-	13, // 7: vkturn.control.v1.Relay.DeletePeer:input_type -> vkturn.control.v1.DeletePeerRequest
-	0,  // 8: vkturn.control.v1.Relay.ListFlows:input_type -> vkturn.control.v1.ListFlowsRequest
-	3,  // 9: vkturn.control.v1.Relay.GetFlowStats:input_type -> vkturn.control.v1.GetFlowStatsRequest
-	3,  // 10: vkturn.control.v1.Relay.StreamFlowStats:input_type -> vkturn.control.v1.GetFlowStatsRequest
-	0,  // 11: vkturn.control.v1.Relay.StreamFlows:input_type -> vkturn.control.v1.ListFlowsRequest
-	6,  // 12: vkturn.control.v1.Relay.GetStatus:output_type -> vkturn.control.v1.Status
-	8,  // 13: vkturn.control.v1.Relay.Reload:output_type -> vkturn.control.v1.ReloadResponse
-	10, // 14: vkturn.control.v1.Relay.ListPeers:output_type -> vkturn.control.v1.Peers
-	12, // 15: vkturn.control.v1.Relay.CreatePeer:output_type -> vkturn.control.v1.Peer
-	14, // 16: vkturn.control.v1.Relay.DeletePeer:output_type -> vkturn.control.v1.DeletePeerResponse
-	2,  // 17: vkturn.control.v1.Relay.ListFlows:output_type -> vkturn.control.v1.Flows
-	4,  // 18: vkturn.control.v1.Relay.GetFlowStats:output_type -> vkturn.control.v1.FlowStats
-	4,  // 19: vkturn.control.v1.Relay.StreamFlowStats:output_type -> vkturn.control.v1.FlowStats
-	2,  // 20: vkturn.control.v1.Relay.StreamFlows:output_type -> vkturn.control.v1.Flows
-	12, // [12:21] is the sub-list for method output_type
-	3,  // [3:12] is the sub-list for method input_type
+	15, // 5: vkturn.control.v1.Relay.Shutdown:input_type -> vkturn.control.v1.ShutdownRequest
+	9,  // 6: vkturn.control.v1.Relay.ListPeers:input_type -> vkturn.control.v1.ListPeersRequest
+	11, // 7: vkturn.control.v1.Relay.CreatePeer:input_type -> vkturn.control.v1.CreatePeerRequest
+	13, // 8: vkturn.control.v1.Relay.DeletePeer:input_type -> vkturn.control.v1.DeletePeerRequest
+	0,  // 9: vkturn.control.v1.Relay.ListFlows:input_type -> vkturn.control.v1.ListFlowsRequest
+	3,  // 10: vkturn.control.v1.Relay.GetFlowStats:input_type -> vkturn.control.v1.GetFlowStatsRequest
+	3,  // 11: vkturn.control.v1.Relay.StreamFlowStats:input_type -> vkturn.control.v1.GetFlowStatsRequest
+	0,  // 12: vkturn.control.v1.Relay.StreamFlows:input_type -> vkturn.control.v1.ListFlowsRequest
+	6,  // 13: vkturn.control.v1.Relay.GetStatus:output_type -> vkturn.control.v1.Status
+	8,  // 14: vkturn.control.v1.Relay.Reload:output_type -> vkturn.control.v1.ReloadResponse
+	16, // 15: vkturn.control.v1.Relay.Shutdown:output_type -> vkturn.control.v1.ShutdownResponse
+	10, // 16: vkturn.control.v1.Relay.ListPeers:output_type -> vkturn.control.v1.Peers
+	12, // 17: vkturn.control.v1.Relay.CreatePeer:output_type -> vkturn.control.v1.Peer
+	14, // 18: vkturn.control.v1.Relay.DeletePeer:output_type -> vkturn.control.v1.DeletePeerResponse
+	2,  // 19: vkturn.control.v1.Relay.ListFlows:output_type -> vkturn.control.v1.Flows
+	4,  // 20: vkturn.control.v1.Relay.GetFlowStats:output_type -> vkturn.control.v1.FlowStats
+	4,  // 21: vkturn.control.v1.Relay.StreamFlowStats:output_type -> vkturn.control.v1.FlowStats
+	2,  // 22: vkturn.control.v1.Relay.StreamFlows:output_type -> vkturn.control.v1.Flows
+	13, // [13:23] is the sub-list for method output_type
+	3,  // [3:13] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name
 	3,  // [3:3] is the sub-list for extension extendee
 	0,  // [0:3] is the sub-list for field type_name
@@ -1106,7 +1206,7 @@ func file_proto_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_control_proto_rawDesc), len(file_proto_control_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

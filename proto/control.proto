@@ -15,6 +15,10 @@ service Relay {
   // apply a change would take every live session with it, so this exists to keep
   // that from being the only option.
   rpc Reload(ReloadRequest) returns (ReloadResponse);
+  // Shutdown завершает релей штатно. Перезапуском занимается тот, кто его
+  // запустил - systemd или kubelet: агент чужим процессом не распоряжается, а
+  // то, что нельзя перечитать на лету, иначе так и остаётся неприменённым.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
   rpc ListPeers(ListPeersRequest) returns (Peers);
   rpc CreatePeer(CreatePeerRequest) returns (Peer);
   rpc DeletePeer(DeletePeerRequest) returns (DeletePeerResponse);
@@ -134,3 +138,14 @@ message DeletePeerRequest {
 }
 
 message DeletePeerResponse {}
+
+message ShutdownRequest {
+  // Причина попадает в лог релея: перезапуск без объяснения выглядит падением
+  string reason = 1;
+}
+
+message ShutdownResponse {
+  // Через сколько релей закроется. Ответ уходит раньше выхода, иначе вызывающий
+  // получил бы обрыв соединения вместо подтверждения
+  uint32 delay_ms = 1;
+}
