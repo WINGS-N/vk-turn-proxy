@@ -55,6 +55,9 @@ func (s *SelfAddress) Run(ctx context.Context) {
 
 func (s *SelfAddress) refresh(ctx context.Context) {
 	for _, server := range stunServers {
+		// Спрашиваем именно по IPv4: до подавляющего большинства людей
+		// дотягивается только он, а хост с двойным стеком иначе отвечает
+		// адресом, по которому к нему почти никто не придёт
 		addr, err := askSTUN(ctx, server)
 		if err != nil || addr == "" {
 			continue
@@ -70,7 +73,7 @@ func (s *SelfAddress) refresh(ctx context.Context) {
 // а не тот, что он видит на своих интерфейсах
 func askSTUN(ctx context.Context, server string) (string, error) {
 	dialer := net.Dialer{Timeout: 5 * time.Second}
-	conn, err := dialer.DialContext(ctx, "udp", server)
+	conn, err := dialer.DialContext(ctx, "udp4", server)
 	if err != nil {
 		return "", err
 	}
