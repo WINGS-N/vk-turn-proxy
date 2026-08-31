@@ -41,7 +41,11 @@ type serverOptions struct {
 	panelGRPC     string // panel Provisioning gRPC endpoint for DTLS PROVISION (empty = disabled)
 	panelCAPin    string // panel CA SPKI pin (sha256/<base64>) for a self-signed panel; empty uses system trust
 	panelInsecure bool   // dial the panel over plaintext h2c (trusted local network only)
-	nodeID        string // this node's id as registered in the panel
+	// panelToken - чем релей представляется провижн-сервису. Пустой означает
+	// "тем же токеном, что и у своего управляющего API": в панели это один и тот
+	// же секрет, а в федерации голова знает секрет флота, но не токен релея
+	panelToken string
+	nodeID     string // this node's id as registered in the panel
 
 	// pprofListen serves the Go runtime profiles on ip:port. Empty disables it,
 	// which is the default: the endpoint hands out goroutine stacks, heap
@@ -91,6 +95,7 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.StringVar(&opts.panelGRPC, "panel-grpc", "", "panel Provisioning gRPC endpoint enabling the DTLS PROVISION path")
 	fs.StringVar(&opts.panelCAPin, "panel-ca-pin", "", "panel CA SPKI pin (sha256/<base64>) for a self-signed panel; empty verifies the panel via system trust")
 	fs.BoolVar(&opts.panelInsecure, "panel-insecure", false, "dial the panel over plaintext h2c instead of TLS (trusted local network only)")
+	fs.StringVar(&opts.panelToken, "panel-token", "", "bearer token for the provisioning service; empty reuses -grpc-token")
 	fs.StringVar(&opts.nodeID, "node-id", "", "this node's id as registered in the panel")
 	fs.Usage = func() {
 		cliutil.Fprintf(fs.Output(), "Usage:\n  %s -connect <ip:port> [flags]\n  %s -udp-connect <ip:port> [flags]\n  %s -wb-stream-room-id <id> -udp-connect <ip:port> [flags]\n\n", program, program, program)

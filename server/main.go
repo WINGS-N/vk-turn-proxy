@@ -1193,7 +1193,11 @@ func main() {
 		case opts.panelInsecure:
 			pcOpts = append(pcOpts, panelclient.WithInsecure())
 		}
-		pc := panelclient.New(opts.panelGRPC, opts.grpcToken, pcOpts...)
+		panelToken := opts.panelToken
+		if panelToken == "" {
+			panelToken = opts.grpcToken
+		}
+		pc := panelclient.New(opts.panelGRPC, panelToken, pcOpts...)
 		SetProvisionResolver(pc, opts.nodeID, peers)
 		usagePoll = pc
 		log.Printf("DTLS PROVISION enabled via panel %s (node %s)", opts.panelGRPC, opts.nodeID)
