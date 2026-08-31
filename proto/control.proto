@@ -77,6 +77,10 @@ message Status {
   // The relay's DTLS data-plane listen address (the -listen flag), so the panel
   // can derive the endpoint apps dial without a separate configuration.
   string listen_endpoint = 5;
+  // Внешний адрес, каким релея видит интернет. Спрашивается у STUN: на своих
+  // интерфейсах машина за NAT видит совсем другое, и в ссылку клиенту оно не
+  // годится
+  string public_ip = 20;
   // ready separates serving from merely running: the process is alive well
   // before it can carry traffic, and a supervisor that cannot tell the two apart
   // reports a node as healthy while every client fails

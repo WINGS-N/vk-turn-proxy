@@ -400,6 +400,10 @@ type Status struct {
 	// The relay's DTLS data-plane listen address (the -listen flag), so the panel
 	// can derive the endpoint apps dial without a separate configuration.
 	ListenEndpoint string `protobuf:"bytes,5,opt,name=listen_endpoint,json=listenEndpoint,proto3" json:"listen_endpoint,omitempty"`
+	// Внешний адрес, каким релея видит интернет. Спрашивается у STUN: на своих
+	// интерфейсах машина за NAT видит совсем другое, и в ссылку клиенту оно не
+	// годится
+	PublicIp string `protobuf:"bytes,20,opt,name=public_ip,json=publicIp,proto3" json:"public_ip,omitempty"`
 	// ready separates serving from merely running: the process is alive well
 	// before it can carry traffic, and a supervisor that cannot tell the two apart
 	// reports a node as healthy while every client fails
@@ -481,6 +485,13 @@ func (x *Status) GetActiveSessions() uint64 {
 func (x *Status) GetListenEndpoint() string {
 	if x != nil {
 		return x.ListenEndpoint
+	}
+	return ""
+}
+
+func (x *Status) GetPublicIp() string {
+	if x != nil {
+		return x.PublicIp
 	}
 	return ""
 }
@@ -1068,14 +1079,15 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x16StreamsByProtocolEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\x12\n" +
-	"\x10GetStatusRequest\"\xa1\x03\n" +
+	"\x10GetStatusRequest\"\xbe\x03\n" +
 	"\x06Status\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12!\n" +
 	"\fwg_interface\x18\x02 \x01(\tR\vwgInterface\x12\x1d\n" +
 	"\n" +
 	"peer_count\x18\x03 \x01(\rR\tpeerCount\x12'\n" +
 	"\x0factive_sessions\x18\x04 \x01(\x04R\x0eactiveSessions\x12'\n" +
-	"\x0flisten_endpoint\x18\x05 \x01(\tR\x0elistenEndpoint\x12\x14\n" +
+	"\x0flisten_endpoint\x18\x05 \x01(\tR\x0elistenEndpoint\x12\x1b\n" +
+	"\tpublic_ip\x18\x14 \x01(\tR\bpublicIp\x12\x14\n" +
 	"\x05ready\x18\x06 \x01(\bR\x05ready\x12%\n" +
 	"\x0euptime_seconds\x18\a \x01(\x04R\ruptimeSeconds\x12\x17\n" +
 	"\aboot_id\x18\b \x01(\tR\x06bootId\x12\x15\n" +

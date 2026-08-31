@@ -47,6 +47,10 @@ var relayVersion = "dev"
 // счётчиков, поехавших назад
 var relayBootID = strconv.FormatInt(time.Now().UnixNano(), 36)
 
+// relaySelfAddr держит внешний адрес: на своих интерфейсах машина за NAT видит
+// приватную сеть, и в ссылку клиенту оно не годится
+var relaySelfAddr = relaygrpc.NewSelfAddress()
+
 var serverUI *serverTUI
 
 // flowRegistry adapts the always-on serverUI stream registry to the Relay gRPC
@@ -1154,6 +1158,7 @@ func main() {
 			// Перезапуск не наш: процессом распоряжается systemd или kubelet.
 			// Наше дело - выйти штатно, чтобы они подняли релей уже с новыми
 			// параметрами
+			PublicIP: relaySelfAddr.Get,
 			Shutdown: func(reason string) {
 				log.Printf("relay: shutting down on request: %s", reason)
 				os.Exit(0)
@@ -1163,6 +1168,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("relay grpc listen %s: %v", opts.grpcListen, err)
 		}
+		// Внешний адрес спрашивается у STUN в фоне: старт релея не должен ждать
+		// чужой сервер
+		go relaySelfAddr.Run(context.Background())
 		go func() {
 			log.Printf("Relay management API on %s", opts.grpcListen)
 			if serveErr := grpcServer.Serve(grpcLis); serveErr != nil {

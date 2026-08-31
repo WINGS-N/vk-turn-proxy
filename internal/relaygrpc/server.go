@@ -79,6 +79,7 @@ type server struct {
 	// land instead of assuming it did
 	reload        func(context.Context) (applied []string, restartRequired []string, err error)
 	shutdown      func(reason string)
+	publicIP      func() string
 	configVersion atomic.Uint64
 
 	// seenDerivation remembers which peers have already been logged, keyed by
@@ -139,6 +140,8 @@ type Options struct {
 	// Shutdown завершает процесс. Левый nil означает, что релей выходить по
 	// просьбе не умеет, и Shutdown честно отвечает отказом
 	Shutdown func(reason string)
+	// PublicIP отдаёт внешний адрес, узнанный у STUN
+	PublicIP func() string
 }
 
 // NewServer builds a grpc.Server serving the Relay service. When Token is set,
@@ -153,8 +156,8 @@ func NewServer(o Options) *grpc.Server {
 		store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token,
 		flows: o.Flows, listen: o.Listen, ready: o.Ready, bootID: o.BootID,
 		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers, reload: o.Reload,
-		shutdown: o.Shutdown,
-		started: time.Now(),
+		shutdown: o.Shutdown, publicIP: o.PublicIP,
+		started:  time.Now(),
 	}
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(s.authUnary),
@@ -183,6 +186,7 @@ func (s *server) GetStatus(_ context.Context, _ *controlpb.GetStatusRequest) (*c
 		PeerCount:            uint32(s.store.Count()),
 		ActiveSessions:       active,
 		ListenEndpoint:       s.listen,
+		PublicIp:             s.selfIP(),
 		Ready:                ready,
 		UptimeSeconds:        uint64(time.Since(s.started).Seconds()),
 		BootId:               s.bootID,
@@ -434,4 +438,12 @@ func (s *server) Shutdown(_ context.Context, req *controlpb.ShutdownRequest) (*c
 		s.shutdown(reason)
 	}()
 	return &controlpb.ShutdownResponse{DelayMs: uint32(shutdownDelay.Milliseconds())}, nil
+}
+
+// selfIP - внешний адрес, если релей успел его узнать
+func (s *server) selfIP() string {
+	if s.publicIP == nil {
+		return ""
+	}
+	return s.publicIP()
 }
