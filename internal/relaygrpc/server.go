@@ -157,7 +157,7 @@ func NewServer(o Options) *grpc.Server {
 		flows: o.Flows, listen: o.Listen, ready: o.Ready, bootID: o.BootID,
 		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers, reload: o.Reload,
 		shutdown: o.Shutdown, publicIP: o.PublicIP,
-		started:  time.Now(),
+		started: time.Now(),
 	}
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(s.authUnary),
