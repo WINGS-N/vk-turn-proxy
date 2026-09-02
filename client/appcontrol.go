@@ -94,9 +94,14 @@ type telemetrySnapshot struct {
 }
 
 func (t telemetrySnapshot) proto() *appcontrolpb.Telemetry {
+	// Счётчики читаются на месте, а не хранятся в снимке: они кумулятивные и
+	// живут отдельно от числа потоков, а приложению нужно самое свежее
+	up, down := PayloadTotals()
 	return &appcontrolpb.Telemetry{
 		ConnectedStreams: int64(t.connected),
 		WorkerStreams:    int64(t.workers),
+		PayloadUpBytes:   up,
+		PayloadDownBytes: down,
 	}
 }
 

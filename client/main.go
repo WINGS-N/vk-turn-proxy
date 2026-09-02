@@ -2045,6 +2045,7 @@ func oneTurnConnection(
 				}
 				return
 			}
+			countPayloadUp(n)
 		}
 	}()
 
@@ -2078,6 +2079,7 @@ func oneTurnConnection(
 				}
 				return
 			}
+			countPayloadDown(n)
 		}
 	}()
 

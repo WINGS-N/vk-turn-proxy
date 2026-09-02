@@ -710,6 +710,12 @@ func (*StreamTelemetryRequest) Descriptor() ([]byte, []int) {
 type Telemetry struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	ConnectedStreams int64                  `protobuf:"varint,1,opt,name=connected_streams,json=connectedStreams,proto3" json:"connected_streams,omitempty"`
+	// Полезная нагрузка, прошедшая через клиент, кумулятивно. Нужна для расписок:
+	// клиент подписывает то, сколько реально получил, и это единственная цифра о
+	// трафике, которой можно верить. Считается тут, а не по интерфейсу: тот тащит
+	// локальный DNS, keepalive и оверхед туннеля, и стороны не сойдутся никогда
+	PayloadUpBytes   uint64 `protobuf:"varint,3,opt,name=payload_up_bytes,json=payloadUpBytes,proto3" json:"payload_up_bytes,omitempty"`
+	PayloadDownBytes uint64 `protobuf:"varint,4,opt,name=payload_down_bytes,json=payloadDownBytes,proto3" json:"payload_down_bytes,omitempty"`
 	// worker_streams is the size of the live worker fleet - the ceiling
 	// connected_streams can reach right now. It is not the configured thread count:
 	// a threads live-patch or a drained worker moves it, so the app must show this
@@ -752,6 +758,20 @@ func (*Telemetry) Descriptor() ([]byte, []int) {
 func (x *Telemetry) GetConnectedStreams() int64 {
 	if x != nil {
 		return x.ConnectedStreams
+	}
+	return 0
+}
+
+func (x *Telemetry) GetPayloadUpBytes() uint64 {
+	if x != nil {
+		return x.PayloadUpBytes
+	}
+	return 0
+}
+
+func (x *Telemetry) GetPayloadDownBytes() uint64 {
+	if x != nil {
+		return x.PayloadDownBytes
 	}
 	return 0
 }
@@ -2053,9 +2073,11 @@ const file_proto_appcontrol_proto_rawDesc = "" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\x19\n" +
 	"\bvk_links\x18\x03 \x03(\tR\avkLinks\"\x15\n" +
 	"\x13GetTelemetryRequest\"\x18\n" +
-	"\x16StreamTelemetryRequest\"_\n" +
+	"\x16StreamTelemetryRequest\"\xb7\x01\n" +
 	"\tTelemetry\x12+\n" +
-	"\x11connected_streams\x18\x01 \x01(\x03R\x10connectedStreams\x12%\n" +
+	"\x11connected_streams\x18\x01 \x01(\x03R\x10connectedStreams\x12(\n" +
+	"\x10payload_up_bytes\x18\x03 \x01(\x04R\x0epayloadUpBytes\x12,\n" +
+	"\x12payload_down_bytes\x18\x04 \x01(\x04R\x10payloadDownBytes\x12%\n" +
 	"\x0eworker_streams\x18\x02 \x01(\x03R\rworkerStreams\"\x15\n" +
 	"\x13StreamEventsRequest\"\x1a\n" +
 	"\x18StreamUnderlayIPsRequest\"\x1c\n" +

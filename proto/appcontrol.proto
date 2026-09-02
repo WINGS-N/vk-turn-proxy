@@ -133,6 +133,12 @@ message StreamTelemetryRequest {}
 
 message Telemetry {
   int64 connected_streams = 1;
+  // Полезная нагрузка, прошедшая через клиент, кумулятивно. Нужна для расписок:
+  // клиент подписывает то, сколько реально получил, и это единственная цифра о
+  // трафике, которой можно верить. Считается тут, а не по интерфейсу: тот тащит
+  // локальный DNS, keepalive и оверхед туннеля, и стороны не сойдутся никогда
+  uint64 payload_up_bytes = 3;
+  uint64 payload_down_bytes = 4;
   // worker_streams is the size of the live worker fleet - the ceiling
   // connected_streams can reach right now. It is not the configured thread count:
   // a threads live-patch or a drained worker moves it, so the app must show this
