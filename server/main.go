@@ -718,6 +718,25 @@ func runMuStream(ctx context.Context, conn net.Conn, manager *SessionManager, co
 
 	selectedWrap, wrapCipherInstance := negotiateWrapForSession(conn.RemoteAddr(), hello, wrapPol)
 
+	// Обфускация обязательна, а клиент о ней не договорился. Отказываем внятно:
+	// молчаливый обрыв он покажет человеку как "нет сети", и тот будет долбиться
+	// в стену вместо того, чтобы обновить приложение
+	if wrapPol.wrapRequired() && wrapCipherInstance == nil {
+		log.Printf("refusing plain session from %s: %v", conn.RemoteAddr(), ErrWrapRequired)
+		_ = writeMuxSessionHelloResponseWithWrap(
+			conn,
+			hello.GetVersion(),
+			false,
+			ErrWrapRequired.Error(),
+			false,
+			sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM,
+			[]sessionproto.TransportMode{sessionproto.TransportMode_TRANSPORT_MODE_DATAGRAM},
+			wrappedSession,
+			sessionproto.WrapCipher_WRAP_CIPHER_NONE,
+		)
+		return ErrWrapRequired
+	}
+
 	if err := writeMuxSessionHelloResponseWithWrap(
 		conn,
 		hello.GetVersion(),

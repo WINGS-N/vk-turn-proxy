@@ -69,3 +69,38 @@ func TestPickServerWrapCipherHonorsClientPreference(t *testing.T) {
 		})
 	}
 }
+
+// Режим required: без обфускации не обслуживаем вовсе. Голый поток по нынешним
+// временам это подарок цензору
+func TestRequiredModeIsResolved(t *testing.T) {
+	policy, err := resolveServerWrapPolicy("required", "any", "", true)
+	if err != nil {
+		t.Fatalf("режим required не завёлся: %v", err)
+	}
+	if !policy.wrapRequired() {
+		t.Fatal("required не включил обязательность")
+	}
+	if !policy.enabled || !policy.acceptClientKeys {
+		t.Fatal("required должен принимать ключи клиента, как и обычный on")
+	}
+}
+
+func TestOnModeStaysOptional(t *testing.T) {
+	policy, err := resolveServerWrapPolicy("on", "any", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.wrapRequired() {
+		t.Fatal("обычный on внезапно стал обязательным, это выкинет старых клиентов")
+	}
+}
+
+func TestOffModeNeverRequires(t *testing.T) {
+	policy, err := resolveServerWrapPolicy("off", "any", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.wrapRequired() {
+		t.Fatal("выключенная обфускация не может быть обязательной")
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -24,15 +25,22 @@ type wrapPolicy struct {
 	allowedCiphers   []sessionproto.WrapCipher
 	presetKey        []byte
 	acceptClientKeys bool
+	// required - без WRAP не обслуживаем вовсе. Голый поток по нынешним временам
+	// это подарок цензору, и там, где обфускация обязательна, договориться о ней
+	// должен КАЖДЫЙ, а не только те, кто умеет
+	required bool
 }
 
 func resolveServerWrapPolicy(mode, allowedCipher, keyHex string, acceptClientKeys bool) (*wrapPolicy, error) {
+	required := false
 	switch mode {
 	case "", "off":
 		return &wrapPolicy{enabled: false}, nil
 	case "on":
+	case "required":
+		required = true
 	default:
-		return nil, fmt.Errorf("unsupported -wrap-mode %q (off|on)", mode)
+		return nil, fmt.Errorf("unsupported -wrap-mode %q (off|on|required)", mode)
 	}
 
 	var allowed []sessionproto.WrapCipher
@@ -54,6 +62,7 @@ func resolveServerWrapPolicy(mode, allowedCipher, keyHex string, acceptClientKey
 		enabled:          true,
 		allowedCiphers:   allowed,
 		acceptClientKeys: acceptClientKeys,
+		required:         required,
 	}
 	if keyHex != "" {
 		decoded, err := hex.DecodeString(keyHex)
@@ -125,6 +134,14 @@ func (p *wrapPolicy) chooseKey(clientProposal []byte) ([]byte, string) {
 // ServerHello.selected_wrap_cipher and (if non-NONE) a ready-to-use
 // Cipher instance that the caller should Enable on the per-conn
 // StatefulConn after the ServerHello has been written raw.
+// ErrWrapRequired - клиент пришёл без обфускации туда, где она обязательна.
+// Ошибка внятная нарочно: молчаливый обрыв клиент показывает как "нет сети", и
+// человек будет долбиться в стену вместо того, чтобы обновиться
+var ErrWrapRequired = errors.New("this relay serves only obfuscated sessions, update your client")
+
+// wrapRequired говорит, обязана ли сессия быть обфусцированной
+func (p *wrapPolicy) wrapRequired() bool { return p != nil && p.enabled && p.required }
+
 func negotiateWrapForSession(
 	remote net.Addr,
 	hello *sessionproto.ClientHello,

@@ -22,7 +22,7 @@ type serverOptions struct {
 	wbStreamDisplayName string
 	wbStreamE2ESecret   string
 
-	wrapMode             string // off|on — honor client-proposed WRAP at all
+	wrapMode             string // off|on|required - обфускация выключена, разрешена или обязательна
 	wrapCipher           string // any|srtp-aes-gcm|srtp-chacha20-poly1305 — accepted cipher(s)
 	wrapKeyHex           string // optional preset key; takes precedence over client proposal
 	wrapAcceptClientKeys bool   // default true; in-band key transmission opt-out
@@ -78,7 +78,7 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.StringVar(&opts.wbStreamRoomID, "wb-stream-room-id", "", "join the given LiveKit room and forward DataPacket frames instead of the TURN data plane")
 	fs.StringVar(&opts.wbStreamDisplayName, "wb-stream-display-name", "", "display name the server uses when joining a LiveKit room (empty = random VK-style name per room)")
 	fs.StringVar(&opts.wbStreamE2ESecret, "wb-stream-e2e-secret", "", "optional base64-encoded 32-byte AES-256 key for E2E over DataPacket")
-	fs.StringVar(&opts.wrapMode, "wrap-mode", "on", "Accept client-proposed WRAP SRTP-mimicry: off|on")
+	fs.StringVar(&opts.wrapMode, "wrap-mode", "on", "WRAP SRTP-mimicry: off|on|required (required refuses plain sessions)")
 	fs.StringVar(&opts.wrapCipher, "wrap-cipher", "any", "Accepted WRAP cipher(s): any|srtp-aes-gcm|srtp-chacha20-poly1305")
 	fs.StringVar(&opts.wrapKeyHex, "wrap-key", "", "Optional fixed WRAP key (64-char hex, 32 bytes); takes precedence over client proposal when set")
 	fs.BoolVar(&opts.wrapAcceptClientKeys, "wrap-accept-client-keys", true, "Accept wrap_key_proposal from client SessionHello when no -wrap-key is preset (default true)")
@@ -121,7 +121,7 @@ func parseServerOptions(args []string, program string, stdout, stderr io.Writer)
 		opts.wbStreamE2ESecret = strings.TrimSpace(opts.wbStreamE2ESecret)
 		opts.wrapMode = strings.ToLower(strings.TrimSpace(opts.wrapMode))
 		switch opts.wrapMode {
-		case "on", "off":
+		case "on", "off", "required":
 		default:
 			opts.wrapMode = "off"
 		}
