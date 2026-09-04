@@ -29,7 +29,18 @@ type Applier interface {
 	EnsureInterface(name, privateKeyB64 string, listenPort int, address string) error
 	SetPeer(name string, peer Peer) error
 	RemovePeer(name, publicKeyB64 string) error
+	// PeerStats отдаёт счётчики ядра по каждому пиру. Ядро считает
+	// расшифрованные датаграммы, то есть ровно то же, что клиент подписывает в
+	// расписке: обёртка DTLS и SRTP сюда не попадает
+	PeerStats(name string) (map[string]Counters, error)
 	Close() error
+}
+
+// Counters - что ядро насчитало по пиру. Направление от лица КЛИЕНТА: Up это
+// то, что он отправил, Down - то, что получил
+type Counters struct {
+	Up   uint64
+	Down uint64
 }
 
 // Noop tracks nothing on the host; used when host apply is disabled so peers
@@ -39,6 +50,7 @@ type Noop struct{}
 func (Noop) EnsureInterface(string, string, int, string) error { return nil }
 func (Noop) SetPeer(string, Peer) error                        { return nil }
 func (Noop) RemovePeer(string, string) error                   { return nil }
+func (Noop) PeerStats(string) (map[string]Counters, error)     { return nil, nil }
 func (Noop) Close() error                                      { return nil }
 
 // WGCtrl applies peers onto a kernel WireGuard interface via netlink.
@@ -105,6 +117,24 @@ func (w *WGCtrl) RemovePeer(name, publicKeyB64 string) error {
 		PublicKey: pub,
 		Remove:    true,
 	}}})
+}
+
+// PeerStats снимает счётчики с живого интерфейса
+func (w *WGCtrl) PeerStats(name string) (map[string]Counters, error) {
+	device, err := w.client.Device(name)
+	if err != nil {
+		return nil, fmt.Errorf("wgapply: read %s: %w", name, err)
+	}
+	out := make(map[string]Counters, len(device.Peers))
+	for _, peer := range device.Peers {
+		// ReceiveBytes у ядра это принятое ОТ пира, то есть отправленное
+		// клиентом, и наоборот
+		out[peer.PublicKey.String()] = Counters{
+			Up:   uint64(peer.ReceiveBytes),
+			Down: uint64(peer.TransmitBytes),
+		}
+	}
+	return out, nil
 }
 
 func (w *WGCtrl) Close() error { return w.client.Close() }

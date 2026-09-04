@@ -180,6 +180,7 @@ func serverOptionsToConfigLines(o serverOptions) []string {
 		str("wg-address", o.wgAddress, "10.66.66.1/24"),
 		boolean("wg-apply", o.wgApply, false),
 		integer("wg-listen-port", o.wgListenPort, 51820),
+		boolean("federation", o.federation, false),
 	}
 }
 

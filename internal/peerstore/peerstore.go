@@ -22,8 +22,10 @@ import (
 
 // Peer is one tunnel client.
 type Peer struct {
-	PublicKey   string
-	AllowedIPs  string
+	PublicKey  string
+	AllowedIPs string
+	// RxBytes - принятое от пира, то есть отправленное клиентом. TxBytes -
+	// наоборот. Обе цифры снимаются с ядра при чтении списка
 	RxBytes     uint64
 	TxBytes     uint64
 	CreatedUnix int64
@@ -136,12 +138,30 @@ func (s *Store) Delete(publicKey string) bool {
 }
 
 // List returns a snapshot of all peers.
+//
+// Счётчики берутся у ядра на каждый вызов, а не копятся в памяти: своей
+// бухгалтерии у релея нет, а ядро и так считает каждую расшифрованную
+// датаграмму. Оно же переживает рестарт релея, чего память не умеет
 func (s *Store) List() []Peer {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	iface, applier := s.iface, s.applier
 	out := make([]Peer, 0, len(s.peers))
 	for _, p := range s.peers {
 		out = append(out, *p)
+	}
+	s.mu.Unlock()
+
+	if applier == nil {
+		return out
+	}
+	stats, err := applier.PeerStats(iface)
+	if err != nil || len(stats) == 0 {
+		return out
+	}
+	for i := range out {
+		if c, ok := stats[out[i].PublicKey]; ok {
+			out[i].RxBytes, out[i].TxBytes = c.Up, c.Down
+		}
 	}
 	return out
 }
