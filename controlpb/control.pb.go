@@ -420,6 +420,10 @@ type Status struct {
 	// config_version increments on every applied reload, so a supervisor can tell
 	// that its change actually landed rather than assuming it did
 	ConfigVersion uint64 `protobuf:"varint,12,opt,name=config_version,json=configVersion,proto3" json:"config_version,omitempty"`
+	// federation говорит, что релей заперт на своём WireGuard и увести трафик на
+	// чужой бэкенд ему нельзя. Башка спрашивает это у самого процесса, потому что
+	// флаги в чужом systemd правит кто угодно
+	Federation    bool `protobuf:"varint,13,opt,name=federation,proto3" json:"federation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -543,6 +547,13 @@ func (x *Status) GetConfigVersion() uint64 {
 		return x.ConfigVersion
 	}
 	return 0
+}
+
+func (x *Status) GetFederation() bool {
+	if x != nil {
+		return x.Federation
+	}
+	return false
 }
 
 type ReloadRequest struct {
@@ -1079,7 +1090,7 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x16StreamsByProtocolEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\x12\n" +
-	"\x10GetStatusRequest\"\xbe\x03\n" +
+	"\x10GetStatusRequest\"\xde\x03\n" +
 	"\x06Status\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12!\n" +
 	"\fwg_interface\x18\x02 \x01(\tR\vwgInterface\x12\x1d\n" +
@@ -1096,7 +1107,10 @@ const file_proto_control_proto_rawDesc = "" +
 	" \x03(\tR\x14supportedWrapCiphers\x12\x1f\n" +
 	"\vwrap_cipher\x18\v \x01(\tR\n" +
 	"wrapCipher\x12%\n" +
-	"\x0econfig_version\x18\f \x01(\x04R\rconfigVersion\"\x0f\n" +
+	"\x0econfig_version\x18\f \x01(\x04R\rconfigVersion\x12\x1e\n" +
+	"\n" +
+	"federation\x18\r \x01(\bR\n" +
+	"federation\"\x0f\n" +
 	"\rReloadRequest\"|\n" +
 	"\x0eReloadResponse\x12\x18\n" +
 	"\aapplied\x18\x01 \x03(\tR\aapplied\x12)\n" +

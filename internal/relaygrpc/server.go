@@ -72,6 +72,7 @@ type server struct {
 	bootID      string
 	wrapCipher  string
 	wrapCiphers []string
+	federation  bool
 	started     time.Time
 
 	// reload re-reads what can be re-read while traffic keeps flowing, and
@@ -133,6 +134,9 @@ type Options struct {
 	// suits this machine
 	WrapCipher           string
 	SupportedWrapCiphers []string
+	// Federation - релей заперт на своём WireGuard. Отдаём наверх, чтобы башка
+	// спрашивала это у процесса, а не верила чужому systemd
+	Federation bool
 	// Reload re-reads whatever the relay can pick up without dropping traffic.
 	// Left nil, Reload still answers - it just reports that everything needs a
 	// restart, which is the truth for a relay that cannot re-read anything.
@@ -156,7 +160,8 @@ func NewServer(o Options) *grpc.Server {
 		store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token,
 		flows: o.Flows, listen: o.Listen, ready: o.Ready, bootID: o.BootID,
 		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers, reload: o.Reload,
-		shutdown: o.Shutdown, publicIP: o.PublicIP,
+		federation: o.Federation,
+		shutdown:   o.Shutdown, publicIP: o.PublicIP,
 		started: time.Now(),
 	}
 	opts := []grpc.ServerOption{
@@ -194,6 +199,7 @@ func (s *server) GetStatus(_ context.Context, _ *controlpb.GetStatusRequest) (*c
 		WrapCipher:           s.wrapCipher,
 		SupportedWrapCiphers: s.wrapCiphers,
 		ConfigVersion:        s.configVersion.Load(),
+		Federation:           s.federation,
 	}, nil
 }
 

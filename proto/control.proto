@@ -97,6 +97,10 @@ message Status {
   // config_version increments on every applied reload, so a supervisor can tell
   // that its change actually landed rather than assuming it did
   uint64 config_version = 12;
+  // federation говорит, что релей заперт на своём WireGuard и увести трафик на
+  // чужой бэкенд ему нельзя. Башка спрашивает это у самого процесса, потому что
+  // флаги в чужом systemd правит кто угодно
+  bool federation = 13;
 }
 
 message ReloadRequest {}

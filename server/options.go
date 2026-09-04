@@ -1,8 +1,12 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"fmt"
 	"io"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/cacggghp/vk-turn-proxy/internal/cliutil"
@@ -37,6 +41,10 @@ type serverOptions struct {
 	wgListenPort int    // WireGuard interface listen port
 	wgAddress    string // WireGuard interface address (CIDR), e.g. 10.66.66.1/24
 	wgKeyFile    string // path to persist the WG server key (empty = ephemeral)
+	// federation pins the relay to the WireGuard it manages itself. A federation
+	// node must stay observable and shapeable, and a backend pointing anywhere
+	// else takes the traffic out of reach of both
+	federation bool
 
 	panelGRPC     string // panel Provisioning gRPC endpoint for DTLS PROVISION (empty = disabled)
 	panelCAPin    string // panel CA SPKI pin (sha256/<base64>) for a self-signed panel; empty uses system trust
@@ -92,6 +100,7 @@ func newServerFlagSet(program string, output io.Writer) (*flag.FlagSet, *serverO
 	fs.IntVar(&opts.wgListenPort, "wg-listen-port", 51820, "WireGuard interface listen port")
 	fs.StringVar(&opts.wgAddress, "wg-address", "10.66.66.1/24", "WireGuard interface address (CIDR)")
 	fs.StringVar(&opts.wgKeyFile, "wg-key-file", "", "path to persist the WireGuard server key so its public key is stable across restarts (empty = regenerated each start)")
+	fs.BoolVar(&opts.federation, "federation", false, "federation mode: refuse any backend other than the WireGuard this relay manages")
 	fs.StringVar(&opts.panelGRPC, "panel-grpc", "", "panel Provisioning gRPC endpoint enabling the DTLS PROVISION path")
 	fs.StringVar(&opts.panelCAPin, "panel-ca-pin", "", "panel CA SPKI pin (sha256/<base64>) for a self-signed panel; empty verifies the panel via system trust")
 	fs.BoolVar(&opts.panelInsecure, "panel-insecure", false, "dial the panel over plaintext h2c instead of TLS (trusted local network only)")
@@ -145,8 +154,10 @@ func parseServerOptions(args []string, program string, stdout, stderr io.Writer)
 			}
 			return nil
 		}
-		_, err := resolveServerBackends(opts.connect, opts.udpConnect, opts.tcpConnect, opts.vlessMode)
-		return err
+		if _, err := resolveServerBackends(opts.connect, opts.udpConnect, opts.tcpConnect, opts.vlessMode); err != nil {
+			return err
+		}
+		return checkFederationBackend(*opts)
 	})
 }
 
@@ -155,3 +166,41 @@ var errMissingBackendForWbStream = wbStreamError("-wb-stream-room-id requires -u
 type wbStreamError string
 
 func (e wbStreamError) Error() string { return string(e) }
+
+// checkFederationBackend не пускает релей федерации никуда, кроме своего же
+// WireGuard.
+//
+// Нода федерации обязана оставаться наблюдаемой и шейпируемой: домены и
+// отпечатки снимаются с wg-интерфейса, потолки скорости вешаются на него же.
+// Бэкенд, смотрящий на чужой хост, уносит расшифрованный трафик туда, где мы не
+// видим нихуя, а человек при этом думает, что сидит в федерации
+func checkFederationBackend(o serverOptions) error {
+	if !o.federation {
+		return nil
+	}
+	if !o.wgApply {
+		return errors.New("-federation requires -wg-apply=true: the relay must run the WireGuard it hands traffic to")
+	}
+	if o.wbStreamRoomID != "" {
+		return errors.New("-federation cannot be combined with -wb-stream-room-id")
+	}
+	if o.tcpConnect != "" || o.vlessMode {
+		return errors.New("-federation refuses a TCP backend: only the managed WireGuard may receive traffic")
+	}
+	backend := o.udpConnect
+	if backend == "" {
+		backend = o.connect
+	}
+	host, port, err := net.SplitHostPort(backend)
+	if err != nil {
+		return fmt.Errorf("-federation needs -udp-connect as host:port: %w", err)
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("-federation refuses backend %q: only the loopback WireGuard of this node is allowed", backend)
+	}
+	if port != strconv.Itoa(o.wgListenPort) {
+		return fmt.Errorf("-federation refuses backend port %s: the managed WireGuard listens on %d", port, o.wgListenPort)
+	}
+	return nil
+}

@@ -1168,6 +1168,7 @@ func main() {
 			BootID:               relayBootID,
 			WrapCipher:           opts.wrapCipher,
 			SupportedWrapCiphers: []string{"srtp-aes-gcm", "srtp-chacha20-poly1305"},
+			Federation:           opts.federation,
 			// Перечитывать релею пока нечего: адрес прослушивания, токен
 			// управления и wrap-политика связываются при старте. Отвечаем честно,
 			// а не притворяемся, что применили
