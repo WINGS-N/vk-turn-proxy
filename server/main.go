@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1169,11 +1170,14 @@ func main() {
 			WrapCipher:           opts.wrapCipher,
 			SupportedWrapCiphers: []string{"srtp-aes-gcm", "srtp-chacha20-poly1305"},
 			Federation:           opts.federation,
-			// Перечитывать релею пока нечего: адрес прослушивания, токен
-			// управления и wrap-политика связываются при старте. Отвечаем честно,
-			// а не притворяемся, что применили
+			// Адрес приёма переезжает на лету: порт ноды выбирается под хост, и
+			// смена порта не должна стоить всех сессий на нём
+			ListenAddr: dataPlaneSwitch.Addr,
+			Relisten:   dataPlaneSwitch.Relisten,
+			// Токен управления и wrap-политика связываются при старте. Отвечаем
+			// честно, а не притворяемся, что применили
 			Reload: func(context.Context) ([]string, []string, error) {
-				return nil, []string{"listen", "grpc-token", "wrap-mode"}, nil
+				return nil, []string{"grpc-token", "wrap-mode"}, nil
 			},
 			// Перезапуск не наш: процессом распоряжается systemd или kubelet.
 			// Наше дело - выйти штатно, чтобы они подняли релей уже с новыми
@@ -1266,11 +1270,6 @@ func main() {
 	defer serverUI.Close()
 	log.SetOutput(serverUI.logWriter())
 
-	addr, err := net.ResolveUDPAddr("udp", opts.listen)
-	if err != nil {
-		panic(err)
-	}
-
 	certificate, genErr := selfsign.GenerateSelfSigned()
 	if genErr != nil {
 		panic(genErr)
@@ -1287,16 +1286,86 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	manager := &SessionManager{
+		Sessions: make(map[string]*UserSession),
+	}
+
+	var wg sync.WaitGroup
+	// Каждое поколение сокета обслуживается своей горутиной, поэтому переезд на
+	// другой порт не трогает тех, кто уже подключен к прежнему
+	serveGen := func(gen *listenGen) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			conn, err := gen.listener.Accept()
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					// Закрытый после дренажа сокет - штатный конец поколения,
+					// а не поломка
+					if errors.Is(err, net.ErrClosed) {
+						return
+					}
+					log.Println(err)
+					continue
+				}
+			}
+
+			wg.Add(1)
+			go func(conn net.Conn) {
+				defer wg.Done()
+				defer func() {
+					if closeErr := conn.Close(); closeErr != nil {
+						log.Printf("failed to close incoming connection: %s", closeErr)
+					}
+				}()
+
+				log.Printf("Connection from %s", conn.RemoteAddr())
+				if gen.wrap != nil {
+					defer gen.wrap.Forget(conn.RemoteAddr())
+				}
+				if err := handleConnection(ctx, conn, manager, backends, mode, wrapPol, gen.wrap); err != nil {
+					log.Printf("Connection closed: %s (%v)", conn.RemoteAddr(), err)
+				} else {
+					log.Printf("Connection closed: %s", conn.RemoteAddr())
+				}
+			}(conn)
+		}
+	}
+
+	dataPlaneSwitch.setDone(ctx.Done())
+	dataPlaneSwitch.setOpen(func(address string) (*listenGen, error) {
+		return openDataListener(address, wrapPol, dtlsOpts)
+	})
+	dataPlaneSwitch.setServe(serveGen)
+	first, err := dataPlaneSwitch.Start(opts.listen)
+	if err != nil {
+		panic(err)
+	}
+	context.AfterFunc(ctx, func() { first.close() })
+
+	log.Printf("Listening on %s, session mode=%s, backends=%s", first.addr, mode, backends.describe())
+	serveGen(first)
+	wg.Wait()
+}
+
+// openDataListener поднимает одно поколение слушающего сокета
+func openDataListener(address string, wrapPol *wrapPolicy, dtlsOpts []dtls.ServerOption) (*listenGen, error) {
+	addr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return nil, err
+	}
 	var (
 		listener     net.Listener
 		wrapListener *wrap.Listener
 	)
 	if wrapPol.enabled {
-		desc := "in-band"
-		if wrapPol.presetKey != nil {
-			desc = "preset-key"
-		}
-		log.Printf("WRAP listener active (mode=on, %s, ciphers=%s)", desc, opts.wrapCipher)
 		// Every client datagram arrives on this socket, so it is the one that
 		// must not run out of receive buffer: a drop here is invisible to the
 		// relay but makes the tunnelled TCP treat it as congestion and halve its
@@ -1309,69 +1378,32 @@ func main() {
 		}
 		inner, listenErr := listenConfig.Listen("udp", addr)
 		if listenErr != nil {
-			panic(listenErr)
+			return nil, listenErr
 		}
 		wrapListener = wrap.NewListener(dtlsnet.PacketListenerFromListener(inner))
 		listener, err = dtls.NewListenerWithOptions(wrapListener, dtlsOpts...)
+		if err != nil {
+			_ = inner.Close()
+			return nil, err
+		}
 	} else {
 		listener, err = dtls.ListenWithOptions("udp", addr, dtlsOpts...)
-	}
-	if err != nil {
-		panic(err)
-	}
-	context.AfterFunc(ctx, func() {
-		if closeErr := listener.Close(); closeErr != nil {
-			log.Printf("failed to close listener: %s", closeErr)
-		}
-	})
-
-	manager := &SessionManager{
-		Sessions: make(map[string]*UserSession),
-	}
-
-	log.Printf("Listening on %s, session mode=%s, backends=%s", opts.listen, mode, backends.describe())
-
-	var wg sync.WaitGroup
-	for {
-		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return
-		default:
-		}
-
-		conn, err := listener.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
-				wg.Wait()
-				return
-			default:
-				log.Println(err)
-				continue
-			}
+			return nil, err
 		}
-
-		wg.Add(1)
-		go func(conn net.Conn) {
-			defer wg.Done()
-			defer func() {
-				if closeErr := conn.Close(); closeErr != nil {
-					log.Printf("failed to close incoming connection: %s", closeErr)
-				}
-			}()
-
-			log.Printf("Connection from %s", conn.RemoteAddr())
-			if wrapListener != nil {
-				defer wrapListener.Forget(conn.RemoteAddr())
-			}
-			if err := handleConnection(ctx, conn, manager, backends, mode, wrapPol, wrapListener); err != nil {
-				log.Printf("Connection closed: %s (%v)", conn.RemoteAddr(), err)
-			} else {
-				log.Printf("Connection closed: %s", conn.RemoteAddr())
-			}
-		}(conn)
 	}
+	// Нулевой порт раздаёт ядро, так что настоящий адрес известен только сейчас
+	bound := address
+	if listener.Addr() != nil {
+		bound = listener.Addr().String()
+	}
+	gen := &listenGen{addr: bound, listener: listener, wrap: wrapListener}
+	gen.close = func() {
+		if closeErr := listener.Close(); closeErr != nil {
+			log.Printf("failed to close listener on %s: %s", bound, closeErr)
+		}
+	}
+	return gen, nil
 }
 
 // slidingDeadline pushes a connection deadline out without paying a runtime

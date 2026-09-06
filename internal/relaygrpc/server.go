@@ -78,7 +78,11 @@ type server struct {
 	// reload re-reads what can be re-read while traffic keeps flowing, and
 	// configVersion counts the times it succeeded, so a caller can see its change
 	// land instead of assuming it did
-	reload        func(context.Context) (applied []string, restartRequired []string, err error)
+	reload func(context.Context) (applied []string, restartRequired []string, err error)
+	// relisten переносит приём данных на другой адрес и возвращает тот, что
+	// получился: при нулевом порте его выбирает ядро
+	relisten      func(addr string, drain time.Duration) (string, error)
+	listenAddr    func() string
 	shutdown      func(reason string)
 	publicIP      func() string
 	configVersion atomic.Uint64
@@ -123,6 +127,13 @@ type Options struct {
 	// Listen is the relay's DTLS data-plane listen address, reported in Status so
 	// the panel can derive the endpoint apps dial.
 	Listen string
+	// ListenAddr отдаёт адрес приёма на сейчас. Он переезжает по Reload, и без
+	// этого Status рассказывал бы про порт, которого уже нет
+	ListenAddr func() string
+	// Relisten переносит приём на другой адрес, оставляя прежний сокет дожить
+	// свои сессии. Пусто - переезд не поддерживается, и Reload скажет об этом
+	// честно
+	Relisten func(addr string, drain time.Duration) (string, error)
 	// Ready reports whether the relay can actually carry traffic. A supervisor
 	// that only sees the process running marks a node healthy while every client
 	// still fails
@@ -160,6 +171,7 @@ func NewServer(o Options) *grpc.Server {
 		store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token,
 		flows: o.Flows, listen: o.Listen, ready: o.Ready, bootID: o.BootID,
 		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers, reload: o.Reload,
+		relisten: o.Relisten, listenAddr: o.ListenAddr,
 		federation: o.Federation,
 		shutdown:   o.Shutdown, publicIP: o.PublicIP,
 		started: time.Now(),
@@ -190,7 +202,7 @@ func (s *server) GetStatus(_ context.Context, _ *controlpb.GetStatusRequest) (*c
 		WgInterface:          s.store.Interface(),
 		PeerCount:            uint32(s.store.Count()),
 		ActiveSessions:       active,
-		ListenEndpoint:       s.listen,
+		ListenEndpoint:       s.currentListen(),
 		PublicIp:             s.selfIP(),
 		Ready:                ready,
 		UptimeSeconds:        uint64(time.Since(s.started).Seconds()),
@@ -203,22 +215,57 @@ func (s *server) GetStatus(_ context.Context, _ *controlpb.GetStatusRequest) (*c
 	}, nil
 }
 
+// currentListen - адрес приёма на сейчас, а не тот, с которым релей стартовал
+func (s *server) currentListen() string {
+	if s.listenAddr != nil {
+		if addr := s.listenAddr(); addr != "" {
+			return addr
+		}
+	}
+	return s.listen
+}
+
 // Reload re-reads what it can and says plainly what it could not.
 //
-// The listen address and the transport key are bound when the process starts, so
-// they are reported as needing a restart rather than quietly ignored: a relay
-// that answers "done" and keeps serving the old value is worse than one that
-// admits it cannot.
-func (s *server) Reload(ctx context.Context, _ *controlpb.ReloadRequest) (*controlpb.ReloadResponse, error) {
-	if s.reload == nil {
-		return &controlpb.ReloadResponse{
-			RestartRequired: []string{"listen", "grpc-token", "wrap-cipher"},
-			ConfigVersion:   s.configVersion.Load(),
-		}, nil
+// The listen address moves in place: the relay opens the new socket, keeps the
+// old one for the sessions already on it and reports where it ended up. The
+// transport key is still bound at start, so it is named as needing a restart
+// rather than quietly ignored - a relay that answers "done" and keeps serving
+// the old value is worse than one that admits it cannot.
+func (s *server) Reload(ctx context.Context, req *controlpb.ReloadRequest) (*controlpb.ReloadResponse, error) {
+	var (
+		applied []string
+		restart []string
+	)
+	if target := strings.TrimSpace(req.GetListen()); target != "" {
+		if s.relisten == nil {
+			restart = append(restart, "listen")
+		} else {
+			moved, err := s.relisten(target, time.Duration(req.GetDrainSeconds())*time.Second)
+			if err != nil {
+				// Занятый порт - это отказ вызывающему, а не молчаливый простой:
+				// релей при этом продолжает принимать на прежнем адресе
+				return nil, status.Error(codes.FailedPrecondition, err.Error())
+			}
+			applied = append(applied, "listen")
+			_ = moved
+		}
 	}
-	applied, restart, err := s.reload(ctx)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	if s.reload == nil {
+		restart = append(restart, "grpc-token", "wrap-cipher")
+	} else {
+		reloaded, needRestart, err := s.reload(ctx)
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		applied = append(applied, reloaded...)
+		for _, item := range needRestart {
+			// Про listen мы уже ответили сами, и он больше не требует рестарта
+			if item == "listen" && s.relisten != nil {
+				continue
+			}
+			restart = append(restart, item)
+		}
 	}
 	version := s.configVersion.Load()
 	if len(applied) > 0 {
@@ -228,6 +275,7 @@ func (s *server) Reload(ctx context.Context, _ *controlpb.ReloadRequest) (*contr
 		Applied:         applied,
 		RestartRequired: restart,
 		ConfigVersion:   version,
+		Listen:          s.currentListen(),
 	}, nil
 }
 

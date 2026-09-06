@@ -45,6 +45,10 @@ type RelayClient interface {
 	// what still needs a restart. A supervisor that had to kill the process to
 	// apply a change would take every live session with it, so this exists to keep
 	// that from being the only option.
+	//
+	// It also moves the data plane to another listen address, draining the old
+	// socket instead of cutting it: the port a node serves on is chosen per host,
+	// and a change of port must not cost every session on it.
 	Reload(ctx context.Context, in *ReloadRequest, opts ...grpc.CallOption) (*ReloadResponse, error)
 	// Shutdown завершает релей штатно. Перезапуском занимается тот, кто его
 	// запустил - systemd или kubelet: агент чужим процессом не распоряжается, а
@@ -204,6 +208,10 @@ type RelayServer interface {
 	// what still needs a restart. A supervisor that had to kill the process to
 	// apply a change would take every live session with it, so this exists to keep
 	// that from being the only option.
+	//
+	// It also moves the data plane to another listen address, draining the old
+	// socket instead of cutting it: the port a node serves on is chosen per host,
+	// and a change of port must not cost every session on it.
 	Reload(context.Context, *ReloadRequest) (*ReloadResponse, error)
 	// Shutdown завершает релей штатно. Перезапуском занимается тот, кто его
 	// запустил - systemd или kubelet: агент чужим процессом не распоряжается, а

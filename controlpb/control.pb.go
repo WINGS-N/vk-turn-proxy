@@ -557,7 +557,18 @@ func (x *Status) GetFederation() bool {
 }
 
 type ReloadRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// listen moves the data plane to another address without a restart. Empty
+	// keeps the current one.
+	//
+	// The relay opens the new socket first and only then stops accepting on the
+	// old one, so a caller that picks a busy port gets an error and a relay that
+	// is still serving, rather than a node that went dark.
+	Listen string `protobuf:"bytes,1,opt,name=listen,proto3" json:"listen,omitempty"`
+	// drain_seconds keeps the old socket alive for the sessions already on it.
+	// Their clients still hold the previous endpoint, so closing it at once would
+	// drop everyone who was mid-download. Zero uses the relay's own default.
+	DrainSeconds  uint32 `protobuf:"varint,2,opt,name=drain_seconds,json=drainSeconds,proto3" json:"drain_seconds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -592,17 +603,34 @@ func (*ReloadRequest) Descriptor() ([]byte, []int) {
 	return file_proto_control_proto_rawDescGZIP(), []int{7}
 }
 
+func (x *ReloadRequest) GetListen() string {
+	if x != nil {
+		return x.Listen
+	}
+	return ""
+}
+
+func (x *ReloadRequest) GetDrainSeconds() uint32 {
+	if x != nil {
+		return x.DrainSeconds
+	}
+	return 0
+}
+
 type ReloadResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// applied lists what was re-read in place
 	Applied []string `protobuf:"bytes,1,rep,name=applied,proto3" json:"applied,omitempty"`
-	// restart_required lists what could not be: a listen address or a transport
-	// key is bound at start, and pretending otherwise would leave the relay
-	// serving the old value while reporting the new one
+	// restart_required lists what could not be: a transport key is bound at start,
+	// and pretending otherwise would leave the relay serving the old value while
+	// reporting the new one
 	RestartRequired []string `protobuf:"bytes,2,rep,name=restart_required,json=restartRequired,proto3" json:"restart_required,omitempty"`
 	ConfigVersion   uint64   `protobuf:"varint,3,opt,name=config_version,json=configVersion,proto3" json:"config_version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// listen is the address the data plane serves on after this call, so a caller
+	// never has to guess whether its request took
+	Listen        string `protobuf:"bytes,4,opt,name=listen,proto3" json:"listen,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReloadResponse) Reset() {
@@ -654,6 +682,13 @@ func (x *ReloadResponse) GetConfigVersion() uint64 {
 		return x.ConfigVersion
 	}
 	return 0
+}
+
+func (x *ReloadResponse) GetListen() string {
+	if x != nil {
+		return x.Listen
+	}
+	return ""
 }
 
 type ListPeersRequest struct {
@@ -1110,12 +1145,15 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x0econfig_version\x18\f \x01(\x04R\rconfigVersion\x12\x1e\n" +
 	"\n" +
 	"federation\x18\r \x01(\bR\n" +
-	"federation\"\x0f\n" +
-	"\rReloadRequest\"|\n" +
+	"federation\"L\n" +
+	"\rReloadRequest\x12\x16\n" +
+	"\x06listen\x18\x01 \x01(\tR\x06listen\x12#\n" +
+	"\rdrain_seconds\x18\x02 \x01(\rR\fdrainSeconds\"\x94\x01\n" +
 	"\x0eReloadResponse\x12\x18\n" +
 	"\aapplied\x18\x01 \x03(\tR\aapplied\x12)\n" +
 	"\x10restart_required\x18\x02 \x03(\tR\x0frestartRequired\x12%\n" +
-	"\x0econfig_version\x18\x03 \x01(\x04R\rconfigVersion\"\x12\n" +
+	"\x0econfig_version\x18\x03 \x01(\x04R\rconfigVersion\x12\x16\n" +
+	"\x06listen\x18\x04 \x01(\tR\x06listen\"\x12\n" +
 	"\x10ListPeersRequest\"6\n" +
 	"\x05Peers\x12-\n" +
 	"\x05peers\x18\x01 \x03(\v2\x17.vkturn.control.v1.PeerR\x05peers\"S\n" +
