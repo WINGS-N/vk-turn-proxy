@@ -7,7 +7,9 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o vk-turn-proxy ./server
 
 FROM alpine:3.23
 
-RUN apk add --no-cache ca-certificates tzdata
+# iptables нужен режиму -wg-apply: релей сам поднимает свой WireGuard и без
+# правил forward и NAT трафик клиентов дальше интерфейса не уходит
+RUN apk add --no-cache ca-certificates tzdata iptables
 
 WORKDIR /app
 
