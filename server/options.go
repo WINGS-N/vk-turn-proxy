@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -157,6 +158,7 @@ func parseServerOptions(args []string, program string, stdout, stderr io.Writer)
 		if _, err := resolveServerBackends(opts.connect, opts.udpConnect, opts.tcpConnect, opts.vlessMode); err != nil {
 			return err
 		}
+		alignTunnelCIDR(opts)
 		return checkFederationBackend(*opts)
 	})
 }
@@ -166,6 +168,35 @@ var errMissingBackendForWbStream = wbStreamError("-wb-stream-room-id requires -u
 type wbStreamError string
 
 func (e wbStreamError) Error() string { return string(e) }
+
+// alignTunnelCIDR подтягивает пул адресов пиров к адресу интерфейса.
+//
+// Флага два, и разъехаться они могут молча: интерфейс поднимается на
+// -wg-address, а пиры минтятся из -wg-tunnel-cidr. Клиент тогда получает адрес
+// из чужой подсети, хендшейк даже проходит, но пакеты не маскарадятся и наружу
+// не выходят - трафика нет, а по логам всё живо.
+//
+// Правим только когда WireGuard наш: при -wg-apply=false интерфейсом
+// распоряжается кто-то другой, и пул там законно может быть любым
+func alignTunnelCIDR(o *serverOptions) {
+	if !o.wgApply {
+		return
+	}
+	address := strings.TrimSpace(o.wgAddress)
+	if address == "" {
+		return
+	}
+	ip, network, err := net.ParseCIDR(address)
+	if err != nil {
+		return
+	}
+	if _, pool, poolErr := net.ParseCIDR(strings.TrimSpace(o.wgTunnelCIDR)); poolErr == nil && pool.Contains(ip) {
+		return
+	}
+	log.Printf("wg: peer pool %s does not hold the interface address %s, using %s instead",
+		o.wgTunnelCIDR, address, network.String())
+	o.wgTunnelCIDR = network.String()
+}
 
 // checkFederationBackend не пускает релей федерации никуда, кроме своего же
 // WireGuard.

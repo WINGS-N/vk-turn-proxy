@@ -52,3 +52,31 @@ func TestParseServerOptionsParsesValidArgs(t *testing.T) {
 		t.Fatalf("unexpected options: %+v", opts)
 	}
 }
+
+// Пул адресов пиров обязан лежать в той же подсети, что и адрес интерфейса:
+// иначе клиент получает адрес, который на ноде не маскарадится, хендшейк
+// проходит, а трафик наружу не идёт
+func TestTunnelCIDRFollowsTheInterfaceAddress(t *testing.T) {
+	opts := serverOptions{wgApply: true, wgAddress: "10.67.66.1/24", wgTunnelCIDR: "10.66.66.0/24"}
+	alignTunnelCIDR(&opts)
+	if opts.wgTunnelCIDR != "10.67.66.0/24" {
+		t.Fatalf("пул остался %q, а интерфейс живёт в 10.67.66.0/24", opts.wgTunnelCIDR)
+	}
+}
+
+func TestTunnelCIDRIsKeptWhenItAlreadyHoldsTheInterface(t *testing.T) {
+	opts := serverOptions{wgApply: true, wgAddress: "10.66.66.1/24", wgTunnelCIDR: "10.66.66.0/24"}
+	alignTunnelCIDR(&opts)
+	if opts.wgTunnelCIDR != "10.66.66.0/24" {
+		t.Fatalf("согласованный пул зачем-то переписан на %q", opts.wgTunnelCIDR)
+	}
+}
+
+// Чужим интерфейсом мы не распоряжаемся, и пул там законно любой
+func TestTunnelCIDRIsLeftAloneWithoutWgApply(t *testing.T) {
+	opts := serverOptions{wgApply: false, wgAddress: "10.67.66.1/24", wgTunnelCIDR: "10.66.66.0/24"}
+	alignTunnelCIDR(&opts)
+	if opts.wgTunnelCIDR != "10.66.66.0/24" {
+		t.Fatalf("пул чужого интерфейса переписан на %q", opts.wgTunnelCIDR)
+	}
+}
