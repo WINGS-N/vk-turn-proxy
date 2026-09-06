@@ -1351,7 +1351,11 @@ func main() {
 	context.AfterFunc(ctx, func() { first.close() })
 
 	log.Printf("Listening on %s, session mode=%s, backends=%s", first.addr, mode, backends.describe())
-	serveGen(first)
+	// Поколение обслуживается в своей горутине, а не тут: после переезда первый
+	// сокет закрывается по дренажу, и релей, стоявший на нём главным потоком,
+	// штатно выходил каждые десять минут
+	go serveGen(first)
+	<-ctx.Done()
 	wg.Wait()
 }
 

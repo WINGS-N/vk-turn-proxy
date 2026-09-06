@@ -138,3 +138,43 @@ func TestOpenDataListenerReportsTheBoundPort(t *testing.T) {
 		t.Fatalf("отдали %q вместо порта, который выдало ядро", gen.addr)
 	}
 }
+
+// Переезд не должен гасить релей: главный поток стоит на контексте, а не на
+// первом сокете, иначе после дренажа процесс штатно выходит и его поднимает
+// заново kubelet - каждые drain минут
+func TestDrainedGenerationDoesNotEndTheProcess(t *testing.T) {
+	var closed sync.Map
+	alive := make(chan struct{})
+	d := newDataPlane()
+	d.setOpen(func(addr string) (*listenGen, error) { return fakeGen(addr, &closed), nil })
+	// Акцептор поколения возвращается, как только сокет закрыт - ровно то, что
+	// делает настоящий цикл на net.ErrClosed
+	d.setServe(func(gen *listenGen) {
+		for {
+			if _, gone := closed.Load(gen.addr); gone {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	})
+	first, err := d.Start("0.0.0.0:56000")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	go func() {
+		d.serve(first)
+		close(alive)
+	}()
+	if _, err := d.Relisten("0.0.0.0:41337", 10*time.Millisecond); err != nil {
+		t.Fatalf("relisten: %v", err)
+	}
+	select {
+	case <-alive:
+	case <-time.After(2 * time.Second):
+		t.Fatal("акцептор первого поколения не завершился после дренажа")
+	}
+	// Приём при этом обязан продолжаться на новом адресе
+	if d.Addr() != "0.0.0.0:41337" {
+		t.Fatalf("после дренажа слушаем %q", d.Addr())
+	}
+}
