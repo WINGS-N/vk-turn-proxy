@@ -235,11 +235,14 @@ func TestPowHexZeros(t *testing.T) {
 }
 
 func TestSolveCaptchaPoWV2(t *testing.T) {
-	hash := solveCaptchaPoWV2(t.Context(), "wings", 2)
+	hash, nonce := solveCaptchaPoWV2(t.Context(), "wings", 2)
 	if len(hash) != 64 || hash[:2] != "00" {
 		t.Fatalf("solved hash %q does not meet the target", hash)
 	}
-	if got := solveCaptchaPoWV2(t.Context(), "wings", captchaV2MaxPowDifficulty+1); got != "" {
+	if nonce <= 0 {
+		t.Fatalf("nonce %d must be the counter that produced the hash", nonce)
+	}
+	if got, _ := solveCaptchaPoWV2(t.Context(), "wings", captchaV2MaxPowDifficulty+1); got != "" {
 		t.Fatalf("difficulty above the ceiling must be refused, got %q", got)
 	}
 }

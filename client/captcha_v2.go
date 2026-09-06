@@ -50,6 +50,8 @@ var (
 	reCaptchaV2UUID       = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	reCaptchaV2Hex64      = regexp.MustCompile(`"([a-fA-F0-9]{64})"`)
 	reCaptchaV2Version    = regexp.MustCompile(`vkid/([0-9.]*)/not_robot_captcha\.js`)
+	// Страница присваивает результат так: captchaPowResult = "<префикс>" + base64(...)
+	reCaptchaV2PowEnvelope = regexp.MustCompile(`captchaPowResult["'\]]{0,3}\s*=\s*["']([A-Za-z0-9._-]{0,8})["']\s*\+`)
 
 	errCaptchaV2RateLimit = errors.New("captcha session rate limit reached")
 	// VK now serves a bot verdict on the checkbox flow instead of a solvable
@@ -105,6 +107,10 @@ type captchaV2Page struct {
 	ScriptURL     string
 	DebugInfo     string
 	Init          *captchaV2Init
+	// Префикс конверта PoW. Пустая строка при найденном конверте законна, а вот
+	// его отсутствие на странице значит старую разметку с голым хешем
+	PowEnvelope       bool
+	PowEnvelopePrefix string
 }
 
 type captchaV2Check struct {
@@ -217,11 +223,15 @@ func (s *captchaV2Session) solveOnce(captchaErr *vkCaptchaError) (string, error)
 	}
 
 	log.Printf("v2 captcha solving pow difficulty=%d", page.PowDifficulty)
-	hash := solveCaptchaPoWV2(s.ctx, page.PowInput, page.PowDifficulty)
+	hash, nonce := solveCaptchaPoWV2(s.ctx, page.PowInput, page.PowDifficulty)
 	if hash == "" {
 		return "", errors.New("captcha pow failed")
 	}
-	log.Printf("v2 captcha pow solved")
+	hash, err = s.wrapPowResult(page, hash, nonce, captchaErr.RedirectURI)
+	if err != nil {
+		return "", err
+	}
+	log.Printf("v2 captcha pow solved envelope=%t", page.PowEnvelope)
 
 	base := captchaV2BaseValues(captchaErr.SessionToken)
 	if _, err := s.captchaRequest("captchaNotRobot.settings", base); err != nil {
@@ -410,6 +420,10 @@ func parseCaptchaV2Page(html string) (*captchaV2Page, error) {
 		page.Init = &init
 	}
 
+	if m := reCaptchaV2PowEnvelope.FindStringSubmatch(html); len(m) >= 2 {
+		page.PowEnvelope = true
+		page.PowEnvelopePrefix = m[1]
+	}
 	page.DebugInfo = extractDebugUUID(html)
 	if m := reCaptchaV2ScriptSrc.FindStringSubmatch(html); len(m) >= 2 {
 		page.ScriptURL = m[1]
@@ -755,16 +769,36 @@ func (s *captchaV2Session) solveCheckboxCaptcha(
 	return check.SuccessToken, nil
 }
 
-func solveCaptchaPoWV2(ctx context.Context, input string, difficulty int) string {
+// wrapPowResult одевает хеш в конверт с пробами окружения. Страница со старой
+// разметкой конверта не несёт, и там уходит голый хеш: ломать работающий путь
+// ради нового мы не будем
+func (s *captchaV2Session) wrapPowResult(
+	page *captchaV2Page,
+	hash string,
+	nonce int,
+	redirectURI string,
+) (string, error) {
+	if !page.PowEnvelope {
+		return hash, nil
+	}
+	telemetry := buildCaptchaPowTelemetry(s.profile, captchaV2Domain(redirectURI))
+	envelope, err := buildCaptchaPowEnvelope(page.PowEnvelopePrefix, hash, nonce, telemetry)
+	if err != nil {
+		return "", fmt.Errorf("captcha pow envelope: %w", err)
+	}
+	return envelope, nil
+}
+
+func solveCaptchaPoWV2(ctx context.Context, input string, difficulty int) (string, int) {
 	if input == "" || difficulty <= 0 || difficulty > captchaV2MaxPowDifficulty {
-		return ""
+		return "", 0
 	}
 	buf := make([]byte, 0, len(input)+12)
 	for nonce := 0; nonce <= 10_000_000; nonce++ {
 		if nonce%4096 == 0 {
 			select {
 			case <-ctx.Done():
-				return ""
+				return "", 0
 			default:
 			}
 		}
@@ -772,10 +806,10 @@ func solveCaptchaPoWV2(ctx context.Context, input string, difficulty int) string
 		buf = strconv.AppendInt(buf, int64(nonce), 10)
 		sum := sha256.Sum256(buf)
 		if powHexZeros(sum[:], difficulty) {
-			return hex.EncodeToString(sum[:])
+			return hex.EncodeToString(sum[:]), nonce
 		}
 	}
-	return ""
+	return "", 0
 }
 
 // Нулей в hex ровно столько же, сколько нулевых полубайт в дайджесте, старший
