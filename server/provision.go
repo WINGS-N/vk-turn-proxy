@@ -39,6 +39,30 @@ func SetProvisionResolver(resolver provisionResolver, nodeID string, store *peer
 	provisionState.Store(&provisionConfig{resolver: resolver, nodeID: nodeID, store: store})
 }
 
+// SetProvisionNodeID называет релею его ноду уже на ходу.
+//
+// Сам он свой идентификатор не знает: его выдали агенту при зачислении машины, а
+// релей поднимается из общего для всего флота юнита. Без этого панель пишет
+// пиров, которых не привязать ни к одной ноде
+func SetProvisionNodeID(nodeID string) bool {
+	cur := provisionState.Load()
+	if cur == nil {
+		return false
+	}
+	next := *cur
+	next.nodeID = nodeID
+	provisionState.Store(&next)
+	return true
+}
+
+// ProvisionNodeID - чем релей представляется панели сейчас
+func ProvisionNodeID() string {
+	if cur := provisionState.Load(); cur != nil {
+		return cur.nodeID
+	}
+	return ""
+}
+
 // handleProvision serves a CLIENT_HELLO_TYPE_PROVISION hello: it forwards the
 // client_id + token to the panel for verification and writes back the resolved
 // WireGuard config (or an error) as a single marshaled ProvisionResponse record.

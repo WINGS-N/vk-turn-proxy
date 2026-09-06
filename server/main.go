@@ -1174,6 +1174,7 @@ func main() {
 			// смена порта не должна стоить всех сессий на нём
 			ListenAddr: dataPlaneSwitch.Addr,
 			Relisten:   dataPlaneSwitch.Relisten,
+			SetNodeID:  SetProvisionNodeID,
 			// Токен управления и wrap-политика связываются при старте. Отвечаем
 			// честно, а не притворяемся, что применили
 			Reload: func(context.Context) ([]string, []string, error) {

@@ -83,6 +83,7 @@ type server struct {
 	// получился: при нулевом порте его выбирает ядро
 	relisten      func(addr string, drain time.Duration) (string, error)
 	listenAddr    func() string
+	setNodeID     func(nodeID string) bool
 	shutdown      func(reason string)
 	publicIP      func() string
 	configVersion atomic.Uint64
@@ -134,6 +135,9 @@ type Options struct {
 	// свои сессии. Пусто - переезд не поддерживается, и Reload скажет об этом
 	// честно
 	Relisten func(addr string, drain time.Duration) (string, error)
+	// SetNodeID называет релею его ноду. Идентификатор живёт у агента, который
+	// зачислял машину, а релей поднимается из общего для флота юнита
+	SetNodeID func(nodeID string) bool
 	// Ready reports whether the relay can actually carry traffic. A supervisor
 	// that only sees the process running marks a node healthy while every client
 	// still fails
@@ -171,7 +175,7 @@ func NewServer(o Options) *grpc.Server {
 		store: o.Store, version: o.Version, sessions: o.Sessions, token: o.Token,
 		flows: o.Flows, listen: o.Listen, ready: o.Ready, bootID: o.BootID,
 		wrapCipher: o.WrapCipher, wrapCiphers: o.SupportedWrapCiphers, reload: o.Reload,
-		relisten: o.Relisten, listenAddr: o.ListenAddr,
+		relisten: o.Relisten, listenAddr: o.ListenAddr, setNodeID: o.SetNodeID,
 		federation: o.Federation,
 		shutdown:   o.Shutdown, publicIP: o.PublicIP,
 		started: time.Now(),
@@ -237,6 +241,13 @@ func (s *server) Reload(ctx context.Context, req *controlpb.ReloadRequest) (*con
 		applied []string
 		restart []string
 	)
+	if id := strings.TrimSpace(req.GetNodeId()); id != "" {
+		if s.setNodeID == nil || !s.setNodeID(id) {
+			restart = append(restart, "node-id")
+		} else {
+			applied = append(applied, "node-id")
+		}
+	}
 	if target := strings.TrimSpace(req.GetListen()); target != "" {
 		if s.relisten == nil {
 			restart = append(restart, "listen")

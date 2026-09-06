@@ -565,6 +565,10 @@ type ReloadRequest struct {
 	// old one, so a caller that picks a busy port gets an error and a relay that
 	// is still serving, rather than a node that went dark.
 	Listen string `protobuf:"bytes,1,opt,name=listen,proto3" json:"listen,omitempty"`
+	// node_id names this relay to the panel it provisions against. The relay does
+	// not learn it on its own: the identity belongs to the agent that enrolled the
+	// machine, and without it the panel records peers it cannot tie to a node.
+	NodeId string `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// drain_seconds keeps the old socket alive for the sessions already on it.
 	// Their clients still hold the previous endpoint, so closing it at once would
 	// drop everyone who was mid-download. Zero uses the relay's own default.
@@ -606,6 +610,13 @@ func (*ReloadRequest) Descriptor() ([]byte, []int) {
 func (x *ReloadRequest) GetListen() string {
 	if x != nil {
 		return x.Listen
+	}
+	return ""
+}
+
+func (x *ReloadRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
 	}
 	return ""
 }
@@ -1145,9 +1156,10 @@ const file_proto_control_proto_rawDesc = "" +
 	"\x0econfig_version\x18\f \x01(\x04R\rconfigVersion\x12\x1e\n" +
 	"\n" +
 	"federation\x18\r \x01(\bR\n" +
-	"federation\"L\n" +
+	"federation\"e\n" +
 	"\rReloadRequest\x12\x16\n" +
-	"\x06listen\x18\x01 \x01(\tR\x06listen\x12#\n" +
+	"\x06listen\x18\x01 \x01(\tR\x06listen\x12\x17\n" +
+	"\anode_id\x18\x03 \x01(\tR\x06nodeId\x12#\n" +
 	"\rdrain_seconds\x18\x02 \x01(\rR\fdrainSeconds\"\x94\x01\n" +
 	"\x0eReloadResponse\x12\x18\n" +
 	"\aapplied\x18\x01 \x03(\tR\aapplied\x12)\n" +

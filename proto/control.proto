@@ -115,6 +115,10 @@ message ReloadRequest {
   // old one, so a caller that picks a busy port gets an error and a relay that
   // is still serving, rather than a node that went dark.
   string listen = 1;
+  // node_id names this relay to the panel it provisions against. The relay does
+  // not learn it on its own: the identity belongs to the agent that enrolled the
+  // machine, and without it the panel records peers it cannot tie to a node.
+  string node_id = 3;
   // drain_seconds keeps the old socket alive for the sessions already on it.
   // Their clients still hold the previous endpoint, so closing it at once would
   // drop everyone who was mid-download. Zero uses the relay's own default.
