@@ -31,7 +31,12 @@ const (
 
 	// Difficulty the packed bundle applies when the page ships no difficulty const.
 	captchaV2DefaultPowDifficulty = 4
-	captchaV2FallbackScriptURL    = "https://id.vk.com/js/api/oauth.js"
+
+	// Потолок сложности. Число приходит со страницы ВК, и на девяти нулях перебор
+	// до десяти миллионов заведомо пустой, а дальше счёт уходит в вечность: без
+	// планки кривой или враждебный бандл вешает солвер намертво
+	captchaV2MaxPowDifficulty  = 8
+	captchaV2FallbackScriptURL = "https://id.vk.com/js/api/oauth.js"
 )
 
 var (
@@ -449,15 +454,33 @@ func parseCaptchaV2Page(html string) (*captchaV2Page, error) {
 // extractDebugInfoV2 copes with the wrapper name drifting between builds: the
 // key VK hangs it on is not stable, the shape of the value is.
 func extractDebugUUID(html string) string {
-	marker := strings.Index(strings.ToLower(html), "debug")
-	if marker < 0 {
+	lower := strings.ToLower(html)
+	for from := 0; from < len(lower); {
+		offset := strings.Index(lower[from:], "debug")
+		if offset < 0 {
+			break
+		}
+		start := from + offset
+		end := start + 256
+		if end > len(html) {
+			end = len(html)
+		}
+		if found := reCaptchaV2UUID.FindString(html[start:end]); found != "" {
+			return found
+		}
+		from = start + len("debug")
+	}
+	return debugUUIDFromWindowVk(html)
+}
+
+// Тот же uuid лежит в window.vk, и переименование соседнего ключа его не уносит.
+// Берём первый: их там обычно один, а гадать между двумя всё равно не по чему
+func debugUUIDFromWindowVk(html string) string {
+	block, err := sliceBalancedObject(html, "window.vk")
+	if err != nil {
 		return ""
 	}
-	end := marker + 256
-	if end > len(html) {
-		end = len(html)
-	}
-	return reCaptchaV2UUID.FindString(html[marker:end])
+	return reCaptchaV2UUID.FindString(block)
 }
 
 // extractPackedPow pulls the PoW seed and difficulty out of a packed bundle,
@@ -487,11 +510,16 @@ func extractPackedPow(html string) (string, int) {
 // lazy regex stops at the first "};", which truncates the object whenever a string
 // value inside it contains that pair.
 func extractCaptchaV2WindowInit(html string) (string, error) {
-	token := strings.Index(html, "window.init")
+	return sliceBalancedObject(html, "window.init")
+}
+
+// sliceBalancedObject возвращает объект, который идёт за токеном, считая скобки
+func sliceBalancedObject(html string, name string) (string, error) {
+	token := strings.Index(html, name)
 	if token < 0 {
-		return "", errors.New("window.init token not found")
+		return "", fmt.Errorf("%s token not found", name)
 	}
-	token += len("window.init")
+	token += len(name)
 	offset := strings.IndexByte(html[token:], '{')
 	if offset < 0 {
 		return "", errors.New("captcha init json start brace not found")
@@ -525,7 +553,7 @@ func extractCaptchaV2WindowInit(html string) (string, error) {
 			}
 		}
 	}
-	return "", errors.New("unbalanced braces in captcha init json")
+	return "", errors.New("unbalanced braces in captcha object")
 }
 
 func captchaV2SettingValue(setting captchaV2InitSetting) string {
@@ -728,10 +756,10 @@ func (s *captchaV2Session) solveCheckboxCaptcha(
 }
 
 func solveCaptchaPoWV2(ctx context.Context, input string, difficulty int) string {
-	if input == "" || difficulty <= 0 {
+	if input == "" || difficulty <= 0 || difficulty > captchaV2MaxPowDifficulty {
 		return ""
 	}
-	target := strings.Repeat("0", difficulty)
+	buf := make([]byte, 0, len(input)+12)
 	for nonce := 0; nonce <= 10_000_000; nonce++ {
 		if nonce%4096 == 0 {
 			select {
@@ -740,13 +768,33 @@ func solveCaptchaPoWV2(ctx context.Context, input string, difficulty int) string
 			default:
 			}
 		}
-		sum := sha256.Sum256([]byte(input + strconv.Itoa(nonce)))
-		hashHex := hex.EncodeToString(sum[:])
-		if strings.HasPrefix(hashHex, target) {
-			return hashHex
+		buf = append(buf[:0], input...)
+		buf = strconv.AppendInt(buf, int64(nonce), 10)
+		sum := sha256.Sum256(buf)
+		if powHexZeros(sum[:], difficulty) {
+			return hex.EncodeToString(sum[:])
 		}
 	}
 	return ""
+}
+
+// Нулей в hex ровно столько же, сколько нулевых полубайт в дайджесте, старший
+// первым. Считаем по байтам: hex-строка на каждый nonce это десять миллионов
+// выбросов в мусор за один заход
+func powHexZeros(digest []byte, difficulty int) bool {
+	full := difficulty / 2
+	if full > len(digest) {
+		return false
+	}
+	for _, b := range digest[:full] {
+		if b != 0 {
+			return false
+		}
+	}
+	if difficulty%2 == 0 {
+		return true
+	}
+	return full < len(digest) && digest[full]&0xF0 == 0
 }
 
 func (s *captchaV2Session) doRaw(

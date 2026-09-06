@@ -211,3 +211,46 @@ func TestCaptchaV2Domain(t *testing.T) {
 		t.Fatalf("got %q, want vk.com", got)
 	}
 }
+
+func TestPowHexZeros(t *testing.T) {
+	tests := []struct {
+		name       string
+		digest     []byte
+		difficulty int
+		want       bool
+	}{
+		{name: "even hits", digest: []byte{0x00, 0x00, 0xab}, difficulty: 4, want: true},
+		{name: "even misses", digest: []byte{0x00, 0x10, 0xab}, difficulty: 4, want: false},
+		{name: "odd hits on high nibble", digest: []byte{0x00, 0x0f, 0xab}, difficulty: 3, want: true},
+		{name: "odd misses on high nibble", digest: []byte{0x00, 0xf0, 0xab}, difficulty: 3, want: false},
+		{name: "difficulty past digest", digest: []byte{0x00}, difficulty: 8, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := powHexZeros(tc.digest, tc.difficulty); got != tc.want {
+				t.Fatalf("powHexZeros = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSolveCaptchaPoWV2(t *testing.T) {
+	hash := solveCaptchaPoWV2(t.Context(), "wings", 2)
+	if len(hash) != 64 || hash[:2] != "00" {
+		t.Fatalf("solved hash %q does not meet the target", hash)
+	}
+	if got := solveCaptchaPoWV2(t.Context(), "wings", captchaV2MaxPowDifficulty+1); got != "" {
+		t.Fatalf("difficulty above the ceiling must be refused, got %q", got)
+	}
+}
+
+func TestExtractDebugUUIDFallsBackToWindowVk(t *testing.T) {
+	const uuid = "1f2e3d4c-5b6a-4798-8765-0a1b2c3d4e5f"
+	html := `<script>var debugging={note:"no uuid here"};window.vk={id:"7",trace:"` + uuid + `"};</script>`
+	if got := extractDebugUUID(html); got != uuid {
+		t.Fatalf("extractDebugUUID = %q, want %q", got, uuid)
+	}
+	if got := extractDebugUUID(`<script>window.other={};</script>`); got != "" {
+		t.Fatalf("expected no uuid, got %q", got)
+	}
+}
