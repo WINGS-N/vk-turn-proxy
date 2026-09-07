@@ -72,6 +72,11 @@ func TestStdinReaderDeliversCreds(t *testing.T) {
 		Credential: "pw",
 		URLs:       []string{"turn:1.2.3.4:3478?transport=udp", "turns:5.6.7.8:5349"},
 	}
+	// Читатель отбрасывает строку с чужим типом, поэтому тест обязан гонять
+	// ровно тот тип, который проходит через его фильтр
+	if line.Type != "vk_account_creds" {
+		t.Fatalf("the reader would drop a line typed %q", line.Type)
+	}
 	addresses := turnURLsToAddresses(line.URLs)
 	injectTurnCreds(line.Link, line.Username, line.Credential, line.URLs)
 	resolveAccountAuth(line.Link, accountCredsResult{creds: injectedTurnCreds{
