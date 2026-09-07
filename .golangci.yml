@@ -54,6 +54,10 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        source: "doRequest|packetPool\\.Get"
     paths:
       - third_party$
       - builtin$
@@ -61,10 +65,6 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    - linters:
-        - errcheck
-      source: "doRequest|packetPool\\.Get"
 formatters:
   exclusions:
     generated: lax
