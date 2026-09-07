@@ -2,10 +2,7 @@ package main
 
 import (
 	"net"
-	"runtime"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // gsoMaxSegments is the kernel's ceiling on segments per UDP_SEGMENT write.
@@ -39,7 +36,7 @@ type udpGSOWriter struct {
 func newUDPGSOWriter(conn net.Conn, maxDatagram int) *udpGSOWriter {
 	writer := &udpGSOWriter{conn: conn}
 	udp, ok := conn.(*net.UDPConn)
-	if !ok || runtime.GOOS != "linux" {
+	if !ok || !segmentationAvailable() {
 		return writer
 	}
 	writer.udp = udp
@@ -110,18 +107,8 @@ func (w *udpGSOWriter) armSegmentation(segment int) error {
 	if w.armedFor == segment {
 		return nil
 	}
-	raw, err := w.udp.SyscallConn()
-	if err != nil {
+	if err := setUDPSegment(w.udp, segment); err != nil {
 		return err
-	}
-	var setErr error
-	if ctlErr := raw.Control(func(fd uintptr) {
-		setErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_UDP, unix.UDP_SEGMENT, segment)
-	}); ctlErr != nil {
-		return ctlErr
-	}
-	if setErr != nil {
-		return setErr
 	}
 	w.armedFor = segment
 	return nil

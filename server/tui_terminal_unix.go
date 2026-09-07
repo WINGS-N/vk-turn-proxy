@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build linux || darwin || freebsd || netbsd || openbsd || dragonfly
 
 package main
 
@@ -13,7 +13,7 @@ func enableTUIInputMode() func() {
 		return nil
 	}
 	fd := int(os.Stdin.Fd())
-	termios, err := unix.IoctlGetTermios(fd, unix.TCGETS)
+	termios, err := unix.IoctlGetTermios(fd, termiosGet)
 	if err != nil {
 		return nil
 	}
@@ -21,11 +21,11 @@ func enableTUIInputMode() func() {
 	termios.Lflag &^= unix.ICANON | unix.ECHO
 	termios.Cc[unix.VMIN] = 1
 	termios.Cc[unix.VTIME] = 0
-	if err := unix.IoctlSetTermios(fd, unix.TCSETS, termios); err != nil {
+	if err := unix.IoctlSetTermios(fd, termiosSet, termios); err != nil {
 		return nil
 	}
 	return func() {
-		_ = unix.IoctlSetTermios(fd, unix.TCSETS, &original)
+		_ = unix.IoctlSetTermios(fd, termiosSet, &original)
 	}
 }
 
