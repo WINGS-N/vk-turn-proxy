@@ -2,13 +2,7 @@
 // offload, so a burst costs one syscall instead of one per datagram.
 package udpoffload
 
-import (
-	"encoding/binary"
-	"net"
-	"runtime"
-
-	"golang.org/x/sys/unix"
-)
+import "net"
 
 // BufferSize holds one coalesced run. The kernel caps a receive batch at 64 KiB.
 const BufferSize = 64 << 10
@@ -43,17 +37,7 @@ type Reader struct {
 func NewReader(conn net.PacketConn, datagramSize int) *Reader {
 	reader := &Reader{packet: conn, buf: make([]byte, datagramSize)}
 	udp, ok := conn.(*net.UDPConn)
-	if !ok || runtime.GOOS != "linux" {
-		return reader
-	}
-	raw, err := udp.SyscallConn()
-	if err != nil {
-		return reader
-	}
-	var setErr error
-	if ctlErr := raw.Control(func(fd uintptr) {
-		setErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_UDP, unix.UDP_GRO, 1)
-	}); ctlErr != nil || setErr != nil {
+	if !ok || !enableGRO(udp) {
 		return reader
 	}
 	reader.udp = udp
@@ -106,23 +90,3 @@ func (r *Reader) Buffered() int { return len(r.pending) }
 
 // Coalescing reports whether the kernel is merging runs for this socket.
 func (r *Reader) Coalescing() bool { return r.coalesce }
-
-// segmentSize reads the size the kernel coalesced with out of the control
-// messages. Absent means the read carried a single datagram.
-func segmentSize(control []byte) int {
-	messages, err := unix.ParseSocketControlMessage(control)
-	if err != nil {
-		return 0
-	}
-	for _, message := range messages {
-		if message.Header.Level != unix.IPPROTO_UDP || message.Header.Type != unix.UDP_GRO {
-			continue
-		}
-		if len(message.Data) < 2 {
-			continue
-		}
-		// The kernel writes the size in the host's own byte order.
-		return int(binary.NativeEndian.Uint16(message.Data))
-	}
-	return 0
-}
