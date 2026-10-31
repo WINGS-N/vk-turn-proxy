@@ -1,6 +1,6 @@
 module github.com/cacggghp/vk-turn-proxy
 
-go 1.25.5
+go 1.27.1
 
 require (
 	github.com/bogdanfinn/fhttp v0.6.8
