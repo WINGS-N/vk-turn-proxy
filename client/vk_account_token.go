@@ -19,14 +19,14 @@ import (
 
 // B' authorized-account TURN flow. The host app delivers the live VK web session
 // cookies + matching User-Agent on a vk_cookies stdin line; this relay then mints
-// the privileged web token (login.vk.com act=web_token) with its browser-
+// the privileged web token (login.vk.ru act=web_token) with its browser-
 // fingerprinted fhttp client and runs the OK-infra chain, all without a visible
 // WebView.
 const (
 	okCallsAppKey   = "CGMMEJLGDIHBABABA"
 	okCallsFbDo     = "https://calls.okcdn.ru/fb.do"
-	vkExecuteURL    = "https://api.vk.com/method/execute?v=5.282&client_id=6287487"
-	vkWebTokenURL   = "https://login.vk.com/?act=web_token"
+	vkExecuteURL    = "https://api.vk.ru/method/execute?v=5.282&client_id=6287487"
+	vkWebTokenURL   = "https://login.vk.ru/?act=web_token"
 	vkWebTokenAppID = "6287487"
 )
 
@@ -194,10 +194,13 @@ type vkCookiesUpdateEvent struct {
 }
 
 func isVkHost(host string) bool {
-	return host == "vk.com" || strings.HasSuffix(host, ".vk.com")
+	// vk.com редиректит на vk.ru, ротированные Set-Cookie прилетают уже оттуда.
+	// .com оставлен ради сессии, заведённой до переезда
+	return host == "vk.ru" || strings.HasSuffix(host, ".vk.ru") ||
+		host == "vk.com" || strings.HasSuffix(host, ".vk.com")
 }
 
-// mergeVkSetCookies folds rotated Set-Cookie values from a vk.com response into
+// mergeVkSetCookies folds rotated Set-Cookie values from a vk.ru response into
 // the cached session jar so later web_token mints stay authorized without another
 // app round-trip, and pushes the refreshed jar back to the host app on change.
 func mergeVkSetCookies(setCookies []*fhttp.Cookie) {
@@ -329,7 +332,7 @@ func turnUsernameLifetime(username string) time.Duration {
 // returns TURN user, credential, addresses and remaining lifetime. It mints +
 // caches the privileged token (from session cookies), the OK auth_token and the
 // anonymLogin session, re-minting each on staleness, and asks the host app
-// (vk_cookies_required) to refresh the session when login.vk.com rejects it.
+// (vk_cookies_required) to refresh the session when login.vk.ru rejects it.
 func getAccountVkCreds(ctx context.Context, link string, resolver *protectedResolver) (string, string, []string, time.Duration, error) {
 	cookies, ua, ready := getVkSession()
 	if cookies == "" {
@@ -372,8 +375,8 @@ func getAccountVkCreds(ctx context.Context, link string, resolver *protectedReso
 		applyBrowserProfileFhttp(req, profile)
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "*/*")
-		req.Header.Set("Origin", "https://vk.com")
-		req.Header.Set("Referer", "https://vk.com/")
+		req.Header.Set("Origin", "https://vk.ru")
+		req.Header.Set("Referer", "https://vk.ru/")
 		for k, v := range extra {
 			if v != "" {
 				req.Header.Set(k, v)
@@ -401,7 +404,7 @@ func getAccountVkCreds(ctx context.Context, link string, resolver *protectedReso
 	okSessionMu.Lock()
 	defer okSessionMu.Unlock()
 
-	// Step 0: privileged web token via login.vk.com (needs live session cookies).
+	// Step 0: privileged web token via login.vk.ru (needs live session cookies).
 	if privilegedToken == "" {
 		form := url.Values{}
 		form.Set("version", "1")
