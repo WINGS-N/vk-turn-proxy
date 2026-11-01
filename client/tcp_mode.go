@@ -189,6 +189,8 @@ func runTCPMode(ctx context.Context, turnConfig *turnParams, peer *net.UDPAddr, 
 }
 
 func maintainTCPSession(ctx context.Context, turnConfig *turnParams, peer *net.UDPAddr, sessionID int, pool *tcpSessionPool) {
+	// Место на релее держится сессией, а не попыткой подключения
+	defer releaseStreamSeat(sessionID)
 	for {
 		select {
 		case <-ctx.Done():

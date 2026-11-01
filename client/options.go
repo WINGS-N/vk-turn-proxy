@@ -38,6 +38,7 @@ type clientOptions struct {
 	appGRPCPeerContext string
 	tcpFlavor          string
 	credsGroupSize     int
+	relayQuota         int
 	protectSock        string
 	protoFingerprint   string
 	browserFP          string
@@ -90,6 +91,7 @@ func newClientFlagSet(program string, output io.Writer) (*flag.FlagSet, *clientO
 	fs.StringVar(&opts.vkAuth, "vk-auth", "anonymous", "VK auth mode: anonymous|account (account = relay emits PROXY_EVENT vk_account_auth_required with the VK join URL; the host app opens it in a WebView, signs in, intercepts the VK turn_server creds, and sends them back on a vk_account_creds stdin line; vk_account_auth_complete/_failed signal the outcome)")
 	fs.StringVar(&opts.tcpFlavor, "tcp-flavor", "auto", "TCP transport flavor override: auto|direct|legacy (auto = negotiate; direct = smux over DTLS; legacy = KCP+smux)")
 	fs.IntVar(&opts.credsGroupSize, "creds-group-size", 12, "workers per TURN identity (smaller = more identities, less per-identity rate limit; larger = fewer auth calls)")
+	fs.IntVar(&opts.relayQuota, "relay-quota", defaultTURNServerQuota, "max TURN allocations per relay address before the picker prefers another one (0 = no limit)")
 	fs.StringVar(&opts.protectSock, "protect-sock", "", "unix socket used for VpnService.protect fd bridge")
 	fs.StringVar(&opts.vkSessionFile, "vk-session-file", "", "path to persist VK session cookies across relay restarts (account mode)")
 	fs.BoolVar(&opts.vkCookieFilePoll, "vk-cookie-file-poll", false, "poll vk-session-file for live cookie updates written by the host app (root/no-stdin path where the vk_account_creds stdin line cannot be delivered)")
@@ -150,6 +152,9 @@ func parseClientOptions(args []string, program string, stdout, stderr io.Writer)
 		}
 		if opts.credsGroupSize < 1 {
 			opts.credsGroupSize = 1
+		}
+		if opts.relayQuota < 0 {
+			opts.relayQuota = 0
 		}
 		opts.wrapMode = strings.ToLower(strings.TrimSpace(opts.wrapMode))
 		switch opts.wrapMode {

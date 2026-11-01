@@ -2171,6 +2171,8 @@ func oneTurnConnectionLoop(
 	// Deregister from the migration registry when this worker ends for good (drain
 	// or shutdown), so a patch's applied-detection is not blocked by a dead stream.
 	defer workers.remove(streamID)
+	// Место на релее держится стримом, а не попыткой: умер стрим - место свободно
+	defer releaseStreamSeat(streamID)
 	for {
 		select {
 		case <-ctx.Done():
@@ -2490,6 +2492,7 @@ func main() { //nolint:cyclop
 			log.Printf("[VK Auth] account mode: capping workers from %d to %d (account TURN quota is small)", opts.n, accountMaxWorkers)
 			opts.n = accountMaxWorkers
 		}
+		setTURNServerQuota(opts.relayQuota)
 
 		tracker, err := newLinkHealthTracker(extracted, secondaryHash)
 		if err != nil {
