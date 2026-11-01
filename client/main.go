@@ -2493,6 +2493,7 @@ func main() { //nolint:cyclop
 			opts.n = accountMaxWorkers
 		}
 		setTURNServerQuota(opts.relayQuota)
+		setCaptchaPowBogus(opts.powBogus)
 
 		tracker, err := newLinkHealthTracker(extracted, secondaryHash)
 		if err != nil {

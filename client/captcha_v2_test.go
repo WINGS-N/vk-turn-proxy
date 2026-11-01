@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"encoding/hex"
+	"testing"
+)
 
 func TestExtractDebugInfoV2(t *testing.T) {
 	const hash = "59f60d917b13be6a22c076adb2c17df37302c5314d8353a27e72f9fbcc9b4838"
@@ -255,5 +258,33 @@ func TestExtractDebugUUIDFallsBackToWindowVk(t *testing.T) {
 	}
 	if got := extractDebugUUID(`<script>window.other={};</script>`); got != "" {
 		t.Fatalf("expected no uuid, got %q", got)
+	}
+}
+
+// Негативный контроль обязан ломать именно сложность: форма ответа та же, но
+// проверка его не принимает, иначе контроль ничего не доказывает
+func TestBogusPowHashBreaksTheDifficulty(t *testing.T) {
+	hash, _ := solveCaptchaPoWV2(t.Context(), "wings", 2)
+	if hash == "" {
+		t.Fatal("pow не решился")
+	}
+	raw, err := hex.DecodeString(hash)
+	if err != nil {
+		t.Fatalf("решение не hex: %v", err)
+	}
+	if !powHexZeros(raw, 2) {
+		t.Fatal("решение не проходит свою же проверку")
+	}
+
+	broken := bogusPowHash(hash)
+	if len(broken) != len(hash) {
+		t.Fatalf("форма ответа изменилась: %d против %d", len(broken), len(hash))
+	}
+	brokenRaw, err := hex.DecodeString(broken)
+	if err != nil {
+		t.Fatalf("битый ответ не hex: %v", err)
+	}
+	if powHexZeros(brokenRaw, 2) {
+		t.Fatal("битый ответ всё ещё проходит проверку сложности")
 	}
 }

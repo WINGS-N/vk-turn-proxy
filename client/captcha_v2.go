@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	fhttp "github.com/bogdanfinn/fhttp"
@@ -226,6 +227,10 @@ func (s *captchaV2Session) solveOnce(captchaErr *vkCaptchaError) (string, error)
 	hash, nonce := solveCaptchaPoWV2(s.ctx, page.PowInput, page.PowDifficulty)
 	if hash == "" {
 		return "", errors.New("captcha pow failed")
+	}
+	if captchaPowBogus.Load() {
+		hash = bogusPowHash(hash)
+		log.Printf("v2 captcha pow NEGATIVE CONTROL: sending a hash that does not meet the difficulty")
 	}
 	hash, err = s.wrapPowResult(page, hash, nonce, captchaErr.RedirectURI)
 	if err != nil {
@@ -815,6 +820,32 @@ func solveCaptchaPoWV2(ctx context.Context, input string, difficulty int) (strin
 // Нулей в hex ровно столько же, сколько нулевых полубайт в дайджесте, старший
 // первым. Считаем по байтам: hex-строка на каждый nonce это десять миллионов
 // выбросов в мусор за один заход
+// Негативный контроль PoW. Прогон с правильным хешем сам по себе не доказывает,
+// что капча вообще считает сложность: пока битый ответ не отвергнут, зелёный
+// результат может значить, что проверки нет
+var captchaPowBogus atomic.Bool
+
+func setCaptchaPowBogus(on bool) {
+	captchaPowBogus.Store(on)
+}
+
+// bogusPowHash держит форму ответа - та же длина, тот же hex - и ломает только
+// старшие полубайты, по которым считается сложность
+func bogusPowHash(hash string) string {
+	if hash == "" {
+		return hash
+	}
+	broken := []byte(hash)
+	for i := range broken {
+		if broken[i] == '0' {
+			broken[i] = 'f'
+			return string(broken)
+		}
+	}
+	broken[0] = 'f'
+	return string(broken)
+}
+
 func powHexZeros(digest []byte, difficulty int) bool {
 	full := difficulty / 2
 	if full > len(digest) {
