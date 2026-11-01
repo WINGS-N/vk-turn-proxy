@@ -366,7 +366,10 @@ func newCaptchaGenericReverseProxy(
 ) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Transport: resolver.newHTTPTransport(),
-		Director: func(req *http.Request) {
+		// Rewrite вместо Director: тот выпилен в Go 1.26. X-Forwarded-For намеренно
+		// не ставим - браузер его не послал бы, а капча смотрит на заголовки
+		Rewrite: func(proxyReq *httputil.ProxyRequest) {
+			req := proxyReq.Out
 			req.URL.Scheme = targetURL.Scheme
 			req.URL.Host = targetURL.Host
 			req.URL.Path = targetURL.Path
@@ -407,7 +410,8 @@ func newCaptchaReverseProxy(
 ) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Transport: resolver.newHTTPTransport(),
-		Director: func(req *http.Request) {
+		Rewrite: func(proxyReq *httputil.ProxyRequest) {
+			req := proxyReq.Out
 			req.URL.Scheme = targetURL.Scheme
 			req.URL.Host = targetURL.Host
 			if req.URL.Path == "/" || req.URL.Path == "" {
